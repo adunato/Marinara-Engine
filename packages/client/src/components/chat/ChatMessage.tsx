@@ -291,9 +291,31 @@ export const ChatMessage = memo(function ChatMessage({
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [showThinking, setShowThinking] = useState(false);
+  const [showActions, setShowActions] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const scrollRestoreRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const msgRef = useRef<HTMLDivElement>(null);
+
+  // Dismiss actions when tapping outside on mobile
+  useEffect(() => {
+    if (!showActions) return;
+    const handleTouch = (e: TouchEvent) => {
+      if (msgRef.current && !msgRef.current.contains(e.target as Node)) {
+        setShowActions(false);
+      }
+    };
+    document.addEventListener("touchstart", handleTouch);
+    return () => document.removeEventListener("touchstart", handleTouch);
+  }, [showActions]);
+
+  const handleMobileTap = useCallback((e: React.MouseEvent) => {
+    // Only toggle on touch devices
+    if (!matchMedia("(pointer: coarse)").matches) return;
+    // Don't toggle when tapping buttons, links, or the edit textarea
+    const target = e.target as HTMLElement;
+    if (target.closest("button, a, textarea")) return;
+    setShowActions((v) => !v);
+  }, []);
 
   // Parse message extra for conversation start flag
   const extra = useMemo(() => {
@@ -517,15 +539,20 @@ export const ChatMessage = memo(function ChatMessage({
     if (isNarrator) {
       return (
         <div
+          ref={msgRef}
           className="rpg-narrator-msg group animate-message-in mb-4 px-2"
           style={{ animationDelay: `${Math.min(index * 30, 200)}ms`, animationFillMode: "backwards" }}
+          onClick={handleMobileTap}
         >
           <div className="relative rounded-xl border border-amber-500/10 bg-black/40 px-5 py-4">
             {/* Delete button */}
             {onDelete && (
               <button
                 onClick={() => onDelete(message.id)}
-                className="absolute right-2 top-2 rounded-md p-1 text-white/20 opacity-0 transition-all hover:bg-red-500/20 hover:text-red-400 group-hover:opacity-100"
+                className={cn(
+                  "absolute right-2 top-2 rounded-md p-1 text-white/20 opacity-0 transition-all hover:bg-red-500/20 hover:text-red-400 group-hover:opacity-100",
+                  showActions && "opacity-100",
+                )}
                 title="Delete"
               >
                 <Trash2 size={12} />
@@ -553,6 +580,7 @@ export const ChatMessage = memo(function ChatMessage({
           ref={msgRef}
           className={cn("group mb-4 flex gap-3 animate-message-in px-2", isUser && "flex-row-reverse")}
           style={{ animationDelay: `${Math.min(index * 30, 200)}ms`, animationFillMode: "backwards" }}
+          onClick={handleMobileTap}
         >
           {/* Avatar Column */}
           {!isGrouped && (
@@ -726,11 +754,12 @@ export const ChatMessage = memo(function ChatMessage({
               </div>
             )}
 
-            {/* Hover actions */}
+            {/* Hover actions (tap to toggle on mobile) */}
             <div
               className={cn(
                 "flex items-center gap-0.5 px-1 opacity-0 transition-all group-hover:opacity-100",
                 isUser && "flex-row-reverse",
+                showActions && "opacity-100",
               )}
             >
               <ActionBtn icon={copied ? "\u2713" : <Copy size={11} />} onClick={handleCopy} title="Copy" dark />
@@ -794,6 +823,7 @@ export const ChatMessage = memo(function ChatMessage({
         isGrouped ? "mb-0.5" : "mb-3",
       )}
       style={{ animationDelay: `${Math.min(index * 30, 200)}ms`, animationFillMode: "backwards" }}
+      onClick={handleMobileTap}
     >
       <div className={cn("flex max-w-[72%] gap-2", isUser && "flex-row-reverse", editing && "w-[85%] max-w-[85%]")}>
         {/* Avatar — only show for first in group */}
@@ -954,11 +984,12 @@ export const ChatMessage = memo(function ChatMessage({
             </div>
           )}
 
-          {/* Hover actions */}
+          {/* Hover actions (tap to toggle on mobile) */}
           <div
             className={cn(
               "flex items-center gap-0 px-1 opacity-0 transition-all group-hover:opacity-100",
               isUser && "flex-row-reverse",
+              showActions && "opacity-100",
             )}
           >
             <ActionBtn icon={copied ? "✓" : <Copy size={10} />} onClick={handleCopy} title="Copy" />

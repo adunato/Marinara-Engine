@@ -1245,7 +1245,7 @@ summary[class*="cursor-pointer"],
 
   .chat-msg-max-width { max-width: 95% !important; }
 
-  .rpg-chat-messages-mobile { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+  .rpg-chat-messages-mobile { padding-left: 0.75rem !important; padding-right: 0.75rem !important; padding-bottom: 0 !important; }
 
   .rpg-hud {
     font-size: 10px;
@@ -1278,7 +1278,7 @@ summary[class*="cursor-pointer"],
   .agent-editor-body                  { padding: 16px !important; }
   .agent-editor-body .phase-grid      { grid-template-columns: 1fr !important; }
 
-  .chat-input-container { padding: 0.5rem !important; }
+  .chat-input-container { padding: 0.25rem 0.5rem 0.5rem !important; }
   .chat-input-container .rounded-2xl { padding-left: 0.75rem !important; padding-right: 0.5rem !important; }
 }
 

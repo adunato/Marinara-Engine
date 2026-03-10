@@ -803,7 +803,7 @@ export function ChatArea() {
               <div
                 ref={scrollRef}
                 className={cn(
-                  "rpg-chat-messages-mobile relative z-10 flex-1 overflow-y-auto py-4",
+                  "rpg-chat-messages-mobile relative z-10 flex-1 overflow-y-auto pt-4 pb-1",
                   chatCharIds.length > 0 ? "px-[15%]" : "px-3",
                 )}
               >
@@ -885,7 +885,7 @@ export function ChatArea() {
 
               {/* Input area */}
               <div className="relative z-20">
-                <div className={cn("relative", chatCharIds.length > 0 && "px-[12%]")}>
+                <div className={cn("relative", chatCharIds.length > 0 && "px-[12%] max-md:px-3")}>
                   {combatAgentEnabled && (
                     <div className="flex justify-center py-1">
                       <button
@@ -1100,7 +1100,7 @@ export function ChatArea() {
               <div className="absolute inset-0 bg-[var(--background)]/60" />
             </>
           )}
-          <div ref={scrollRef} className="relative h-full overflow-y-auto px-4 py-4">
+          <div ref={scrollRef} className="relative h-full overflow-y-auto px-4 pt-4 pb-1">
             {/* Load More button */}
             {hasNextPage && (
               <div className="mb-3 flex justify-center">

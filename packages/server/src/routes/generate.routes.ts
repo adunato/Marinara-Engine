@@ -192,6 +192,11 @@ export async function generateRoutes(app: FastifyInstance) {
       "X-Accel-Buffering": "no",
     });
 
+    // ── Abort controller: cancel agents when client disconnects ──
+    const abortController = new AbortController();
+    const onClose = () => abortController.abort();
+    req.raw.on("close", onClose);
+
     try {
       // Get chat messages
       const allChatMessages = await chats.listMessages(input.chatId);
@@ -1060,6 +1065,7 @@ export async function generateRoutes(app: FastifyInstance) {
           };
 
           for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            if (abortController.signal.aborted) break;
             const result = await provider.chatComplete(loopMessages, {
               model: conn.model,
               temperature,
@@ -1285,6 +1291,7 @@ export async function generateRoutes(app: FastifyInstance) {
         let runningMessages = [...finalMessages];
 
         for (let ci = 0; ci < respondingCharIds.length; ci++) {
+          if (abortController.signal.aborted) break;
           const charId = respondingCharIds[ci]!;
           const charName = charInfo.find((c) => c.id === charId)?.name ?? "Character";
 
@@ -1319,14 +1326,14 @@ export async function generateRoutes(app: FastifyInstance) {
       // ────────────────────────────────────────
       const hasPostAgents = resolvedAgents.some((a) => a.phase === "post_processing" || a.phase === "parallel");
       const combinedResponse = allResponses.join("\n\n");
-      if (hasPostAgents && combinedResponse) {
+      if (hasPostAgents && combinedResponse && !abortController.signal.aborted) {
         reply.raw.write(`data: ${JSON.stringify({ type: "agent_start", data: { phase: "post_generation" } })}\n\n`);
 
         let postResults = await pipeline.postGenerate(combinedResponse);
 
         // ── Auto-retry failed agents once ──
         const failedResults = postResults.filter((r) => !r.success);
-        if (failedResults.length > 0) {
+        if (failedResults.length > 0 && !abortController.signal.aborted) {
           const retryResults: AgentResult[] = [];
           for (const failed of failedResults) {
             const agentCfg = pipelineAgents.find((a) => a.type === failed.agentType);
@@ -1518,7 +1525,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
 
         // ── Consistency Editor: runs after ALL other agents ──
-        if (editorAgent && messageId) {
+        if (editorAgent && messageId && !abortController.signal.aborted) {
           try {
             // Collect all successful agent outputs as a summary for the editor
             const agentSummary: Record<string, unknown> = {};
@@ -1579,6 +1586,7 @@ export async function generateRoutes(app: FastifyInstance) {
       const message = err instanceof Error ? err.message : "Generation failed";
       reply.raw.write(`data: ${JSON.stringify({ type: "error", data: message })}\n\n`);
     } finally {
+      req.raw.off("close", onClose);
       reply.raw.end();
     }
   });
