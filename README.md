@@ -69,6 +69,13 @@
 - **xHigh Reasoning Effort** — The `xhigh` reasoning tier is now properly gated to `gpt-5.4*` models only, preventing unsupported effort values from being sent to other providers.
 - **Embedding Connection URL Resolution** — Embedding connections now use `resolveBaseUrl()` for proper URL construction, fixing failures when the alternate embedding provider had a non-standard base URL.
 - **Embedding Model Fallback** — When an alternate embedding connection has no embedding model configured, the system now correctly falls back to the source connection's embedding model.
+- **Concurrent Cross-Chat Generation** — Sending messages to multiple DnD/idle chats no longer causes messages to vanish or UI corruption. SSE events are now scoped per-chat so background generations don't interfere with the active view.
+- **Chat Switch Streaming Restoration** — Switching to a chat with an in-progress generation now correctly restores the typing indicator, delayed status, and streaming UI.
+- **Mobile Delete Button Visibility** — The delete button on chat sidebar entries is now always visible on mobile devices.
+- **Conversation Prompt Persistence** — Custom conversation system prompts are now saved as the default for new conversations.
+- **New Conversation Wizard Scroll** — The setup wizard no longer overflows the viewport on smaller screens.
+- **User Status Persistence** — DnD/idle status now survives page refresh.
+- **Chat Summary Invalidation** — The chat summary event now correctly refreshes the generating chat instead of the active chat.
 
 ---
 

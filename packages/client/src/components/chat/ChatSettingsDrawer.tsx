@@ -2040,6 +2040,8 @@ function AdvancedParametersSection({
     // Save on close — only persist if the user actually changed something
     const isDefault = promptDraft === DEFAULT_CONVERSATION_PROMPT;
     updateMeta.mutate({ id: chat.id, customSystemPrompt: isDefault ? null : promptDraft });
+    // Also save as the new default for all future conversations
+    useUIStore.getState().setCustomConversationPrompt(isDefault ? null : promptDraft);
     setPromptOpen(false);
   };
 
@@ -2202,7 +2204,10 @@ function AdvancedParametersSection({
                 </button>
                 {customPrompt && (
                   <button
-                    onClick={() => updateMeta.mutate({ id: chat.id, customSystemPrompt: null })}
+                    onClick={() => {
+                      updateMeta.mutate({ id: chat.id, customSystemPrompt: null });
+                      useUIStore.getState().setCustomConversationPrompt(null);
+                    }}
                     className="rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
                     title="Reset to default prompt"
                   >
@@ -2214,7 +2219,10 @@ function AdvancedParametersSection({
           )}
           {/* Reset */}
           <button
-            onClick={() => updateMeta.mutate({ id: chat.id, chatParameters: defaults })}
+            onClick={() => {
+              updateMeta.mutate({ id: chat.id, chatParameters: defaults, customSystemPrompt: null });
+              useUIStore.getState().setCustomConversationPrompt(null);
+            }}
             className="w-full rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
           >
             Reset to Defaults

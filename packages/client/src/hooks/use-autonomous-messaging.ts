@@ -87,8 +87,8 @@ export function useAutonomousMessaging(
     if (!chatId || !enabled) return;
 
     const poll = async () => {
-      // Don't poll if already generating or streaming
-      if (generatingRef.current || useChatStore.getState().isStreaming) {
+      // Don't poll if already generating or streaming this chat
+      if (generatingRef.current || useChatStore.getState().abortControllers.has(chatId)) {
         schedulePoll();
         return;
       }
@@ -115,7 +115,7 @@ export function useAutonomousMessaging(
             // Wait for the busy delay, then generate
             busyTimerRef.current = setTimeout(() => {
               // Re-check guards after delay — user may have started a manual generation
-              if (generatingRef.current || useChatStore.getState().isStreaming) {
+              if (generatingRef.current || useChatStore.getState().abortControllers.has(chatId)) {
                 schedulePoll();
                 return;
               }
@@ -172,7 +172,7 @@ export function useAutonomousMessaging(
             shouldSchedulePoll = false;
             busyTimerRef.current = setTimeout(
               () => {
-                if (!useChatStore.getState().isStreaming) {
+                if (!useChatStore.getState().abortControllers.has(chatId)) {
                   triggerAutonomousGeneration(exchange.characterIds[0]!);
                 } else {
                   schedulePoll();

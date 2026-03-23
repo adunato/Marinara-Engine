@@ -416,8 +416,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
             const embeddingModel =
-              (embedConn.embeddingModel as string | undefined) ||
-              (conn.embeddingModel as string | undefined);
+              (embedConn.embeddingModel as string | undefined) || (conn.embeddingModel as string | undefined);
             if (embeddingModel) {
               const embeddingProvider = createLLMProvider(
                 embedConn.provider as string,
@@ -1165,16 +1164,9 @@ export async function generateRoutes(app: FastifyInstance) {
       const hasPerChatAgentList = chatActiveAgentIds.length > 0;
       const perChatAgentSet = new Set(chatActiveAgentIds);
 
-      const enabledConfigs = chatEnableAgents
-        ? hasPerChatAgentList
-          ? await agentsStore.list()
-          : await agentsStore.listEnabled()
-        : [];
-
-      // Also check ALL configs so that explicitly-disabled built-ins are not
-      // re-added as defaults for the no-per-chat-list path.
-      const allConfigs = chatEnableAgents ? await agentsStore.list() : [];
-      const allConfigTypes = new Set(allConfigs.map((c: any) => c.type));
+      // Only run agents that are explicitly added to the chat.
+      // Empty activeAgentIds = no agents (not "all globally-enabled").
+      const enabledConfigs = chatEnableAgents && hasPerChatAgentList ? await agentsStore.list() : [];
 
       // Build ResolvedAgent array — each agent gets its own provider/model or falls back to chat connection
       const resolvedAgents: ResolvedAgent[] = [];
@@ -1222,23 +1214,16 @@ export async function generateRoutes(app: FastifyInstance) {
         });
       }
 
-      // Built-in agents with no DB row → use defaults
-      // This covers two cases:
-      //   1. enabledByDefault agents that were never customized (original behavior)
-      //   2. Per-chat list agents that exist in activeAgentIds but have no DB row yet
+      // Built-in agents with no DB row → use defaults only if explicitly in the per-chat list
       const resolvedTypes = new Set(resolvedAgents.map((a) => a.type));
-      const builtInFallbacks = chatEnableAgents
-        ? BUILT_IN_AGENTS.filter((a) => {
-            // Already resolved from a DB row — skip
-            if (resolvedTypes.has(a.id)) return false;
-            // Chat Summary agent is manual-only — never auto-run
-            if (a.id === "chat-summary") return false;
-            // If we have a per-chat list, include if the agent is in that list
-            if (hasPerChatAgentList) return perChatAgentSet.has(a.id);
-            // No per-chat list — only include enabledByDefault agents without a DB row
-            return a.enabledByDefault && !allConfigTypes.has(a.id);
-          })
-        : [];
+      const builtInFallbacks =
+        chatEnableAgents && hasPerChatAgentList
+          ? BUILT_IN_AGENTS.filter((a) => {
+              if (resolvedTypes.has(a.id)) return false;
+              if (a.id === "chat-summary") return false;
+              return perChatAgentSet.has(a.id);
+            })
+          : [];
       for (const builtIn of builtInFallbacks) {
         resolvedAgents.push({
           id: `builtin:${builtIn.id}`,
@@ -1272,12 +1257,17 @@ export async function generateRoutes(app: FastifyInstance) {
         const charRow = await chars.getById(cid);
         if (charRow) {
           const charData = JSON.parse(charRow.data as string);
+          let scenario: string = charData.scenario ?? "";
+          // Strip assistant-only capabilities from Mari's scenario in non-conversation modes
+          if (chatMode !== "conversation" && charData.extensions?.isBuiltInAssistant) {
+            scenario = scenario.replace(/<assistant_capabilities>[\s\S]*?<\/assistant_capabilities>/gi, "").trim();
+          }
           charInfo.push({
             id: cid,
             name: charData.name ?? "Unknown",
             description: charData.description ?? "",
             personality: charData.personality ?? "",
-            scenario: charData.scenario ?? "",
+            scenario,
             systemPrompt: charData.system_prompt ?? "",
           });
         }

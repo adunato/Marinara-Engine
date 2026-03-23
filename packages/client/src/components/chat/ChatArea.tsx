@@ -324,26 +324,26 @@ export function ChatArea() {
   const streamingCharacterId = useChatStore((s) => s.streamingCharacterId);
   const updateMeta = useUpdateChatMetadata();
 
-  // Restore per-chat background from metadata when loading a chat.
-  // Clearing is handled by setActiveChatId on actual chat switches, so we only
-  // SET the background here — never clear it (avoids wiping agent-set backgrounds
-  // that haven't been persisted to metadata yet, e.g. on editor-panel remount).
+  // Restore per-chat background from metadata when switching chats.
+  // If the new chat has a saved background, apply it; otherwise clear it.
   useEffect(() => {
     const bg = chatMeta.background as string | undefined;
     if (bg) {
       useUIStore.getState().setChatBackground(`/api/backgrounds/file/${encodeURIComponent(bg)}`);
+    } else {
+      useUIStore.getState().setChatBackground(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat?.id]);
 
   // Persist background choice to chat metadata so it survives page refresh.
   // Catches all sources: manual picker, background agent, scene commands, slash commands.
+  // Only persist non-null backgrounds — never write null to metadata (avoids wiping
+  // the user's background when opening a new chat that hasn't had one set yet).
   const bgPersistTimer = useRef<ReturnType<typeof setTimeout>>(null);
   useEffect(() => {
-    if (!chat?.id) return;
-    const filename = chatBackground
-      ? decodeURIComponent(chatBackground.replace(/^\/api\/backgrounds\/file\//, ""))
-      : null;
+    if (!chat?.id || !chatBackground) return;
+    const filename = decodeURIComponent(chatBackground.replace(/^\/api\/backgrounds\/file\//, ""));
     // Skip if metadata already matches (avoids pointless writes on restore)
     if (filename === (chatMeta.background ?? null)) return;
     if (bgPersistTimer.current) clearTimeout(bgPersistTimer.current);

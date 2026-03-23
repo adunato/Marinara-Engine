@@ -411,7 +411,7 @@ export function ChatSidebar() {
                 )}
 
                 {/* Mode badge on hover */}
-                <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100">
+                <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
                   {cfg.shortLabel}
                 </span>
 
@@ -428,7 +428,7 @@ export function ChatSidebar() {
                       }
                     }
                   }}
-                  className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100"
+                  className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
                 >
                   <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
                 </button>

@@ -19,12 +19,13 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useConnections } from "../../hooks/use-connections";
-import { usePresets } from "../../hooks/use-presets";
+import { usePresets, usePresetFull } from "../../hooks/use-presets";
 import { useCharacters, usePersonas } from "../../hooks/use-characters";
 import { useLorebooks } from "../../hooks/use-lorebooks";
 import { useUpdateChat, useUpdateChatMetadata, useCreateMessage } from "../../hooks/use-chats";
 import { useUIStore } from "../../stores/ui.store";
 import { api } from "../../lib/api-client";
+import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import type { Chat } from "@marinara-engine/shared";
 
 // ─── Step definitions ─────────────────────────
@@ -156,7 +157,13 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
 
   const handleStartChatting = useCallback(async () => {
     if (!hasConnection || !hasCharacters) return;
-    await updateMeta.mutateAsync({ id: chat.id, autonomousMessages: autonomousEnabled });
+    // Apply user's saved custom conversation prompt (if any) to this new chat
+    const savedPrompt = useUIStore.getState().customConversationPrompt;
+    await updateMeta.mutateAsync({
+      id: chat.id,
+      autonomousMessages: autonomousEnabled,
+      ...(savedPrompt ? { customSystemPrompt: savedPrompt } : {}),
+    });
     if (autonomousEnabled && generateSchedule) {
       setScheduleState("generating");
       try {
@@ -180,7 +187,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
           initial={{ opacity: 0, y: 16, scale: 0.97 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.2, ease: "easeOut" }}
-          className="pointer-events-auto w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl overflow-hidden"
+          className="pointer-events-auto w-full max-w-sm max-h-[90vh] flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl overflow-hidden"
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
@@ -196,7 +203,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
             </button>
           </div>
 
-          <div className="p-4 space-y-4">
+          <div className="p-4 space-y-4 overflow-y-auto min-h-0 flex-1">
             {/* Conversation name */}
             <div className="space-y-1.5">
               <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
@@ -496,11 +503,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const [step, setStep] = useState(0);
   const currentStep = STEPS[step]!;
   const isLast = step === STEPS.length - 1;
+  const [showChoiceModal, setShowChoiceModal] = useState(false);
 
   const updateChat = useUpdateChat();
   const updateMeta = useUpdateChatMetadata();
   const createMessage = useCreateMessage(chat.id);
   const openRightPanel = useUIStore((s) => s.openRightPanel);
+
+  // Fetch full preset data to check for choice blocks (variables)
+  const { data: presetFull, isLoading: presetFullLoading } = usePresetFull(chat.promptPresetId ?? null);
 
   const { data: connections } = useConnections();
   const { data: presets } = usePresets();
@@ -632,15 +643,24 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const [charSearch, setCharSearch] = useState("");
   const [lbSearch, setLbSearch] = useState("");
 
+  // On the preset step, wait for full preset data before allowing advance
+  const isPresetStep = currentStep.key === "preset";
+  const nextDisabled = isPresetStep && !!chat.promptPresetId && presetFullLoading;
+
   const next = useCallback(() => {
     if (isLast) {
       onFinish();
     } else {
+      // When leaving the preset step (index 1), show the choice modal if the preset has variables
+      if (currentStep.key === "preset" && chat.promptPresetId && presetFull?.choiceBlocks?.length) {
+        setShowChoiceModal(true);
+        return;
+      }
       setStep((s) => s + 1);
       setCharSearch("");
       setLbSearch("");
     }
-  }, [isLast, onFinish]);
+  }, [isLast, onFinish, currentStep.key, chat.promptPresetId, presetFull?.choiceBlocks?.length]);
 
   // ─── Step content renderers ───────────────────
 
@@ -878,8 +898,26 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       {/* Backdrop */}
       <div className="absolute inset-0 z-40 bg-black/40 backdrop-blur-[3px]" onClick={onFinish} />
 
-      {/* Wizard card — centered */}
-      <div className="absolute inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+      {/* Preset variable selection modal */}
+      <ChoiceSelectionModal
+        open={showChoiceModal}
+        onClose={() => {
+          setShowChoiceModal(false);
+          setStep((s) => s + 1);
+          setCharSearch("");
+          setLbSearch("");
+        }}
+        presetId={chat.promptPresetId ?? null}
+        chatId={chat.id}
+      />
+
+      {/* Wizard card — centered (hidden while choice modal is open) */}
+      <div
+        className={cn(
+          "absolute inset-0 z-50 flex items-center justify-center p-4 pointer-events-none",
+          showChoiceModal && "hidden",
+        )}
+      >
         <AnimatePresence mode="wait">
           <motion.div
             key={step}
@@ -938,7 +976,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
               </button>
               <button
                 onClick={next}
-                className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-4 py-1.5 text-xs font-medium text-[var(--primary-foreground)] shadow-sm transition-all hover:opacity-90 active:scale-95"
+                disabled={nextDisabled}
+                className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-4 py-1.5 text-xs font-medium text-[var(--primary-foreground)] shadow-sm transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
               >
                 {isLast ? "Done" : "Next"}
                 {isLast ? <Check size="0.75rem" /> : <ChevronRight size="0.75rem" />}

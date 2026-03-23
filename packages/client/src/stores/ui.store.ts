@@ -90,6 +90,10 @@ interface UIState {
   // ── Sound ──
   convoNotificationSound: boolean;
 
+  // ── Custom Conversation Prompt ──
+  /** User's custom default system prompt for new conversations (null = built-in default). */
+  customConversationPrompt: string | null;
+
   // ── Input ──
   enterToSendRP: boolean;
   enterToSendConvo: boolean;
@@ -175,6 +179,7 @@ interface UIState {
   setConvoGradientFrom: (v: string) => void;
   setConvoGradientTo: (v: string) => void;
   setConvoNotificationSound: (v: boolean) => void;
+  setCustomConversationPrompt: (v: string | null) => void;
   setEnterToSendRP: (v: boolean) => void;
   setEnterToSendConvo: (v: boolean) => void;
   setWeatherEffects: (v: boolean) => void;
@@ -232,6 +237,7 @@ export const useUIStore = create<UIState>()(
       convoGradientFrom: "#0a0a0e",
       convoGradientTo: "#1c2133",
       convoNotificationSound: true,
+      customConversationPrompt: null,
       enterToSendRP: false,
       enterToSendConvo: true,
       weatherEffects: true,
@@ -409,6 +415,7 @@ export const useUIStore = create<UIState>()(
       setConvoGradientFrom: (v) => set({ convoGradientFrom: v }),
       setConvoGradientTo: (v) => set({ convoGradientTo: v }),
       setConvoNotificationSound: (v) => set({ convoNotificationSound: v }),
+      setCustomConversationPrompt: (v) => set({ customConversationPrompt: v }),
       setEnterToSendRP: (v) => set({ enterToSendRP: v }),
       setEnterToSendConvo: (v) => set({ enterToSendConvo: v }),
       setWeatherEffects: (v) => set({ weatherEffects: v }),
@@ -505,7 +512,9 @@ export const useUIStore = create<UIState>()(
         linkApiBannerDismissed: state.linkApiBannerDismissed,
         echoChamberSide: state.echoChamberSide,
         userStatusManual: state.userStatusManual,
+        userStatus: state.userStatus,
         convoNotificationSound: state.convoNotificationSound,
+        customConversationPrompt: state.customConversationPrompt,
       }),
     },
   ),

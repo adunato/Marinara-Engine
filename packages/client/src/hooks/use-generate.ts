@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // React Query: Generation (streaming + agent pipeline)
 // ──────────────────────────────────────────────
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../lib/api-client";
@@ -28,7 +28,6 @@ import type { Message } from "@marinara-engine/shared";
  */
 export function useGenerate() {
   const qc = useQueryClient();
-  const generatingRef = useRef(false);
   // Use individual selectors to avoid re-rendering on every store change
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setStreamBuffer = useChatStore((s) => s.setStreamBuffer);
@@ -60,32 +59,42 @@ export function useGenerate() {
       impersonate?: boolean;
       attachments?: Array<{ type: string; data: string }>;
     }) => {
-      // Prevent concurrent generations — if one is already in progress for
-      // the SAME chat, skip. This stops race conditions where autonomous
-      // messaging + user input both fire generate at once.
-      if (generatingRef.current) {
-        console.warn("[Generate] Skipped — generation already in progress");
+      // Prevent concurrent generations for the SAME chat — stops race conditions
+      // where autonomous messaging + user input both fire generate at once.
+      // Different chats CAN generate concurrently (e.g. idle/DnD delay in chat A
+      // while the user sends in chat B).
+      // Uses the shared abortControllers map as the source of truth so ALL callers
+      // of useGenerate() coordinate (the old per-instance useRef could diverge).
+      if (useChatStore.getState().abortControllers.has(params.chatId)) {
+        console.warn("[Generate] Skipped — generation already in progress for this chat");
         return false;
       }
-      generatingRef.current = true;
 
-      // Abort any in-progress generation before starting a new one.
-      // This prevents corrupted state when the user sends in Chat B
-      // while Chat A is still streaming (singleton streaming state).
-      const prev = useChatStore.getState().abortController;
+      // Abort any in-progress generation for the SAME chat before starting a new one.
+      const prev = useChatStore.getState().abortControllers.get(params.chatId);
       if (prev) prev.abort();
 
       // Create an AbortController so the stop button can cancel this generation
       const abortController = new AbortController();
-      useChatStore.getState().setAbortController(abortController);
+      useChatStore.getState().setAbortController(params.chatId, abortController);
 
-      setStreaming(true, params.chatId);
-      clearStreamBuffer();
-      clearThoughtBubbles();
-      clearEchoMessages();
-      clearFailedAgentTypes();
-      clearDebugLog();
-      setRegenerateMessageId(params.regenerateMessageId ?? null);
+      // Helper: returns true when this generation's chat is the one the user is viewing.
+      // Used to guard global UI state updates (typing indicator, delayed info, stream
+      // buffer, etc.) so that a background chat's events don't corrupt the active view.
+      const isActiveChat = () => useChatStore.getState().activeChatId === params.chatId;
+
+      // Only touch global streaming UI state if the user is viewing this chat.
+      // Background generations (e.g. autonomous messaging) run silently,
+      // tracked only by abortControllers.
+      if (isActiveChat()) {
+        setStreaming(true, params.chatId);
+        clearStreamBuffer();
+        clearThoughtBubbles();
+        clearEchoMessages();
+        clearFailedAgentTypes();
+        clearDebugLog();
+        setRegenerateMessageId(params.regenerateMessageId ?? null);
+      }
       console.warn("[Generate] Starting generation for chat:", params.chatId);
 
       // Optimistically show the user message in the chat immediately
@@ -148,7 +157,7 @@ export function useGenerate() {
         fullBuffer += pendingText;
         pendingText = "";
         typingActive = false;
-        if (fullBuffer) setStreamBuffer(fullBuffer);
+        if (fullBuffer && isActiveChat()) setStreamBuffer(fullBuffer);
       };
 
       const startTypewriter = () => {
@@ -170,7 +179,7 @@ export function useGenerate() {
           const batch = pendingText.slice(0, n);
           pendingText = pendingText.slice(n);
           fullBuffer += batch;
-          setStreamBuffer(fullBuffer);
+          if (isActiveChat()) setStreamBuffer(fullBuffer);
           if (tickDelay > 0) {
             timeoutId = setTimeout(tick, tickDelay);
           } else {
@@ -200,8 +209,13 @@ export function useGenerate() {
           switch (event.type) {
             case "token": {
               receivedContent = true;
-              setTypingCharacterName(null); // Clear typing indicator once response starts
-              setDelayedCharacterInfo(null); // Clear delayed indicator too
+              // Always clear per-chat indicators so switching back shows nothing
+              useChatStore.getState().setPerChatTyping(params.chatId, null);
+              useChatStore.getState().setPerChatDelayed(params.chatId, null);
+              if (isActiveChat()) {
+                setTypingCharacterName(null); // Clear typing indicator once response starts
+                setDelayedCharacterInfo(null); // Clear delayed indicator too
+              }
               if (streamingEnabled) {
                 pendingText += event.data as string;
                 startTypewriter();
@@ -213,11 +227,13 @@ export function useGenerate() {
             }
 
             case "agent_start": {
-              setProcessing(true);
+              if (isActiveChat()) setProcessing(true);
               break;
             }
 
             case "agent_debug": {
+              // Only update debug UI for the active chat
+              if (!isActiveChat()) break;
               const debug = event.data as {
                 phase: string;
                 agents?: Array<{ type: string; name: string; model: string; maxTokens: number }>;
@@ -272,18 +288,6 @@ export function useGenerate() {
                 durationMs: number;
               };
 
-              // Store the result
-              addResult(result.agentType, {
-                agentId: result.agentType,
-                agentType: result.agentType,
-                type: result.resultType as any,
-                data: result.data,
-                tokensUsed: 0,
-                durationMs: result.durationMs,
-                success: result.success,
-                error: result.error,
-              });
-
               // Always log agent results to console for visibility (use warn so it shows even if Info is filtered)
               if (result.success) {
                 console.warn(
@@ -296,6 +300,22 @@ export function useGenerate() {
                   result.data,
                 );
               }
+
+              // Only update agent/game/UI stores for the active chat so a
+              // background generation doesn't corrupt what the user sees.
+              if (!isActiveChat()) break;
+
+              // Store the result
+              addResult(result.agentType, {
+                agentId: result.agentType,
+                agentType: result.agentType,
+                type: result.resultType as any,
+                data: result.data,
+                tokensUsed: 0,
+                durationMs: result.durationMs,
+                success: result.success,
+                error: result.error,
+              });
 
               // Display as thought bubble for informational agents
               if (result.success && result.data) {
@@ -462,10 +482,10 @@ export function useGenerate() {
                 // Reset the stream buffer for the new character
                 fullBuffer = "";
                 pendingText = "";
-                setStreamBuffer("");
+                if (isActiveChat()) setStreamBuffer("");
               }
 
-              setStreamingCharacterId(turn.characterId);
+              if (isActiveChat()) setStreamingCharacterId(turn.characterId);
               break;
             }
 
@@ -473,6 +493,7 @@ export function useGenerate() {
             case "game_state_patch": {
               const patch = event.data as Record<string, unknown>;
               console.warn(`[Generate] ${event.type} received:`, patch);
+              if (!isActiveChat()) break;
               const current = useGameStateStore.getState().current;
               if (current) {
                 const merged = { ...current, ...patch };
@@ -501,8 +522,7 @@ export function useGenerate() {
 
             case "chat_summary": {
               // Refresh the chat detail so the summary popover picks up the new value
-              const chatId = useChatStore.getState().activeChatId;
-              if (chatId) qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
+              qc.invalidateQueries({ queryKey: chatKeys.detail(params.chatId) });
               break;
             }
 
@@ -510,7 +530,7 @@ export function useGenerate() {
               // Consistency Editor replaced the message — update displayed text
               const rw = event.data as { editedText?: string; changes?: Array<{ description: string }> };
               if (rw.editedText) {
-                if (streamingEnabled) {
+                if (streamingEnabled && isActiveChat()) {
                   // Drain any pending typewriter first
                   if (pendingText.length > 0 || typingActive) {
                     cancelAnimationFrame(rafId);
@@ -531,7 +551,7 @@ export function useGenerate() {
             case "content_replace": {
               // Server stripped character commands — replace the displayed content
               const cleanContent = event.data as string;
-              if (streamingEnabled) {
+              if (streamingEnabled && isActiveChat()) {
                 cancelAnimationFrame(rafId);
                 if (timeoutId !== undefined) {
                   clearTimeout(timeoutId);
@@ -561,7 +581,7 @@ export function useGenerate() {
             }
 
             case "selfie": {
-              setTypingCharacterName(null);
+              if (isActiveChat()) setTypingCharacterName(null);
               const selfieData = event.data as {
                 characterId: string;
                 characterName: string;
@@ -575,7 +595,7 @@ export function useGenerate() {
             }
 
             case "selfie_error": {
-              setTypingCharacterName(null);
+              if (isActiveChat()) setTypingCharacterName(null);
               const errData = event.data as { characterId: string; error: string };
               console.warn("[selfie] Generation failed:", errData.error);
               toast.error(`Selfie generation failed: ${errData.error}`);
@@ -626,7 +646,7 @@ export function useGenerate() {
             }
 
             case "done": {
-              setProcessing(false);
+              if (isActiveChat()) setProcessing(false);
               break;
             }
 
@@ -634,7 +654,8 @@ export function useGenerate() {
               // Generation is about to start — show "X is typing..."
               const typingNames = (event as any).characters as string[] | undefined;
               const typingLabel = typingNames?.length === 1 ? typingNames[0] : (typingNames?.join(", ") ?? "Character");
-              setTypingCharacterName(typingLabel);
+              useChatStore.getState().setPerChatTyping(params.chatId, typingLabel);
+              if (isActiveChat()) setTypingCharacterName(typingLabel);
               break;
             }
 
@@ -644,7 +665,8 @@ export function useGenerate() {
               const delayedLabel =
                 delayedNames?.length === 1 ? delayedNames[0] : (delayedNames?.join(", ") ?? "Character");
               const delayedStatus = ((event as any).status as string) ?? "idle";
-              setDelayedCharacterInfo({ name: delayedLabel, status: delayedStatus });
+              useChatStore.getState().setPerChatDelayed(params.chatId, { name: delayedLabel, status: delayedStatus });
+              if (isActiveChat()) setDelayedCharacterInfo({ name: delayedLabel, status: delayedStatus });
               // Refresh character data so sidebar status dots update immediately
               qc.invalidateQueries({ queryKey: characterKeys.list() });
               break;
@@ -655,7 +677,7 @@ export function useGenerate() {
               const names = (event as any).characters as string[] | undefined;
               const label = names?.length === 1 ? names[0] : "Characters";
               toast(`${label} is offline. They'll respond when they're back online.`, { icon: "💤" });
-              setProcessing(false);
+              if (isActiveChat()) setProcessing(false);
               break;
             }
 
@@ -671,7 +693,7 @@ export function useGenerate() {
             case "error": {
               // Flush pending text so the user sees what arrived before the error
               flushTypewriterBuffer();
-              setProcessing(false);
+              if (isActiveChat()) setProcessing(false);
               showError((event.data as string) || "Generation failed");
               break;
             }
@@ -689,7 +711,7 @@ export function useGenerate() {
         }
 
         // Wait for typewriter to finish draining pending text (streaming mode only)
-        if (streamingEnabled && (pendingText.length > 0 || typingActive)) {
+        if (streamingEnabled && isActiveChat() && (pendingText.length > 0 || typingActive)) {
           await new Promise<void>((resolve) => {
             if (pendingText.length === 0 && !typingActive) {
               resolve();
@@ -699,8 +721,8 @@ export function useGenerate() {
             startTypewriter();
           });
         }
-        // Final flush — ensure full content is set
-        setStreamBuffer(fullBuffer + pendingText);
+        // Final flush — ensure full content is set (only for the viewed chat)
+        if (isActiveChat()) setStreamBuffer(fullBuffer + pendingText);
       } catch (error) {
         // Flush everything instantly on error so user sees what arrived
         flushTypewriterBuffer();
@@ -733,21 +755,28 @@ export function useGenerate() {
         // because two generations can target the same chat (e.g. autonomous
         // + user send). The latest generation replaces the AbortController,
         // so the superseded one knows it no longer owns the state.
-        const stillOwner = useChatStore.getState().abortController === abortController;
+        const stillOwner = useChatStore.getState().abortControllers.get(params.chatId) === abortController;
         if (stillOwner) {
-          // Wait one frame so React renders the fetched messages before
-          // removing the streaming overlay — prevents a visible flash.
-          await new Promise<void>((r) => requestAnimationFrame(() => r()));
-          setStreaming(false);
-          setProcessing(false);
-          clearStreamBuffer();
-          setRegenerateMessageId(null);
-          setStreamingCharacterId(null);
-          setTypingCharacterName(null);
-          setDelayedCharacterInfo(null);
-          useChatStore.getState().setAbortController(null);
+          // Only clear global streaming/UI state if this chat is still the one
+          // being displayed, to avoid corrupting another chat's active generation.
+          if (useChatStore.getState().streamingChatId === params.chatId) {
+            // Wait one frame so React renders the fetched messages before
+            // removing the streaming overlay — prevents a visible flash.
+            await new Promise<void>((r) => requestAnimationFrame(() => r()));
+            setStreaming(false);
+            clearStreamBuffer();
+          }
+          if (isActiveChat()) {
+            setProcessing(false);
+            setRegenerateMessageId(null);
+            setStreamingCharacterId(null);
+            setTypingCharacterName(null);
+            setDelayedCharacterInfo(null);
+          }
+          // Always clean up per-chat tracking for this generation
+          useChatStore.getState().clearPerChatState(params.chatId);
+          useChatStore.getState().setAbortController(params.chatId, null);
         }
-        generatingRef.current = false;
       }
       return receivedContent;
     },
@@ -776,8 +805,9 @@ export function useGenerate() {
 
   const retryAgents = useCallback(
     async (chatId: string, agentTypes: string[]) => {
+      const isActiveChat = () => useChatStore.getState().activeChatId === chatId;
       const abortController = new AbortController();
-      useChatStore.getState().setAbortController(abortController);
+      useChatStore.getState().setAbortController(chatId, abortController);
       setProcessing(true);
       clearFailedAgentTypes();
       clearThoughtBubbles();
@@ -908,6 +938,7 @@ export function useGenerate() {
             case "game_state_patch": {
               const patch = event.data as Record<string, unknown>;
               console.warn(`[Retry] ${event.type} received:`, patch);
+              if (!isActiveChat()) break;
               const current = useGameStateStore.getState().current;
               if (current) {
                 const merged = { ...current, ...patch };
@@ -952,7 +983,7 @@ export function useGenerate() {
         showError(msg);
       } finally {
         setProcessing(false);
-        useChatStore.getState().setAbortController(null);
+        useChatStore.getState().setAbortController(chatId, null);
       }
     },
     [

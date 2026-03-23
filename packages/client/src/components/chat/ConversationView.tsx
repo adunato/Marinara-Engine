@@ -297,8 +297,8 @@ export function ConversationView({
   // Strip leaked timestamps like [16:08] or [18.03.2026] from assistant content.
   const stripTimestamps = (text: string) =>
     text
-      .replace(/^\s*\[\d{1,2}[:.:]\d{2}\]\s*/gm, "")
-      .replace(/^\s*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*/gm, "")
+      .replace(/^(\s*\[\d{1,2}[:.:]\d{2}\]\s*)+/gm, "")
+      .replace(/^(\s*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*)+/gm, "")
       .trim();
 
   const renderedItems = useMemo(() => {

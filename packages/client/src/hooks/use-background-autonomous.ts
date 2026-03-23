@@ -102,8 +102,8 @@ export function useBackgroundAutonomousPolling() {
 
       // Check each background chat (sequentially to avoid hammering the server)
       for (const chat of backgroundChats) {
-        // Don't proceed if the active chat started streaming while we were checking
-        if (useChatStore.getState().isStreaming) break;
+        // Don't proceed if this chat already has an in-flight generation
+        if (useChatStore.getState().abortControllers.has(chat.id)) continue;
 
         try {
           const result = await api.post<AutonomousCheckResult>("/conversation/autonomous/check", { chatId: chat.id });
@@ -118,9 +118,9 @@ export function useBackgroundAutonomousPolling() {
             generatingForRef.current.add(chat.id);
             const doGenerate = async () => {
               try {
-                // Re-check streaming guard — a foreground generation may have
-                // started during the busy delay.
-                if (useChatStore.getState().isStreaming) {
+                // Re-check guard — a generation may have started for this chat
+                // during the busy delay.
+                if (useChatStore.getState().abortControllers.has(chat.id)) {
                   generatingForRef.current.delete(chat.id);
                   return;
                 }

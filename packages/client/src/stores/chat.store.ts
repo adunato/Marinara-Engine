@@ -18,8 +18,8 @@ interface ChatState {
   /** The chatId that the current streaming generation belongs to. */
   streamingChatId: string | null;
   streamBuffer: string;
-  /** Active AbortController for the current generation — call .abort() to stop. */
-  abortController: AbortController | null;
+  /** Per-chat AbortControllers for active generations — keyed by chatId. */
+  abortControllers: Map<string, AbortController>;
   /** When regenerating, the ID of the message being regenerated (so streaming shows in-place). */
   regenerateMessageId: string | null;
   /** During group chat individual mode, the character currently streaming. */
@@ -28,6 +28,10 @@ interface ChatState {
   typingCharacterName: string | null;
   /** Character name + status shown during DND/idle delay (before generation starts). */
   delayedCharacterInfo: { name: string; status: string } | null;
+  /** Per-chat typing state so switching chats restores the correct indicator. */
+  perChatTyping: Map<string, string>;
+  /** Per-chat delayed state so switching chats restores the correct indicator. */
+  perChatDelayed: Map<string, { name: string; status: string }>;
   swipeIndex: Map<string, number>; // messageId → active swipe index
   /** When true, ChatArea should open the settings drawer on next render. */
   shouldOpenSettings: boolean;
@@ -45,7 +49,7 @@ interface ChatState {
   addMessage: (message: Message) => void;
   updateLastMessage: (content: string) => void;
   setStreaming: (streaming: boolean, chatId?: string) => void;
-  setAbortController: (controller: AbortController | null) => void;
+  setAbortController: (chatId: string, controller: AbortController | null) => void;
   stopGeneration: () => void;
   appendStreamBuffer: (text: string) => void;
   setStreamBuffer: (text: string) => void;
@@ -54,6 +58,9 @@ interface ChatState {
   setStreamingCharacterId: (id: string | null) => void;
   setTypingCharacterName: (name: string | null) => void;
   setDelayedCharacterInfo: (info: { name: string; status: string } | null) => void;
+  setPerChatTyping: (chatId: string, name: string | null) => void;
+  setPerChatDelayed: (chatId: string, info: { name: string; status: string } | null) => void;
+  clearPerChatState: (chatId: string) => void;
   setSwipeIndex: (messageId: string, index: number) => void;
   setShouldOpenSettings: (v: boolean) => void;
   setShouldOpenWizard: (v: boolean) => void;
@@ -78,11 +85,13 @@ export const useChatStore = create<ChatState>()(
     isStreaming: false,
     streamingChatId: null,
     streamBuffer: "",
-    abortController: null,
+    abortControllers: new Map(),
     regenerateMessageId: null,
     streamingCharacterId: null,
     typingCharacterName: null,
     delayedCharacterInfo: null,
+    perChatTyping: new Map(),
+    perChatDelayed: new Map(),
     swipeIndex: new Map(),
     shouldOpenSettings: false,
     shouldOpenWizard: false,
@@ -107,7 +116,24 @@ export const useChatStore = create<ChatState>()(
       if (id !== prev) {
         useAgentStore.getState().reset();
         useGameStateStore.getState().setGameState(null);
-        useUIStore.getState().setChatBackground(null);
+        // Background is NOT cleared here — it's managed by ChatArea's restore effect.
+        // Clearing it would cause a black flash and wipe the background for new chats.
+        // Restore per-chat typing/delayed indicators for the newly active chat
+        if (id) {
+          const { perChatTyping, perChatDelayed, abortControllers } = get();
+          const typing = perChatTyping.get(id) ?? null;
+          const delayed = perChatDelayed.get(id) ?? null;
+          // If this chat has an active generation, restore streaming state so the
+          // UI shows the typing indicator, stream buffer, and stop button.
+          const hasActiveGeneration = abortControllers.has(id);
+          set({
+            typingCharacterName: typing,
+            delayedCharacterInfo: delayed,
+            ...(hasActiveGeneration && { isStreaming: true, streamingChatId: id }),
+          });
+        } else {
+          set({ typingCharacterName: null, delayedCharacterInfo: null });
+        }
       }
       try {
         if (id) localStorage.setItem(STORAGE_KEY, id);
@@ -132,10 +158,19 @@ export const useChatStore = create<ChatState>()(
 
     setStreaming: (streaming, chatId) =>
       set({ isStreaming: streaming, streamingChatId: streaming ? (chatId ?? null) : null }),
-    setAbortController: (controller) => set({ abortController: controller }),
+    setAbortController: (chatId, controller) =>
+      set((state) => {
+        const m = new Map(state.abortControllers);
+        if (controller) m.set(chatId, controller);
+        else m.delete(chatId);
+        return { abortControllers: m };
+      }),
     stopGeneration: () => {
-      const { abortController } = useChatStore.getState();
-      if (abortController) abortController.abort();
+      const { streamingChatId, abortControllers } = useChatStore.getState();
+      if (streamingChatId) {
+        const ctrl = abortControllers.get(streamingChatId);
+        if (ctrl) ctrl.abort();
+      }
     },
     appendStreamBuffer: (text) => set((state) => ({ streamBuffer: state.streamBuffer + text })),
     setStreamBuffer: (text) => set({ streamBuffer: text }),
@@ -148,6 +183,35 @@ export const useChatStore = create<ChatState>()(
     setTypingCharacterName: (name) => set({ typingCharacterName: name, delayedCharacterInfo: null }),
 
     setDelayedCharacterInfo: (info) => set({ delayedCharacterInfo: info, typingCharacterName: null }),
+
+    setPerChatTyping: (chatId: string, name: string | null) =>
+      set((state) => {
+        const m = new Map(state.perChatTyping);
+        if (name) m.set(chatId, name);
+        else m.delete(chatId);
+        const d = new Map(state.perChatDelayed);
+        if (name) d.delete(chatId); // typing clears delayed
+        return { perChatTyping: m, perChatDelayed: d };
+      }),
+
+    setPerChatDelayed: (chatId: string, info: { name: string; status: string } | null) =>
+      set((state) => {
+        const d = new Map(state.perChatDelayed);
+        if (info) d.set(chatId, info);
+        else d.delete(chatId);
+        const t = new Map(state.perChatTyping);
+        if (info) t.delete(chatId);
+        return { perChatDelayed: d, perChatTyping: t };
+      }),
+
+    clearPerChatState: (chatId: string) =>
+      set((state) => {
+        const t = new Map(state.perChatTyping);
+        const d = new Map(state.perChatDelayed);
+        t.delete(chatId);
+        d.delete(chatId);
+        return { perChatTyping: t, perChatDelayed: d };
+      }),
 
     setShouldOpenSettings: (v) => set({ shouldOpenSettings: v }),
 
@@ -195,11 +259,15 @@ export const useChatStore = create<ChatState>()(
         activeChat: null,
         messages: [],
         isStreaming: false,
+        streamingChatId: null,
         streamBuffer: "",
-        abortController: null,
+        abortControllers: new Map(),
+        regenerateMessageId: null,
         streamingCharacterId: null,
         typingCharacterName: null,
         delayedCharacterInfo: null,
+        perChatTyping: new Map(),
+        perChatDelayed: new Map(),
         swipeIndex: new Map(),
         inputDrafts: new Map(),
         unreadCounts: new Map(),
