@@ -55,14 +55,6 @@ export async function connectionsRoutes(app: FastifyInstance) {
       const baseUrl = conn.baseUrl || provider?.defaultBaseUrl || "";
 
       
-      if (!baseUrl) {
-        return {
-          success: false,
-          message: "No base URL configured for this provider",
-          latencyMs: 0,
-          modelName: null,
-        };
-      }
       
       if (!baseUrl) {
         return {
