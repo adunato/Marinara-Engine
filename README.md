@@ -81,32 +81,6 @@
 - "Clear Trackers" now also clears committed agent runs and agent memory from the database
 - Removed unused connections data from profile export envelope
 
-### v1.4.4
-
-**Added:**
-
-- **Lorebook Depth Injection** — Lorebook entries with depth > 0 are now properly injected at the correct position in the prompt. Previously, depth entries were computed but never inserted into the message array (in both conversation and preset assembly modes).
-- **Full Persona Context for Agents** — Agents now receive personality, backstory, appearance, scenario, and RPG stats in their `<lore>` block, giving them richer context for more accurate responses.
-- **RPG Stats in Main Prompt** — Persona RPG attributes (HP, MP, stat bars) are now injected into the main generation prompt alongside the persona description.
-- **Image Generation Support** - Better support of image generation endpoints and a button to generate an image on demand.
-
-**Improved:**
-
-- **Agent Prompt Architecture** — Restructured agent prompts into a clean `<role>` + `<lore>` + `<agents>` system message, with multi-turn chat history as USER/ASSISTANT pairs. Reduces token usage and improves agent response quality.
-- **Agent Cost Optimization** — Compact JSON output (removed pretty-printing), reduced default agent context from 8 to 5 messages, and added full prompt logging for debugging.
-- **Retry Agents** — Fixed `/retry-agents` to use batched execution with provider+model grouping, proper context slicing, and full persona resolution (was previously passing blank persona and entire chat history).
-- **Background & Spotify Agents** — Removed redundant `reason` field from output schemas to reduce token waste.
-- **Stat Bar UI Simplification** — Removed manual value inputs from HP/MP and stat bars in both Persona and Character editors. The model now controls current values; users only set the max.
-
-**Bug Fixes:**
-
-- **iOS Safe Area** — Fixed close buttons and interactive elements being obscured by the iPhone status bar (battery/time/signal icons) on all fullscreen overlays, modals, drawers, and panels. Added `env(safe-area-inset-top)` padding to 16 components.
-- **Expression Agent Persistence** — Sprite expressions set by the Expression agent now survive page reloads. Previously, keyword-based fallback detection was overwriting saved agent expressions on every chat load.
-- **Chat Input Flash** — Fixed text momentarily disappearing when pressing Enter to create newlines in the chat input. Caused by a debounced auto-resize that briefly collapsed the textarea height.
-- **Preset Variable Bleed** — Preset choice variables (from `{{pick}}` macros) are now cleared when switching presets, preventing stale selections from one preset leaking into another.
-- **HTML Tag Stripping for Agents** — Agent prompts now strip HTML/XML styling tags from chat messages to prevent formatting artifacts from confusing the model.
-- **Chat Summary Removed from Agents** — Removed chat summary injection from agent calls to reduce noise and token usage.
-
 ---
 
 ## Installation
