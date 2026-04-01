@@ -437,6 +437,7 @@ If you see an error like `EPERM: operation not permitted, open 'C:\Program Files
 - [Coda](https://github.com/coxde)
 - [Andy Mauragis](https://github.com/amauragis)
 - [LukaTheHero](https://github.com/LukaTheHero)
+- [TheLonelyDevil19](https://github.com/TheLonelyDevil9)
 
 ---
 
