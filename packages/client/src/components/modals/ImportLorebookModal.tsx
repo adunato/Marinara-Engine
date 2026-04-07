@@ -20,16 +20,20 @@ export function ImportLorebookModal({ open, onClose }: Props) {
 
   const handleFile = async (file: File) => {
     setStatus("loading");
+    setMessage("");
 
     try {
       const text = await file.text();
-      const json = JSON.parse(text);
+      const json = JSON.parse(text) as Record<string, unknown>;
 
-      // Pass the filename (without extension) as a fallback name
-      const fallbackName = file.name.replace(/\.json$/i, "");
-      json.__filename = fallbackName;
+      const isMarinaraLorebook = json.type === "marinara_lorebook" && json.version === 1;
+      const endpoint = isMarinaraLorebook ? "/api/import/marinara" : "/api/import/st-lorebook";
 
-      const res = await fetch("/api/import/st-lorebook", {
+      if (!isMarinaraLorebook) {
+        json.__filename = file.name.replace(/\.json$/i, "");
+      }
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(json),
