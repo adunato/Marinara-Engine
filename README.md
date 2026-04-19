@@ -326,7 +326,7 @@ Contributor workflow, validation, and release/version policy live in [CONTRIBUTI
 
 ### Chat & Roleplay
 
-- **Three Chat Modes** — Conversation (Discord-style), Roleplay (immersive RPG), Game (coming soon)
+- **Three Chat Modes** — Conversation (Discord-style), Roleplay (immersive RPG), Game (think of a mix between an RPG and a visual novel)
 - **Plug-And-Play** — Minimal setup and local-first defaults
 - **A Connected System** — Chats can share memory and context across modes
 - **Character Management** — Create or import characters with avatars, personalities, backstories, and system prompts
