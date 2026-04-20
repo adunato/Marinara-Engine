@@ -320,7 +320,7 @@ export const ChatInput = memo(function ChatInput({
       : {};
     if (chatMeta.translateInput && message.trim()) {
       try {
-        const { translateText } = await import("../../hooks/use-translate");
+        const { translateText } = await import("../../lib/translate-text");
         const translated = await translateText(message);
         if (translated.trim()) message = translated;
       } catch {

@@ -15,6 +15,7 @@ import { useChatStore } from "../stores/chat.store";
 import { useAgentStore } from "../stores/agent.store";
 import { useGameModeStore } from "../stores/game-mode.store";
 import { useGameStateStore } from "../stores/game-state.store";
+import { useTranslationStore } from "../stores/translation.store";
 import { useUIStore } from "../stores/ui.store";
 import { chatKeys } from "./use-chats";
 import { characterKeys } from "./use-characters";
@@ -1253,7 +1254,6 @@ export function useGenerate() {
                   : chatData.metadata
                 : {};
             if (meta.autoTranslate) {
-              const { useTranslationStore } = await import("./use-translate");
               const store = useTranslationStore.getState();
               for (const [id, msg] of persistedMessages) {
                 if (msg.role === "assistant" && msg.content && !store.translations[id]) {

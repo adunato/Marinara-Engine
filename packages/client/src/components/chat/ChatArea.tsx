@@ -44,7 +44,7 @@ import { useScene } from "../../hooks/use-scene";
 import { useEncounterStore } from "../../stores/encounter.store";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { BUILT_IN_AGENTS } from "@marinara-engine/shared";
-import { useTranslationStore } from "../../hooks/use-translate";
+import { useTranslationStore } from "../../stores/translation.store";
 import { mirrorSpritePlacements, normalizeSpritePlacements } from "./sprite-placement";
 import type { CharacterMap, MessageSelectionToggle, MessageWithSwipes, PeekPromptData } from "./chat-area.types";
 import { RecentChats } from "./RecentChats";

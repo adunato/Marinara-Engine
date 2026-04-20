@@ -275,7 +275,7 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
         : {};
       if (streamMeta.translateInput && message.trim()) {
         try {
-          const { translateText } = await import("../../hooks/use-translate");
+          const { translateText } = await import("../../lib/translate-text");
           const translated = await translateText(message);
           if (translated.trim()) message = translated;
         } catch {
@@ -331,7 +331,7 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
       : {};
     if (chatMeta.translateInput && message.trim()) {
       try {
-        const { translateText } = await import("../../hooks/use-translate");
+        const { translateText } = await import("../../lib/translate-text");
         const translated = await translateText(message);
         if (translated.trim()) message = translated;
       } catch {
