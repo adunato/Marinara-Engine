@@ -532,6 +532,8 @@ const DEFAULT_COMFYUI_WORKFLOW: Record<string, unknown> = {
   },
 };
 
+const COMFYUI_GEN_TIMEOUT = Number(process.env.COMFYUI_GEN_TIMEOUT ?? 120);
+
 async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promise<ImageGenResult> {
   const base = baseUrl.replace(/\/+$/, "");
   const seed = Math.floor(Math.random() * 2 ** 32);
@@ -581,8 +583,7 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
   const { prompt_id } = (await queueResp.json()) as { prompt_id: string };
 
   // Poll for completion (max ~120 seconds)
-  const maxAttempts = 120;
-  for (let i = 0; i < maxAttempts; i++) {
+  for (let i = 0; i < COMFYUI_GEN_TIMEOUT; i++) {
     await new Promise((r) => setTimeout(r, 1000));
 
     const historyResp = await fetch(`${base}/history/${prompt_id}`);
