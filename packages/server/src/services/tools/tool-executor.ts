@@ -41,9 +41,8 @@ export interface SpotifyCredentials {
 export async function executeToolCalls(
   toolCalls: LLMToolCall[],
   context?: {
-    db?: DB;
-    chatId?: string;
     chatMeta?: Record<string, unknown>;
+    onUpdateMetadata?: (patch: Record<string, unknown>) => Promise<void>;
     gameState?: Record<string, unknown>;
     customTools?: CustomToolDef[];
     searchLorebook?: LorebookSearchFn;
@@ -85,9 +84,8 @@ async function executeSingleTool(
   name: string,
   args: Record<string, unknown>,
   context?: {
-    db?: DB;
-    chatId?: string;
     chatMeta?: Record<string, unknown>;
+    onUpdateMetadata?: (patch: Record<string, unknown>) => Promise<void>;
     gameState?: Record<string, unknown>;
     customTools?: CustomToolDef[];
     searchLorebook?: LorebookSearchFn;
@@ -585,25 +583,20 @@ async function readChatSummary(context?: { chatMeta?: Record<string, unknown> })
 
 async function appendChatSummary(
   args: Record<string, unknown>,
-  context?: { db?: DB; chatId?: string; chatMeta?: Record<string, unknown> },
+  context?: { chatMeta?: Record<string, unknown>; onUpdateMetadata?: (patch: Record<string, unknown>) => Promise<void> },
 ): Promise<Record<string, unknown>> {
   const text = String(args.text ?? "").trim();
   if (!text) return { error: "text argument is required and cannot be empty" };
 
-  if (!context?.db || !context?.chatId) {
-    return { error: "Database context or Chat ID is missing. Summary cannot be updated." };
+  if (!context?.onUpdateMetadata) {
+    return { error: "Update handle is missing. Summary cannot be updated in this context." };
   }
 
   try {
-    const chatsStore = createChatsStorage(context.db);
-    const chat = await chatsStore.getById(context.chatId);
-    if (!chat) return { error: `Chat not found: ${context.chatId}` };
-
-    const meta = parseExtra(chat.metadata);
-    const existing = ((meta.summary as string) ?? "").trim();
+    const existing = ((context?.chatMeta?.summary as string) ?? "").trim();
     const combined = existing ? `${existing}\n\n${text}` : text;
 
-    await chatsStore.updateMetadata(context.chatId, { ...meta, summary: combined });
+    await context.onUpdateMetadata({ summary: combined });
 
     return {
       success: true,

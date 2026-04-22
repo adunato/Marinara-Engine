@@ -477,6 +477,11 @@ export function useGenerate() {
               break;
             }
 
+            case "metadata_patch": {
+              qc.invalidateQueries({ queryKey: chatKeys.detail(params.chatId) });
+              break;
+            }
+
             case "agent_start": {
               if (isActiveChat()) setProcessing(true);
               break;
@@ -1456,6 +1461,11 @@ export function useGenerate() {
               );
               break;
             }
+            case "metadata_patch": {
+              qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
+              break;
+            }
+
             case "game_state":
             case "game_state_patch": {
               const patch = event.data as Record<string, unknown>;

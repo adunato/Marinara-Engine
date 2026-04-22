@@ -3560,10 +3560,29 @@ export async function generateRoutes(app: FastifyInstance) {
       const spotifyCreds = spotifyAccessToken ? { accessToken: spotifyAccessToken } : undefined;
 
       // ── Tool Context Preparation (Shared) ──
+      const onUpdateMetadata = async (patch: Record<string, unknown>) => {
+        try {
+          const freshChat = await chats.getById(input.chatId);
+          if (!freshChat) return;
+
+          const meta = parseExtra(freshChat.metadata);
+          const updatedMeta = { ...meta, ...patch };
+
+          await chats.updateMetadata(input.chatId, updatedMeta);
+
+          // Update local reference so subsequent tools see the change
+          Object.assign(chatMeta, patch);
+
+          // Signal frontend to refresh metadata
+          reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: patch })}\n\n`);
+        } catch (err) {
+          console.warn("[tool_metadata_update] Failed to apply metadata patch:", err);
+        }
+      };
+
       const baseToolContext = {
-        db: app.db,
-        chatId: input.chatId,
         chatMeta: chatMeta,
+        onUpdateMetadata: onUpdateMetadata,
         customTools: customToolDefs,
         spotify: spotifyCreds,
         searchLorebook: async (query: string, category?: string | null) => {
