@@ -43,7 +43,7 @@ export async function executeToolCalls(
   context?: {
     db?: DB;
     chatId?: string;
-    chatSummary?: string | null;
+    chatMeta?: Record<string, unknown>;
     gameState?: Record<string, unknown>;
     customTools?: CustomToolDef[];
     searchLorebook?: LorebookSearchFn;
@@ -87,7 +87,7 @@ async function executeSingleTool(
   context?: {
     db?: DB;
     chatId?: string;
-    chatSummary?: string | null;
+    chatMeta?: Record<string, unknown>;
     gameState?: Record<string, unknown>;
     customTools?: CustomToolDef[];
     searchLorebook?: LorebookSearchFn;
@@ -575,16 +575,17 @@ async function spotifySetVolume(
   }
 }
 
-async function readChatSummary(context?: { chatSummary?: string | null }): Promise<Record<string, unknown>> {
+async function readChatSummary(context?: { chatMeta?: Record<string, unknown> }): Promise<Record<string, unknown>> {
+  const summary = (context?.chatMeta?.summary as string) ?? "";
   return {
-    summary: context?.chatSummary ?? "",
-    count: (context?.chatSummary ?? "").length,
+    summary,
+    count: summary.length,
   };
 }
 
 async function appendChatSummary(
   args: Record<string, unknown>,
-  context?: { db?: DB; chatId?: string; chatSummary?: string | null },
+  context?: { db?: DB; chatId?: string; chatMeta?: Record<string, unknown> },
 ): Promise<Record<string, unknown>> {
   const text = String(args.text ?? "").trim();
   if (!text) return { error: "text argument is required and cannot be empty" };
