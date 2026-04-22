@@ -373,9 +373,12 @@ export async function generateRoutes(app: FastifyInstance) {
       }
       let chatMessages = startIdx > 0 ? allChatMessages.slice(startIdx) : allChatMessages;
       let lorebookKeeperMessages = startIdx > 0 ? allChatMessages.slice(startIdx) : allChatMessages;
+      let regenMsg;
 
       // ── Regeneration as swipe: exclude the target message from context ──
       if (input.regenerateMessageId) {
+        regenMsg = chatMessages.find((m: any) => m.id === input.regenerateMessageId);
+        if (!regenMsg) return reply.code(404).send({ error: "Regenerated message not found" });
         chatMessages = chatMessages.filter((m: any) => m.id !== input.regenerateMessageId);
         lorebookKeeperMessages = lorebookKeeperMessages.filter((m: any) => m.id !== input.regenerateMessageId);
       }
@@ -3630,7 +3633,6 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       } else if (hasPreGenAgents && input.regenerateMessageId) {
         // Regeneration — try to reuse cached context injections from the original generation
-        const regenMsg = await chats.getMessage(input.regenerateMessageId);
         const regenExtra = parseExtra(regenMsg?.extra);
         const rawCached = regenExtra.contextInjections as AgentInjection[] | string[] | undefined;
 
@@ -4818,9 +4820,11 @@ export async function generateRoutes(app: FastifyInstance) {
         const sentMessages = [...finalMessages];
 
         if (regenGroupChatIndividual) {
+          if (regenMsg.chatId !== input.chatId) return reply.code(400).send({ error: "Regenerated message does not belong to this chat" });
+          if (!regenMsg.characterId) return reply.code(404).send({ error: "Regenerated message is missing character" })
+
           // Get character of regenerated message and append "Respond ONLY as [name]" instruction
-          const regenMessage = await chats.getMessage(input.regenerateMessageId ?? "");
-          targetCharId = regenMessage?.characterId ?? null;
+          targetCharId = regenMsg?.characterId ?? null;
           const targetCharName = charInfo.find((c) => c.id === targetCharId)?.name ?? "Character";
           const charInstruction = `Respond ONLY as ${targetCharName}.`;
           sentMessages.push({ role: "system", content: charInstruction });
