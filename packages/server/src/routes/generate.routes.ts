@@ -3622,6 +3622,13 @@ export async function generateRoutes(app: FastifyInstance) {
       // ────────────────────────────────────────
       const inputBody = req.body as Record<string, unknown>;
       const enableTools = inputBody.enableTools === true || chatMeta.enableTools === true;
+      const agentsNeedTools = resolvedAgents.some((agent) => {
+        const agentSettings = typeof agent.settings === "string" ? JSON.parse(agent.settings) : agent.settings || {};
+        const agentEnabledNames =
+          (agentSettings?.enabledTools as string[]) || (DEFAULT_AGENT_TOOLS[agent.type] as string[]) || [];
+        return agentEnabledNames.length > 0;
+      });
+      const shouldResolveToolDefinitions = enableTools || agentsNeedTools;
 
       let toolDefs: LLMToolDefinition[] | undefined;
       const customToolDefs: Array<{
@@ -3632,7 +3639,7 @@ export async function generateRoutes(app: FastifyInstance) {
         scriptBody: string | null;
       }> = [];
 
-      if (enableTools) {
+      if (shouldResolveToolDefinitions) {
         // Per-chat tool selection (empty = all tools)
         const chatActiveToolIds: string[] = Array.isArray(chatMeta.activeToolIds)
           ? (chatMeta.activeToolIds as string[])
@@ -3693,7 +3700,7 @@ export async function generateRoutes(app: FastifyInstance) {
       const spotifyAgent =
         resolvedAgents.find((a) => a.type === "spotify") ??
         enabledConfigs.find((cfg: any) => cfg.type === "spotify") ??
-        ((enableTools && !enabledConfigs.some((cfg: any) => cfg.type === "spotify"))
+        ((shouldResolveToolDefinitions && !enabledConfigs.some((cfg: any) => cfg.type === "spotify"))
           ? (await agentsStore.list()).find((cfg: any) => cfg.type === "spotify")
           : null);
       let spotifyAccessToken: string | null = null;
