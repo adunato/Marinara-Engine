@@ -4,6 +4,7 @@
 
 <details>
 <summary><strong>How do I access Marinara Engine from my phone or another device?</strong></summary>
+<br>
 
 If Marinara Engine is running on one device (your PC, a server, etc.) and you want to use it from a phone, tablet, or another computer on the same network:
 
@@ -50,12 +51,13 @@ Tools like [Tailscale](https://tailscale.com/) give each device a stable IP addr
 
 <details>
 <summary><strong>Which AI providers are supported?</strong></summary>
+<br>
 
 Marinara Engine supports a wide range of LLM and image generation providers:
 
 - **LLM:** OpenAI, Anthropic, Google, OpenRouter, NanoGPT, Mistral, Cohere, Pollinations, Together AI, NovelAI, and any custom OpenAI-compatible endpoint (Ollama, LM Studio, KoboldCpp, etc.)
 - **Image generation:** Stability AI, ComfyUI, AUTOMATIC1111 / SD Web UI, and providers that support image output through their chat API
 
-You can configure multiple connections at once and assign different providers per chat. API keys are encrypted at rest with AES-256. See the [Configuration Reference](CONFIGURATION.md) for setup details.
+You can configure multiple connections at once and assign different providers per chat. API keys are encrypted at rest with AES-256.
 
 </details>
