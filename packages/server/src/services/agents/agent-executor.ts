@@ -31,6 +31,36 @@ export interface AgentToolContext {
   executeToolCall: (call: LLMToolCall) => Promise<string>;
 }
 
+function redactSensitiveValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveValue(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (/(token|secret|password|api[_-]?key|authorization|cookie|credential)/i.test(key)) {
+      redacted[key] = "[REDACTED]";
+      continue;
+    }
+    redacted[key] = redactSensitiveValue(entry);
+  }
+  return redacted;
+}
+
+function formatToolPayloadForLog(payload: string, maxLength = 400): string {
+  try {
+    const parsed = JSON.parse(payload);
+    const formatted = JSON.stringify(redactSensitiveValue(parsed));
+    return formatted.length > maxLength ? `${formatted.slice(0, maxLength)}...` : formatted;
+  } catch {
+    return payload.length > maxLength ? `${payload.slice(0, maxLength)}...` : payload;
+  }
+}
+
 /**
  * Execute a single agent: build prompt → call LLM → parse response.
  * If toolContext is provided, the agent can make tool calls in a loop.
@@ -202,9 +232,15 @@ async function executeAgentWithTools(
 
     // Execute each tool call and append results
     for (const tc of result.toolCalls) {
-      console.log(`[agent-tools] ${config.type} calling: ${tc.function.name}(${tc.function.arguments})`);
+      console.log(`[agent-tools] ${config.type} calling: ${tc.function.name}`);
+      if (isDebugAgentsEnabled()) {
+        console.log(`[agent-tools] ${config.type} args: ${formatToolPayloadForLog(tc.function.arguments)}`);
+      }
       const toolResult = await toolContext.executeToolCall(tc);
-      console.log(`[agent-tools] ${config.type} result: ${toolResult.slice(0, 1000)}${toolResult.length > 1000 ? "..." : ""}`);
+      console.log(`[agent-tools] ${config.type} ${tc.function.name} completed`);
+      if (isDebugAgentsEnabled()) {
+        console.log(`[agent-tools] ${config.type} result: ${formatToolPayloadForLog(toolResult)}`);
+      }
       loopMessages.push({
         role: "tool",
         content: toolResult,
