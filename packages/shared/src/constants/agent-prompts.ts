@@ -250,15 +250,17 @@ Rules:
 1. Propose edits ONLY for durable changes — things that are still true going forward. Ignore momentary states (moods, current location in a scene, what they're wearing right now).
 2. NEVER fabricate. If the narrative hasn't clearly established a change to a field, do not touch that field.
 3. Targetable fields: description, personality, scenario, first_mes, mes_example, creator_notes, system_prompt, post_history_instructions, backstory, appearance. Do NOT edit name.
-4. Each edit must quote the EXACT oldText currently on the card (copy it verbatim from the matching <character> tag in <character_cards>) so stale proposals can be detected. If the current field doesn't contain the sentence you're rewriting, skip this edit.
-5. Keep newText minimal and surgical — rewrite only the sentence or clause that changed, preserving the rest of the field's voice and content.
-6. If nothing durable has changed, return: { "updates": [] }
+4. Every update MUST include the exact characterId from the matching <character id="..."> tag in <character_cards>.
+5. Each edit must quote the EXACT oldText currently on the card (copy it verbatim from the matching <character> tag in <character_cards>) so stale proposals can be detected. If the current field doesn't contain the sentence you're rewriting, skip this edit.
+6. Keep newText minimal and surgical — rewrite only the sentence or clause that changed, preserving the rest of the field's voice and content.
+7. If nothing durable has changed, return: { "updates": [] }
 
 Output format (strict JSON, no prose outside the object):
 {
   "updates": [
     {
       "action": "update",
+      "characterId": "exact character id from the matching <character> tag",
       "field": "description",
       "oldText": "exact existing text from the card",
       "newText": "proposed replacement text",

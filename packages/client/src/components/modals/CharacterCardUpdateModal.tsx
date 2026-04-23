@@ -12,6 +12,43 @@ import { Loader2, UserCog, Check, X, AlertCircle } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { useAgentStore } from "../../stores/agent.store";
 import { useCharacter, useUpdateCharacter } from "../../hooks/use-characters";
+import type { EditableCharacterCardField } from "@marinara-engine/shared";
+
+function getCharacterCardFieldValue(data: Record<string, unknown>, field: EditableCharacterCardField): string | null {
+  if (field === "backstory" || field === "appearance") {
+    const extensions = data.extensions;
+    if (!extensions || typeof extensions !== "object") return null;
+    const value = (extensions as Record<string, unknown>)[field];
+    return typeof value === "string" ? value : null;
+  }
+
+  const value = data[field];
+  return typeof value === "string" ? value : null;
+}
+
+function setCharacterCardFieldValue(
+  data: Record<string, unknown>,
+  field: EditableCharacterCardField,
+  value: string,
+): Record<string, unknown> {
+  if (field === "backstory" || field === "appearance") {
+    const extensions =
+      data.extensions && typeof data.extensions === "object" ? (data.extensions as Record<string, unknown>) : {};
+
+    return {
+      ...data,
+      extensions: {
+        ...extensions,
+        [field]: value,
+      },
+    };
+  }
+
+  return {
+    ...data,
+    [field]: value,
+  };
+}
 
 interface Props {
   open: boolean;
@@ -48,7 +85,7 @@ export function CharacterCardUpdateModal({ open, onClose }: Props) {
   const applicableUpdates = useMemo(() => {
     if (!entry || !character) return [];
     return entry.updates.filter((u) => {
-      const current = parsedData[u.field];
+      const current = getCharacterCardFieldValue(parsedData, u.field);
       return typeof current === "string" && u.oldText.length > 0 && current.includes(u.oldText);
     });
   }, [entry, character, parsedData]);
@@ -73,16 +110,16 @@ export function CharacterCardUpdateModal({ open, onClose }: Props) {
     // Apply each edit as a targeted substring replace inside the field's current
     // value, NOT by overwriting the field with newText (which would erase
     // everything around the edited sentence).
-    const patchedFields: Record<string, string> = {};
+    let nextData: Record<string, unknown> = { ...parsedData };
     for (const u of applicableUpdates) {
-      const base = typeof patchedFields[u.field] === "string" ? patchedFields[u.field] : parsedData[u.field];
+      const base = getCharacterCardFieldValue(nextData, u.field);
       if (typeof base !== "string") continue;
-      patchedFields[u.field] = base.replace(u.oldText, u.newText);
+      nextData = setCharacterCardFieldValue(nextData, u.field, base.replace(u.oldText, u.newText));
     }
     try {
       await updateCharacter.mutateAsync({
         id: entry.characterId,
-        data: { ...parsedData, ...patchedFields } as Record<string, unknown>,
+        data: nextData,
       });
       closeAndAdvance();
     } catch (err) {
@@ -97,7 +134,7 @@ export function CharacterCardUpdateModal({ open, onClose }: Props) {
   const queueNote = pending.length > 1 ? ` (${pending.length - 1} more queued)` : "";
 
   return (
-    <Modal open={open} onClose={onClose} title="Review Character Card Updates" width="max-w-2xl">
+    <Modal open={open} onClose={closeAndAdvance} title="Review Character Card Updates" width="max-w-2xl">
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-violet-400 to-fuchsia-500 shadow-lg shadow-violet-400/20">

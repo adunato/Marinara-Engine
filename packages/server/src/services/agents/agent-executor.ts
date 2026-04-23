@@ -689,23 +689,32 @@ function buildLoreBlock(context: AgentContext): string {
 function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): string {
   const parts: string[] = [];
 
+  const escapeXml = (value: string) =>
+    value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+
   // Card Evolution Auditor needs the FULL character card (not just description)
   // so it can emit exact-match oldText edits. Gated on agent type because
   // forwarding every field would bloat context for agents that don't need it.
   if (agentTypes.includes("card-evolution-auditor") && context.characters.length > 0) {
     parts.push(`<character_cards>`);
     for (const char of context.characters) {
-      parts.push(`<character id="${char.id}" name="${char.name}">`);
-      if (char.description) parts.push(`<description>${char.description}</description>`);
-      if (char.personality) parts.push(`<personality>${char.personality}</personality>`);
-      if (char.scenario) parts.push(`<scenario>${char.scenario}</scenario>`);
-      if (char.backstory) parts.push(`<backstory>${char.backstory}</backstory>`);
-      if (char.appearance) parts.push(`<appearance>${char.appearance}</appearance>`);
-      if (char.firstMes) parts.push(`<first_mes>${char.firstMes}</first_mes>`);
-      if (char.mesExample) parts.push(`<mes_example>${char.mesExample}</mes_example>`);
-      if (char.systemPrompt) parts.push(`<system_prompt>${char.systemPrompt}</system_prompt>`);
+      parts.push(`<character id="${escapeXml(char.id)}" name="${escapeXml(char.name)}">`);
+      if (char.description) parts.push(`<description>${escapeXml(char.description)}</description>`);
+      if (char.personality) parts.push(`<personality>${escapeXml(char.personality)}</personality>`);
+      if (char.scenario) parts.push(`<scenario>${escapeXml(char.scenario)}</scenario>`);
+      if (char.backstory) parts.push(`<backstory>${escapeXml(char.backstory)}</backstory>`);
+      if (char.appearance) parts.push(`<appearance>${escapeXml(char.appearance)}</appearance>`);
+      if (char.firstMes) parts.push(`<first_mes>${escapeXml(char.firstMes)}</first_mes>`);
+      if (char.mesExample) parts.push(`<mes_example>${escapeXml(char.mesExample)}</mes_example>`);
+      if (char.creatorNotes) parts.push(`<creator_notes>${escapeXml(char.creatorNotes)}</creator_notes>`);
+      if (char.systemPrompt) parts.push(`<system_prompt>${escapeXml(char.systemPrompt)}</system_prompt>`);
       if (char.postHistoryInstructions)
-        parts.push(`<post_history_instructions>${char.postHistoryInstructions}</post_history_instructions>`);
+        parts.push(`<post_history_instructions>${escapeXml(char.postHistoryInstructions)}</post_history_instructions>`);
       parts.push(`</character>`);
     }
     parts.push(`</character_cards>`);

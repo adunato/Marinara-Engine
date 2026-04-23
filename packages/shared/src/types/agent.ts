@@ -109,6 +109,7 @@ export interface AgentContext {
     description: string;
     personality?: string;
     scenario?: string;
+    creatorNotes?: string;
     systemPrompt?: string;
     backstory?: string;
     appearance?: string;
@@ -550,11 +551,28 @@ export interface LorebookUpdateResult {
  * a confirmation modal. Character cards are more sensitive than lorebook
  * entries because they define the character's identity.
  */
+export const EDITABLE_CHARACTER_CARD_FIELDS = [
+  "description",
+  "personality",
+  "scenario",
+  "first_mes",
+  "mes_example",
+  "creator_notes",
+  "system_prompt",
+  "post_history_instructions",
+  "backstory",
+  "appearance",
+] as const;
+
+export type EditableCharacterCardField = (typeof EDITABLE_CHARACTER_CARD_FIELDS)[number];
+
 export interface CharacterCardFieldUpdate {
+  /** Stable target character id from the <character id="..."> context block. */
+  characterId: string;
   /** Currently only "update" is supported; reserved for future create/delete. */
   action: "update";
-  /** Which character card field this edit targets (e.g. "description", "personality"). */
-  field: string;
+  /** Which stored character-card field this edit targets. */
+  field: EditableCharacterCardField;
   /** The existing field value the agent observed. */
   oldText: string;
   /** The proposed replacement text. */

@@ -2134,6 +2134,7 @@ export async function generateRoutes(app: FastifyInstance) {
         description: string;
         personality: string;
         scenario: string;
+        creatorNotes: string;
         systemPrompt: string;
         backstory: string;
         appearance: string;
@@ -2157,6 +2158,7 @@ export async function generateRoutes(app: FastifyInstance) {
             description: charData.description ?? "",
             personality: charData.personality ?? "",
             scenario,
+            creatorNotes: charData.creator_notes ?? "",
             systemPrompt: charData.system_prompt ?? "",
             backstory: charData.extensions?.backstory ?? "",
             appearance: charData.extensions?.appearance ?? "",

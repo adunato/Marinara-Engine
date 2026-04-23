@@ -6,12 +6,19 @@ import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/r
 import { toast } from "sonner";
 import { api } from "../lib/api-client";
 import type { PendingCardUpdate } from "../stores/agent.store";
+import {
+  EDITABLE_CHARACTER_CARD_FIELDS,
+  type CharacterCardFieldUpdate,
+  type EditableCharacterCardField,
+} from "@marinara-engine/shared";
 
 /** Show a persistent, copyable error toast and log to console */
 function showError(msg: string) {
   console.error("[Generation]", msg);
   toast.error(msg, { duration: 15000 });
 }
+
+const editableCharacterCardFieldSet = new Set<string>(EDITABLE_CHARACTER_CARD_FIELDS);
 
 /**
  * Validate one entry in the Card Evolution Auditor's `updates` array and coerce
@@ -22,13 +29,15 @@ function parseCardFieldUpdate(raw: unknown): CharacterCardFieldUpdate | null {
   if (!raw || typeof raw !== "object") return null;
   const u = raw as Record<string, unknown>;
   if (u.action !== "update") return null;
-  if (typeof u.field !== "string" || u.field.length === 0) return null;
+  if (typeof u.characterId !== "string" || u.characterId.trim().length === 0) return null;
+  if (typeof u.field !== "string" || !editableCharacterCardFieldSet.has(u.field)) return null;
   if (typeof u.oldText !== "string") return null;
   if (typeof u.newText !== "string") return null;
   if (u.oldText === u.newText) return null;
   return {
+    characterId: u.characterId.trim(),
     action: "update",
-    field: u.field,
+    field: u.field as EditableCharacterCardField,
     oldText: u.oldText,
     newText: u.newText,
     reason: typeof u.reason === "string" ? u.reason : "",
@@ -43,31 +52,26 @@ function parseCharacterRowData(raw: unknown): Record<string, unknown> | null {
       return null;
     }
   }
+
   if (raw && typeof raw === "object") return raw as Record<string, unknown>;
   return null;
 }
 
 /**
- * Build a PendingCardUpdate from a character_card_update agent result, or
- * return null if no target character can be resolved (e.g. chat has no
- * characters) or no valid updates remain after parsing.
- *
- * Chats often contain multiple characters (group chats, built-in assistants).
- * The agent's JSON doesn't identify which character each edit applies to, so
- * we pick the first character in the chat whose field actually contains the
- * proposed oldText. That character "owns" the edit. Fall back to the first
- * chat character if no match is found — the modal will flag the edit stale.
+ * Build one or more PendingCardUpdate batches from a character_card_update
+ * agent result. Each batch is scoped to a single characterId so the approval
+ * modal can review and apply updates without ownership heuristics.
  */
-async function buildPendingCardUpdate(
+async function buildPendingCardUpdates(
   qc: QueryClient,
   chatId: string,
   agentName: string,
   rawData: unknown,
-): Promise<PendingCardUpdate | null> {
+): Promise<PendingCardUpdate[]> {
   const data = rawData && typeof rawData === "object" ? (rawData as Record<string, unknown>) : null;
   const rawUpdates = data && Array.isArray(data.updates) ? (data.updates as unknown[]) : [];
   const updates = rawUpdates.map(parseCardFieldUpdate).filter((u): u is CharacterCardFieldUpdate => u !== null);
-  if (updates.length === 0) return null;
+  if (updates.length === 0) return [];
 
   const chat = qc.getQueryData<Chat>(chatKeys.detail(chatId));
   // characterIds is sometimes serialized as a JSON string on the wire —
@@ -84,10 +88,10 @@ async function buildPendingCardUpdate(
       /* leave empty */
     }
   }
-  if (chatCharacterIds.length === 0) return null;
+  if (chatCharacterIds.length === 0) return [];
+  const chatCharacterIdSet = new Set(chatCharacterIds);
 
-  // Prime the characters list cache if empty — needed for both name resolution
-  // and the field-match heuristic below.
+  // Prime the characters list cache if empty so we can resolve names.
   let characters = qc.getQueryData<Array<{ id: string; data?: unknown; name?: string }>>(characterKeys.list());
   if (!characters) {
     try {
@@ -99,36 +103,47 @@ async function buildPendingCardUpdate(
       characters = undefined;
     }
   }
-  const chatCharacters = chatCharacterIds
-    .map((id) => {
-      const row = characters?.find((c) => c.id === id);
+  const chatCharacters = new Map(
+    chatCharacterIds.map((id) => {
+      const row = characters?.find((character) => character.id === id);
       const parsed = parseCharacterRowData(row?.data);
-      return { id, row, parsed };
-    })
-    .filter((c) => c.row !== undefined);
+      return [id, { row, parsed }] as const;
+    }),
+  );
 
-  // Find the first chat character whose field contains the first edit's oldText.
-  // This is heuristic — all edits in a batch target the same character in practice.
-  const firstEdit = updates[0]!;
-  const owner = chatCharacters.find((c) => {
-    const fieldValue = c.parsed?.[firstEdit.field];
-    return typeof fieldValue === "string" && fieldValue.includes(firstEdit.oldText);
+  const groupedUpdates = new Map<string, CharacterCardFieldUpdate[]>();
+  for (const update of updates) {
+    if (!chatCharacterIdSet.has(update.characterId)) continue;
+
+    const existing = groupedUpdates.get(update.characterId) ?? [];
+    existing.push(update);
+    groupedUpdates.set(update.characterId, existing);
+  }
+
+  if (groupedUpdates.size === 0) return [];
+
+  const timestamp = Date.now();
+  return chatCharacterIds.flatMap((characterId, index) => {
+    const grouped = groupedUpdates.get(characterId);
+    if (!grouped || grouped.length === 0) return [];
+
+    const character = chatCharacters.get(characterId);
+    const characterName =
+      (character?.parsed && typeof character.parsed.name === "string" && character.parsed.name) ||
+      character?.row?.name ||
+      "Character";
+
+    return [
+      {
+        id: `card-update-${characterId}-${timestamp}-${index}`,
+        characterId,
+        characterName,
+        updates: grouped,
+        agentName,
+        timestamp: timestamp + index,
+      },
+    ];
   });
-
-  const chosen = owner ?? chatCharacters[0] ?? { id: chatCharacterIds[0]!, row: undefined, parsed: null };
-  const characterName =
-    (chosen.parsed && typeof chosen.parsed.name === "string" && chosen.parsed.name) ||
-    chosen.row?.name ||
-    "Character";
-
-  return {
-    id: `card-update-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    characterId: chosen.id,
-    characterName,
-    updates,
-    agentName,
-    timestamp: Date.now(),
-  };
 }
 import { useChatStore } from "../stores/chat.store";
 import { useAgentStore } from "../stores/agent.store";
@@ -140,7 +155,7 @@ import { chatKeys } from "./use-chats";
 import { characterKeys } from "./use-characters";
 import { playNotificationPing } from "../lib/notification-sound";
 import { stripGmTagsKeepReadables } from "../lib/game-tag-parser";
-import type { Chat, CharacterCardFieldUpdate, GameMap, Message } from "@marinara-engine/shared";
+import type { Chat, GameMap, Message } from "@marinara-engine/shared";
 
 function sortMessagesByCreatedAt(messages: Message[]): Message[] {
   return [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -736,10 +751,12 @@ export function useGenerate() {
               // Character card updates are never applied automatically — enqueue
               // them for the user-approval modal. (Card Evolution Auditor.)
               if (result.success && result.resultType === "character_card_update") {
-                buildPendingCardUpdate(qc, params.chatId, result.agentName, result.data)
-                  .then((pending) => {
-                    if (pending) {
-                      enqueuePendingCardUpdate(pending);
+                buildPendingCardUpdates(qc, params.chatId, result.agentName, result.data)
+                  .then((pendingEntries) => {
+                    if (pendingEntries.length > 0) {
+                      for (const pending of pendingEntries) {
+                        enqueuePendingCardUpdate(pending);
+                      }
                       useUIStore.getState().openModal("character-card-update");
                     }
                   })
@@ -1513,10 +1530,12 @@ export function useGenerate() {
                 error: result.error,
               });
               if (result.success && result.resultType === "character_card_update") {
-                buildPendingCardUpdate(qc, chatId, result.agentName, result.data)
-                  .then((pending) => {
-                    if (pending) {
-                      enqueuePendingCardUpdate(pending);
+                buildPendingCardUpdates(qc, chatId, result.agentName, result.data)
+                  .then((pendingEntries) => {
+                    if (pendingEntries.length > 0) {
+                      for (const pending of pendingEntries) {
+                        enqueuePendingCardUpdate(pending);
+                      }
                       useUIStore.getState().openModal("character-card-update");
                     }
                   })
