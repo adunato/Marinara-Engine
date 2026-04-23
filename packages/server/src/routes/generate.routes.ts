@@ -3732,6 +3732,24 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
       const spotifyCreds = spotifyAccessToken ? { accessToken: spotifyAccessToken } : undefined;
+      const searchLorebookForTools = async (query: string, category?: string | null) => {
+        const entries = await lorebooksStore.listActiveEntries({
+          chatId: input.chatId,
+          characterIds,
+          activeLorebookIds: chatActiveLorebookIds,
+        });
+        const q = query.toLowerCase();
+        return entries
+          .filter((e: any) => {
+            const nameMatch = e.name?.toLowerCase().includes(q);
+            const contentMatch = e.content?.toLowerCase().includes(q);
+            const keyMatch = (e.keys as string[])?.some((k: string) => k.toLowerCase().includes(q));
+            const catMatch = !category || e.tag === category;
+            return catMatch && (nameMatch || contentMatch || keyMatch);
+          })
+          .slice(0, 20)
+          .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
+      };
 
       // ── Resolve tool context for all agents ──
       // This enables built-in and custom tools for any agent in the pipeline.
@@ -3752,24 +3770,7 @@ export async function generateRoutes(app: FastifyInstance) {
             const results = await executeToolCalls([call], {
               customTools: customToolDefs,
               spotify: spotifyCreds,
-              searchLorebook: async (query: string, category?: string | null) => {
-                const entries = await lorebooksStore.listActiveEntries({
-                  chatId: input.chatId,
-                  characterIds,
-                  activeLorebookIds: chatActiveLorebookIds,
-                });
-                const q = query.toLowerCase();
-                return entries
-                  .filter((e: any) => {
-                    const nameMatch = e.name?.toLowerCase().includes(q);
-                    const contentMatch = e.content?.toLowerCase().includes(q);
-                    const keyMatch = (e.keys as string[])?.some((k: string) => k.toLowerCase().includes(q));
-                    const catMatch = !category || e.tag === category;
-                    return catMatch && (nameMatch || contentMatch || keyMatch);
-                  })
-                  .slice(0, 20)
-                  .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
-              },
+              searchLorebook: searchLorebookForTools,
             });
             return results[0]?.result ?? "Tool execution failed";
           },
@@ -4443,87 +4444,6 @@ export async function generateRoutes(app: FastifyInstance) {
           if (enableTools && provider.chatComplete) {
             const MAX_TOOL_ROUNDS = 5;
             let loopMessages: ChatMessage[] = initialProviderMessages;
-
-            // Extract Spotify credentials from the Spotify agent settings (if configured)
-            const spotifyAgent = resolvedAgents.find((a) => a.type === "spotify");
-            const spotifySettings = spotifyAgent?.settings
-              ? typeof spotifyAgent.settings === "string"
-                ? JSON.parse(spotifyAgent.settings)
-                : spotifyAgent.settings
-              : {};
-            let spotifyAccessToken = (spotifySettings.spotifyAccessToken as string) || null;
-
-            // Auto-refresh if token is expired and we have a refresh token
-            const spotifyExpiresAt = (spotifySettings.spotifyExpiresAt as number) ?? 0;
-            const spotifyRefreshToken = (spotifySettings.spotifyRefreshToken as string) || null;
-            const spotifyClientId = (spotifySettings.spotifyClientId as string) || null;
-            if (
-              spotifyAccessToken &&
-              spotifyRefreshToken &&
-              spotifyClientId &&
-              spotifyExpiresAt > 0 &&
-              Date.now() > spotifyExpiresAt - 60_000 // Refresh 1 min before expiry
-            ) {
-              try {
-                const tokenRes = await fetch("https://accounts.spotify.com/api/token", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                  body: new URLSearchParams({
-                    grant_type: "refresh_token",
-                    refresh_token: spotifyRefreshToken,
-                    client_id: spotifyClientId,
-                  }),
-                  signal: AbortSignal.timeout(10_000),
-                });
-                if (tokenRes.ok) {
-                  const tokens = (await tokenRes.json()) as {
-                    access_token: string;
-                    refresh_token?: string;
-                    expires_in: number;
-                  };
-                  spotifyAccessToken = tokens.access_token;
-                  // Persist refreshed tokens in background (don't await)
-                  agentsStore
-                    .update(spotifyAgent!.id, {
-                      settings: {
-                        ...spotifySettings,
-                        spotifyAccessToken: tokens.access_token,
-                        spotifyRefreshToken: tokens.refresh_token ?? spotifyRefreshToken,
-                        spotifyExpiresAt: Date.now() + tokens.expires_in * 1000,
-                      },
-                    })
-                    .catch(() => {});
-                }
-              } catch {
-                // Use the existing token as fallback
-              }
-            }
-
-            const spotifyCreds = spotifyAccessToken ? { accessToken: spotifyAccessToken } : undefined;
-
-            // Attach tool context to the Spotify agent for function calling
-            if (spotifyCreds && spotifyAgent) {
-              const resolvedSpotify = resolvedAgents.find((a) => a.type === "spotify");
-              if (resolvedSpotify) {
-                const spotifyToolNames = DEFAULT_AGENT_TOOLS["spotify"] ?? [];
-                const spotifyToolDefs = BUILT_IN_TOOLS.filter((t) => spotifyToolNames.includes(t.name)).map((t) => ({
-                  type: "function" as const,
-                  function: {
-                    name: t.name,
-                    description: t.description,
-                    parameters: t.parameters as unknown as Record<string, unknown>,
-                  },
-                }));
-                resolvedSpotify.toolContext = {
-                  tools: spotifyToolDefs,
-                  executeToolCall: async (call) => {
-                    const results = await executeToolCalls([call], { spotify: spotifyCreds });
-                    return results[0]?.result ?? "Tool execution failed";
-                  },
-                };
-              }
-            }
-
             // ── Seed encrypted reasoning cache from DB ──
             // OpenAI Responses API uses encrypted reasoning items for multi-turn continuity.
             // These must be replayed on each request. If the in-memory cache was lost (e.g. server
@@ -4647,24 +4567,7 @@ export async function generateRoutes(app: FastifyInstance) {
               const toolResults = await executeToolCalls(result.toolCalls, {
                 customTools: customToolDefs,
                 spotify: spotifyCreds,
-                searchLorebook: async (query: string, category?: string | null) => {
-                  const entries = await lorebooksStore.listActiveEntries({
-                    chatId: input.chatId,
-                    characterIds,
-                    activeLorebookIds: chatActiveLorebookIds,
-                  });
-                  const q = query.toLowerCase();
-                  return entries
-                    .filter((e: any) => {
-                      const nameMatch = e.name?.toLowerCase().includes(q);
-                      const contentMatch = e.content?.toLowerCase().includes(q);
-                      const keyMatch = (e.keys as string[])?.some((k: string) => k.toLowerCase().includes(q));
-                      const catMatch = !category || e.tag === category;
-                      return catMatch && (nameMatch || contentMatch || keyMatch);
-                    })
-                    .slice(0, 20)
-                    .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
-                },
+                searchLorebook: searchLorebookForTools,
               });
 
               for (const tr of toolResults) {
