@@ -3668,12 +3668,22 @@ export async function generateRoutes(app: FastifyInstance) {
 
       // ── Spotify Token Refresh (Early) ──
       const resolvedToolNames = new Set((toolDefs ?? []).map((td) => td.function.name));
-      const spotifyAgent =
-        resolvedAgents.find((a) => a.type === "spotify") ??
-        enabledConfigs.find((cfg: any) => cfg.type === "spotify") ??
-        ((enableTools && !enabledConfigs.some((cfg: any) => cfg.type === "spotify"))
-          ? (await agentsStore.list()).find((cfg: any) => cfg.type === "spotify")
-          : null);
+      const spotifyToolNames = new Set(DEFAULT_AGENT_TOOLS.spotify ?? []);
+      const chatAllowsSpotify = Array.from(resolvedToolNames).some((name) => spotifyToolNames.has(name));
+      const anyAgentAllowsSpotify = resolvedAgents.some((agent) => {
+        const agentSettings = typeof agent.settings === "string" ? JSON.parse(agent.settings) : agent.settings || {};
+        const agentEnabledNames =
+          (agentSettings?.enabledTools as string[]) || (DEFAULT_AGENT_TOOLS[agent.type] as string[]) || [];
+        return agentEnabledNames.some((name) => spotifyToolNames.has(name));
+      });
+      const needsSpotify = enableTools && (chatAllowsSpotify || anyAgentAllowsSpotify);
+      const spotifyAgent = needsSpotify
+        ? (resolvedAgents.find((a) => a.type === "spotify") ??
+            enabledConfigs.find((cfg: any) => cfg.type === "spotify") ??
+            (!enabledConfigs.some((cfg: any) => cfg.type === "spotify")
+              ? (await agentsStore.list()).find((cfg: any) => cfg.type === "spotify")
+              : null))
+        : null;
       let spotifyAccessToken: string | null = null;
       let spotifyExpiresAt = 0;
       if (spotifyAgent) {
