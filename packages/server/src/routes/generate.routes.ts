@@ -3683,13 +3683,14 @@ export async function generateRoutes(app: FastifyInstance) {
           ? (await agentsStore.list()).find((cfg: any) => cfg.type === "spotify")
           : null);
       let spotifyAccessToken: string | null = null;
+      let spotifyExpiresAt = 0;
       if (spotifyAgent) {
         const sSettings =
           typeof spotifyAgent.settings === "string" ? JSON.parse(spotifyAgent.settings) : spotifyAgent.settings || {};
         spotifyAccessToken = (sSettings.spotifyAccessToken as string) || null;
         const spotifyRefreshToken = (sSettings.spotifyRefreshToken as string) || null;
         const spotifyClientId = (sSettings.spotifyClientId as string) || null;
-        const spotifyExpiresAt = (sSettings.spotifyExpiresAt as number) ?? 0;
+        spotifyExpiresAt = (sSettings.spotifyExpiresAt as number) ?? 0;
 
         if (
           spotifyRefreshToken &&
@@ -3714,7 +3715,9 @@ export async function generateRoutes(app: FastifyInstance) {
                 refresh_token?: string;
                 expires_in: number;
               };
+              const refreshedExpiresAt = Date.now() + tokens.expires_in * 1000;
               spotifyAccessToken = tokens.access_token;
+              spotifyExpiresAt = refreshedExpiresAt;
               // Persist refreshed tokens in background (don't await)
               agentsStore
                 .update(spotifyAgent.id, {
@@ -3722,7 +3725,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     ...sSettings,
                     spotifyAccessToken: tokens.access_token,
                     spotifyRefreshToken: tokens.refresh_token ?? spotifyRefreshToken,
-                    spotifyExpiresAt: Date.now() + tokens.expires_in * 1000,
+                    spotifyExpiresAt: refreshedExpiresAt,
                   },
                 })
                 .catch(() => {});
@@ -3732,7 +3735,10 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
       }
-      const spotifyCreds = spotifyAccessToken ? { accessToken: spotifyAccessToken } : undefined;
+      const spotifyCreds =
+        spotifyAccessToken && (spotifyExpiresAt <= 0 || Date.now() < spotifyExpiresAt)
+          ? { accessToken: spotifyAccessToken }
+          : undefined;
       const searchLorebookForTools = async (query: string, category?: string | null) => {
         const entries = await lorebooksStore.listActiveEntries({
           chatId: input.chatId,
