@@ -3640,14 +3640,7 @@ export async function generateRoutes(app: FastifyInstance) {
           if (existingSource) {
             throw new Error(`Duplicate tool name "${ct.name}" from custom tool collides with existing ${existingSource} tool`);
           }
-
-          customToolDefs.push({
-            name: ct.name,
-            executionType: ct.executionType,
-            webhookUrl: ct.webhookUrl,
-            staticResult: ct.staticResult,
-            scriptBody: ct.scriptBody,
-          });
+          registeredToolSources.set(ct.name, "custom");
 
           try {
             const schema =
@@ -3658,6 +3651,14 @@ export async function generateRoutes(app: FastifyInstance) {
               throw new Error("parametersSchema must be a JSON object");
             }
 
+            customToolDefs.push({
+              name: ct.name,
+              executionType: ct.executionType,
+              webhookUrl: ct.webhookUrl,
+              staticResult: ct.staticResult,
+              scriptBody: ct.scriptBody,
+            });
+
             toolDefs.push({
               type: "function" as const,
               function: {
@@ -3666,8 +3667,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 parameters: schema as Record<string, unknown>,
               },
             });
-            registeredToolSources.set(ct.name, "custom");
           } catch {
+            registeredToolSources.delete(ct.name);
             console.warn(`[tools] Skipping custom tool "${ct.name}" with invalid parameter schema`);
           }
         }
