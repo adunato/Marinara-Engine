@@ -32,6 +32,7 @@ The `local-tools` branch should carry only local overlay artifacts:
 
 - `AGENTS.md`
 - `.gitignore`
+- `.agents/skills/`
 - `change_requests/`
 - `start_dev_client.bat`
 - `start_dev_server.bat`
