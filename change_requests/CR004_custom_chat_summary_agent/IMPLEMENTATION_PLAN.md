@@ -8,14 +8,12 @@
 
 ## Step-by-Step Tasks
 
-### 1. Finalize Summary Agent Design
+### 1. Confirm Scope and Agent Configuration Assumptions
 
-- Define how normal user-built agents can be configured to act as chat memory agents.
-- Decide whether the implementation needs a template, preset, or documentation-only prompt to help users create a memory agent.
-- Define when a custom memory agent should run in the generation lifecycle.
-- Define the summary update contract: append, replace, structured patch, or a constrained combination.
-- Document expected enablement and failure behavior in the HLD before implementation.
-- Document coexistence with the existing built-in chat summary agent.
+- Confirm this CR enables user-built custom agents; it does not implement or ship a canonical custom memory agent.
+- Confirm no UI template or preset is required.
+- Confirm validation can use a post-processing custom agent, but implementation must not hardcode a special memory-agent phase.
+- Confirm coexistence with the built-in summary agent is first-come, first-served and must not crash.
 
 ### 2. Define Summary Tool Contracts
 
@@ -28,7 +26,8 @@ Files likely affected:
 Tasks:
 
 - Define `read_chat_summary`.
-- Define the summary update tool or operation selected during design finalization.
+- Define `append_chat_summary`.
+- Do not define a generic chat-memory update tool, replacement tool, or structured memory patch tool.
 - Ensure tool definitions include clear parameter schemas and descriptions.
 - Ensure summary tools are discoverable only where appropriate.
 
