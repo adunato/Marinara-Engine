@@ -29,13 +29,14 @@ Remove these from `pr/CRXXX-*` unless the user explicitly requests otherwise:
 ## PR Branch Workflow
 
 1. Confirm the completed CR branch and the intended CR number.
-2. Create or update `pr/CRXXX-short-title` from `upstream-main`.
-3. Cherry-pick or apply only upstream-relevant commits from `change/CRXXX-*`.
-4. Exclude local-only artifacts listed above.
-5. Validate the resulting diff against `upstream-main` with `git diff --name-status upstream-main..HEAD`.
-6. Run `pnpm check` unless the user asks for a narrower validation.
-7. Run additional validation required by the touched areas, such as `pnpm db:push` or `pnpm version:check`.
-8. Merge into `upstream-main` only after the user confirms the PR branch is ready.
+2. Fetch `upstream main` and fast-forward local `upstream-main` to `upstream/main`.
+3. Create or update `pr/CRXXX-short-title` from `upstream-main`.
+4. Cherry-pick or apply only upstream-relevant commits from `change/CRXXX-*`.
+5. Exclude local-only artifacts listed above.
+6. Validate the resulting diff against `upstream-main` with `git diff --name-status upstream-main..HEAD`.
+7. Run `pnpm check` unless the user asks for a narrower validation.
+8. Run additional validation required by the touched areas, such as `pnpm db:push` or `pnpm version:check`.
+9. Merge into `upstream-main` only after the user confirms the PR branch is ready.
 
 ## PR Description Guidance
 

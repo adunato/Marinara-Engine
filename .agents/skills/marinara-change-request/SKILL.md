@@ -28,11 +28,12 @@ Keep these files in `change/CRXXX-*` and `local-tools`. Remove them from upstrea
 ## New CR Workflow
 
 1. Start from the appropriate base branch. Use `main` for local development unless the user specifies otherwise.
-2. Create and switch to `change/CRXXX-short-title`.
-3. Create `HLD.md` with title, status, goals, proposed solution, risks, and validation.
-4. Create `IMPLEMENTATION_PLAN.md` with prerequisites, atomic tasks, files affected, verification, and rollback.
-5. Commit only the CR docs with a message like `docs: init CRXXX short title`.
-6. Ask for HLD approval before writing implementation code when starting a brand-new change.
+2. If the new CR should be based on `upstream-main`, first fetch `upstream main` and fast-forward local `upstream-main` to `upstream/main`.
+3. Create and switch to `change/CRXXX-short-title`.
+4. Create `HLD.md` with title, status, goals, proposed solution, risks, and validation.
+5. Create `IMPLEMENTATION_PLAN.md` with prerequisites, atomic tasks, files affected, verification, and rollback.
+6. Commit only the CR docs with a message like `docs: init CRXXX short title`.
+7. Ask for HLD approval before writing implementation code when starting a brand-new change.
 
 ## Implementation Rules
 
