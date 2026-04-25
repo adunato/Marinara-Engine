@@ -21,7 +21,7 @@ The current direction also needs to avoid brittle tool context plumbing. Built-i
 ## Goals
 
 - Enable user-built custom agents to maintain chat memory as part of chat generation.
-- Provide explicit summary-oriented tool behavior for reading the current summary and writing summary updates.
+- Provide explicit summary-oriented tool behavior for reading the current summary and appending summary updates.
 - Introduce or refine a generalized tool metadata I/O context so metadata-aware tools are decoupled from database and route internals.
 - Ensure summary updates triggered by custom agents are persisted consistently.
 - Ensure the client refreshes summary-dependent UI when background summary metadata changes.
@@ -40,24 +40,16 @@ The current direction also needs to avoid brittle tool context plumbing. Built-i
 
 ## Proposed Solution
 
-### 1. Custom Chat Memory Agent Enablement
-
-Enable normal user-created agents to function as chat memory agents when configured with the relevant prompt, phase, and tools. The implementation should not hardcode a single product-provided custom memory agent; instead, it should make the required tool and context plumbing available to custom agents.
-
-A typical custom memory agent will likely run during a post-processing phase after the assistant response is available. It should receive enough context to decide whether the summary needs an update, including the prior summary, recent messages, and the generated response.
-
-The agent should update memory by calling tools rather than by relying on hidden route behavior. The implementation should make it clear when the custom agent is disabled, skipped, or unable to update the summary.
-
-### 2. Summary Tools
+### 1. Summary Tools
 
 Provide summary-oriented tool capabilities:
 
 - `read_chat_summary`: returns the current persisted summary from chat metadata.
-- `append_chat_summary` or equivalent summary-update behavior: accepts new summary content or a patch and requests a metadata update.
+- `append_chat_summary`: accepts summary text to append to the persisted summary.
 
-The final API can be adjusted during design iteration, but tool behavior should not depend directly on route database handles.
+No generic "update chat memory" or summary replacement tool is in scope for this CR. Tool behavior should not depend directly on route database handles.
 
-### 3. Generalized Tool Metadata I/O
+### 2. Generalized Tool Metadata I/O
 
 Update tool execution context to expose chat metadata through stable read/write primitives:
 
@@ -68,7 +60,7 @@ onUpdateMetadata?: (patch: Record<string, unknown>) => Promise<void>;
 
 Tools should read from `chatMeta` and write by calling `onUpdateMetadata`. Route-level orchestration remains responsible for persistence, local metadata merging, and client notification.
 
-### 4. Route Orchestration
+### 3. Route Orchestration
 
 Generation routes should construct a shared tool context for the main assistant and all agents. The context should:
 
@@ -79,16 +71,16 @@ Generation routes should construct a shared tool context for the main assistant 
 
 This should also reduce duplicated tool-preparation logic where possible.
 
-### 5. Client Metadata Refresh
+### 4. Client Metadata Refresh
 
 The client should respond to a metadata patch event, such as `metadata_patch`, by invalidating or refreshing the relevant chat detail query. Summary popovers or other summary UI should update without requiring a manual page refresh.
 
-### 6. Agent Management Improvements
+### 5. Agent Management Improvements
 
 Agent management should make it possible to create and configure custom memory agents using existing patterns. The expected improvements are:
 
 - Tool configuration clearly shows whether the agent can use the summary read/update tools.
-- Generation-phase configuration makes it clear when the agent runs, with post-processing as the expected default for memory updates.
+- Generation-phase configuration makes it clear when the agent runs; validation can use a post-processing custom agent, but this CR should not hardcode a special phase for memory agents.
 - Documentation includes a recommended test prompt so users can create their own memory agent without relying on a shipped canonical agent.
 - Execution feedback or logs make it possible to tell whether the agent ran, skipped, failed, or successfully patched chat metadata.
 - Coexistence behavior is documented for chats that also use the built-in summary agent.
@@ -105,12 +97,12 @@ Keep the summary concise and cumulative. Preserve important existing context. Do
 
 ## Open Questions
 
-These must be answered before the HLD is considered ready for implementation:
+These have been answered and are recorded here to constrain implementation scope:
 
-- Which generation phase should custom memory agents use by default: post-processing only, or should other phases be supported for summary tools?
-- What should the summary update tool contract be: append-only text, full replacement text, structured patch, or a constrained combination?
-- Should the UI provide a memory-agent template/preset, or is documentation of the prompt and required tools sufficient for this CR?
-- What should happen when both the built-in summary agent and a custom memory agent are enabled for the same chat?
+- Generation phase: not a product-scope decision for this CR. Users create and configure their own custom agents. Validation may use a post-processing agent, but implementation must not assume memory agents require a special phase.
+- Summary tool contract: only `read_chat_summary` and `append_chat_summary` are in scope. No generic chat-memory update tool, replacement tool, or structured memory patch tool is in scope.
+- UI template or preset: no template or preset is required. Documentation of the prompt and required tools is sufficient for this CR.
+- Built-in and custom-agent coexistence: if both update the same summary, the outcome is first-come, first-served. The system must handle the race without crashing, but it does not manage or reconcile user-created agents that intentionally operate on the same data pool.
 
 ## Risks and Mitigations
 
@@ -120,8 +112,8 @@ These must be answered before the HLD is considered ready for implementation:
   Mitigation: pass the same summary-capable tool context through the main assistant path and all eligible agent execution paths, then verify with a custom memory agent.
 - Risk: client invalidation may refetch too often during long streams.
   Mitigation: emit metadata patch events only when metadata is actually patched, and invalidate the chat detail query from that event rather than on every streamed token.
-- Risk: custom memory agents could conflict with the built-in summary agent when both are enabled.
-  Mitigation: define coexistence behavior before implementation and validate that the built-in summary agent remains unaffected by the new custom-agent tooling.
+- Risk: custom memory agents could race with the built-in summary agent when both update the same summary.
+  Mitigation: treat this as user configuration responsibility; ensure concurrent or near-concurrent summary writes do not crash the system and validate that the built-in summary agent remains unaffected by the new custom-agent tooling.
 
 ## Validation
 
