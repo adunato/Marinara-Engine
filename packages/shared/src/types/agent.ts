@@ -762,6 +762,29 @@ export const BUILT_IN_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "read_chat_summary",
+    description: "Read the current persisted chat summary for this chat.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "append_chat_summary",
+    description: "Append durable memory text to the persisted chat summary for this chat.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description:
+            "Concise summary text to append. Include only durable facts, plans, preferences, or story developments.",
+        },
+      },
+      required: ["text"],
+    },
+  },
+  {
     name: "spotify_get_playlists",
     description:
       "Get the user's Spotify playlists and saved library. Returns playlist names and URIs. Use this FIRST to see what the user already has before searching.",

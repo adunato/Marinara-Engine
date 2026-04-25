@@ -2398,6 +2398,36 @@ export async function generateRoutes(app: FastifyInstance) {
         resolvedAgents.map((a) => `${a.type}(${a.phase})`).join(", "),
       );
 
+      const builtInAgentTypes = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
+      const userMessagesSinceLastAgentRun = async (agentType: string) => {
+        const lastRun = await agentsStore.getLastSuccessfulRunByType(agentType, input.chatId);
+        if (!lastRun) return Number.POSITIVE_INFINITY;
+
+        const lastRunIdx = allChatMessages.findIndex((message: any) => message.id === lastRun.messageId);
+        if (lastRunIdx < 0) return Number.POSITIVE_INFINITY;
+
+        return allChatMessages.slice(lastRunIdx + 1).filter((message: any) => message.role === "user").length + 1;
+      };
+
+      for (let index = resolvedAgents.length - 1; index >= 0; index--) {
+        const agent = resolvedAgents[index]!;
+        if (builtInAgentTypes.has(agent.type)) continue;
+
+        const runInterval = Number(agent.settings.runInterval ?? 0);
+        if (!Number.isFinite(runInterval) || runInterval <= 1) continue;
+
+        const userMessageCount = await userMessagesSinceLastAgentRun(agent.type);
+        if (userMessageCount < runInterval) {
+          logger.debug(
+            "[agents] Skipping custom agent %s until cadence threshold: %d/%d user messages",
+            agent.type,
+            userMessageCount,
+            runInterval,
+          );
+          resolvedAgents.splice(index, 1);
+        }
+      }
+
       // Resolve character info (used for agent context AND prompt fallback)
       const charInfo: Array<{
         id: string;
@@ -4038,6 +4068,21 @@ export async function generateRoutes(app: FastifyInstance) {
           .slice(0, 20)
           .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
       };
+      const updateChatMetadataForTools = async (patch: Record<string, unknown>) => {
+        const latestChat = await chats.getById(input.chatId);
+        const latestMeta = latestChat ? parseExtra(latestChat.metadata) : chatMeta;
+        const merged = { ...latestMeta, ...patch };
+        Object.assign(chatMeta, merged);
+        await chats.updateMetadata(input.chatId, merged);
+        reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: patch })}\n\n`);
+      };
+      const baseToolExecutionContext = {
+        customTools: customToolDefs,
+        spotify: spotifyCreds,
+        searchLorebook: searchLorebookForTools,
+        chatMeta,
+        onUpdateMetadata: updateChatMetadataForTools,
+      };
 
       // ── Resolve tool context for all agents ──
       // This enables built-in and custom tools for any agent in the pipeline.
@@ -4064,9 +4109,7 @@ export async function generateRoutes(app: FastifyInstance) {
               });
             }
             const results = await executeToolCalls([call], {
-              customTools: customToolDefs,
-              spotify: spotifyCreds,
-              searchLorebook: searchLorebookForTools,
+              ...baseToolExecutionContext,
             });
             return results[0]?.result ?? "Tool execution failed";
           },
@@ -5003,9 +5046,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }));
 
               const executedToolResults = await executeToolCalls(permittedToolCalls, {
-                customTools: customToolDefs,
-                spotify: spotifyCreds,
-                searchLorebook: searchLorebookForTools,
+                ...baseToolExecutionContext,
               });
               const toolResultsById = new Map(
                 [...executedToolResults, ...deniedToolResults].map((result) => [result.toolCallId, result]),
@@ -6374,10 +6415,12 @@ export async function generateRoutes(app: FastifyInstance) {
               const csData = result.data as Record<string, unknown>;
               const newText = ((csData.summary as string) ?? "").trim();
               if (newText) {
-                const existingMeta = parseExtra(chat.metadata);
+                const freshChat = await chats.getById(input.chatId);
+                const existingMeta = freshChat ? parseExtra(freshChat.metadata) : chatMeta;
                 const existing = ((existingMeta.summary as string) ?? "").trim();
                 const combined = existing ? `${existing}\n\n${newText}` : newText;
                 const merged = { ...existingMeta, summary: combined };
+                Object.assign(chatMeta, merged);
                 await chats.updateMetadata(input.chatId, merged);
                 reply.raw.write(`data: ${JSON.stringify({ type: "chat_summary", data: { summary: combined } })}\n\n`);
               }

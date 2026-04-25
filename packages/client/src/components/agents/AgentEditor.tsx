@@ -721,6 +721,34 @@ export function AgentEditor() {
           )}
 
           {/* ── Triggers After (Chat Summary agent) ── */}
+          {isCustomAgent && (
+            <FieldGroup
+              label="Trigger Cadence"
+              icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
+              help="How many user messages must be sent since this custom agent last ran before it is eligible to run again. Leave blank to run whenever its phase runs."
+            >
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={localRunInterval}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setLocalRunInterval(v === "" ? "" : Math.max(1, Math.min(200, parseInt(v) || 1)));
+                    markDirty();
+                  }}
+                  placeholder="Every run"
+                  className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                />
+                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">user messages</span>
+              </div>
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Set to 1 or leave blank to run every time this agent's phase runs.
+              </p>
+            </FieldGroup>
+          )}
+
           {isChatSummaryAgent && (
             <FieldGroup
               label="Triggers After"

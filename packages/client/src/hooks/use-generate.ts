@@ -964,6 +964,11 @@ export function useGenerate() {
               break;
             }
 
+            case "metadata_patch": {
+              qc.invalidateQueries({ queryKey: chatKeys.detail(params.chatId) });
+              break;
+            }
+
             case "text_rewrite": {
               // Consistency Editor replaced the message — update displayed text
               const rw = event.data as { editedText?: string; changes?: Array<{ description: string }> };
