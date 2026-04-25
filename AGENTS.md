@@ -26,16 +26,11 @@ This repository is a fork of the `pastadevs/marinara-engine` project. Keep branc
 - `change/CRXXX`: per-change working branches mapped to a change request, following the change request skill practice.
 - `pr/CRXXX`: upstream-ready PR branches created after a change is completed and tested. Strip non-upstream artifacts such as design documents before merging these branches into `upstream-main`.
 
-To rebuild `main` from the clean upstream track, reset or overwrite `main` from `upstream-main`, then merge `local-tools` back into `main`.
+Use the repo-local skills for detailed branch workflows:
 
-The `local-tools` branch should carry only local overlay artifacts:
-
-- `AGENTS.md`
-- `.gitignore`
-- `.agents/skills/`
-- `change_requests/`
-- `start_dev_client.bat`
-- `start_dev_server.bat`
+- `$marinara-branch-maintenance`: rebuild `main` from `upstream-main`, maintain `local-tools`, and manage local overlay artifacts.
+- `$marinara-change-request`: create and manage `change/CRXXX` branches and `change_requests/` docs.
+- `$marinara-upstream-pr`: prepare clean `pr/CRXXX` branches and strip local-only artifacts before upstream PR work.
 
 ## Version Truth
 
