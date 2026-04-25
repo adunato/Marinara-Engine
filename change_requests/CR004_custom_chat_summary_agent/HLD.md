@@ -26,6 +26,7 @@ The current direction also needs to avoid brittle tool context plumbing. Built-i
 - Ensure summary updates triggered by custom agents are persisted consistently.
 - Ensure the client refreshes summary-dependent UI when background summary metadata changes.
 - Improve agent management for custom memory agents by making tool eligibility visible, making generation-phase selection explicit, documenting the recommended memory-agent prompt, and exposing enough execution/failure state to understand whether the agent ran and whether it updated memory.
+- Add a generic custom-agent trigger cadence setting so users can run custom agents every N eligible chat messages instead of on every generation.
 - Preserve the existing built-in chat summary agent as a separate, compatible feature.
 - Keep the design compatible with the upstream PR workflow by avoiding local-only artifacts in implementation commits.
 
@@ -36,6 +37,7 @@ The current direction also needs to avoid brittle tool context plumbing. Built-i
 - Reworking the entire agent system beyond what is needed to enable custom memory-agent support.
 - Introducing a full memory subsystem for all metadata types.
 - Redesigning chat storage or changing the persisted chat metadata format unless required for summary updates.
+- Adding summary-aware context trimming, such as limiting prompt context to messages since the last summary update. Users can manage context manually for now; automated trimming should be handled in a future CR.
 - Shipping CR001 or CR003 as separate implementation lines.
 
 ## Proposed Solution
@@ -81,6 +83,7 @@ Agent management should make it possible to create and configure custom memory a
 
 - Tool configuration clearly shows whether the agent can use the summary read/update tools.
 - Generation-phase configuration makes it clear when the agent runs; validation can use a post-processing custom agent, but this CR should not hardcode a special phase for memory agents.
+- Trigger cadence configuration lets users run a custom agent every N eligible chat messages, using a generic custom-agent setting rather than summary-specific scheduling.
 - Documentation includes a recommended test prompt so users can create their own memory agent without relying on a shipped canonical agent.
 - Execution feedback or logs make it possible to tell whether the agent ran, skipped, failed, or successfully patched chat metadata.
 - Coexistence behavior is documented for chats that also use the built-in summary agent.
@@ -100,8 +103,10 @@ Keep the summary concise and cumulative. Preserve important existing context. Do
 These have been answered and are recorded here to constrain implementation scope:
 
 - Generation phase: not a product-scope decision for this CR. Users create and configure their own custom agents. Validation may use a post-processing agent, but implementation must not assume memory agents require a special phase.
+- Trigger cadence: custom agents should support a generic every-N-messages trigger cadence. This is not specific to summary agents, but it is required for MVP so memory agents can avoid running every generation.
 - Summary tool contract: only `read_chat_summary` and `append_chat_summary` are in scope. No generic chat-memory update tool, replacement tool, or structured memory patch tool is in scope.
 - UI template or preset: no template or preset is required. Documentation of the prompt and required tools is sufficient for this CR.
+- Context trimming: automatic trimming to messages since the last summary update is out of scope for this CR. It can be done manually for now and should be considered as a future CR.
 - Built-in and custom-agent coexistence: if both update the same summary, the outcome is first-come, first-served. The system must handle the race without crashing, but it does not manage or reconcile user-created agents that intentionally operate on the same data pool.
 
 ## Risks and Mitigations
@@ -119,6 +124,7 @@ These have been answered and are recorded here to constrain implementation scope
 
 - `pnpm check` passes.
 - Manual test: create a custom agent with the documented memory-keeper prompt, allow it to use summary tools, generate a chat response, and verify the persisted summary updates.
+- Manual test: configure the custom agent to run every N eligible chat messages and verify it does not run before the cadence threshold is met.
 - Manual test: verify summary UI refreshes when the custom agent updates metadata.
 - Manual test: verify tools still execute for normal agents and do not regress existing custom-tool behavior.
 - Manual test: verify the existing built-in chat summary agent still works or remains unaffected.
