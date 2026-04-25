@@ -13,6 +13,8 @@
 - Confirm this CR enables user-built custom agents; it does not implement or ship a canonical custom memory agent.
 - Confirm no UI template or preset is required.
 - Confirm validation can use a post-processing custom agent, but implementation must not hardcode a special memory-agent phase.
+- Confirm custom-agent trigger cadence is a generic setting for all custom agents, not a summary-specific scheduler.
+- Confirm summary-aware context trimming is out of scope and belongs in a future CR.
 - Confirm coexistence with the built-in summary agent is first-come, first-served and must not crash.
 
 ### 2. Define Summary Tool Contracts
@@ -88,6 +90,7 @@ Files likely affected:
 Tasks:
 
 - Add any necessary configuration affordances for user-built custom memory agents.
+- Add a generic custom-agent trigger cadence setting that can run an agent every N eligible chat messages.
 - Ensure allowed tools are clear and constrained.
 - Ensure the UI communicates enabled/disabled state through existing patterns.
 - Do not replace or migrate the built-in chat summary agent in this CR.
@@ -107,6 +110,7 @@ Keep the summary concise and cumulative. Preserve important existing context. Do
 
 - Run `pnpm check`.
 - Run targeted manual generation tests with a user-built custom memory agent enabled.
+- Verify custom-agent trigger cadence by configuring the agent to run every N eligible chat messages.
 - Verify a summary update persists to chat metadata.
 - Verify summary UI updates without a full page refresh.
 - Verify generation still works when the custom memory agent is disabled.
