@@ -43,5 +43,6 @@ To rebuild `main` when explicitly asked:
 3. Merge `local-tools` into `main`.
 4. Resolve conflicts by preserving upstream product code and local overlay artifacts.
 5. Run `git status --short --branch` and summarize the resulting state.
+6. If the user wants `origin/main` to match the rebuilt local `main`, publish with `git push --force-with-lease origin main`.
 
-Do not push unless the user explicitly asks.
+Do not merge `origin/main` into rebuilt `main`; that can reintroduce old local development history and product-code conflicts. Use `git push --force-with-lease origin main` to update the remote after explicit user confirmation.
