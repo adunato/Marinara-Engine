@@ -33,6 +33,8 @@ export interface SpotifyCredentials {
 
 export interface ToolExecutionContext {
   gameState?: Record<string, unknown>;
+  chatMeta?: Record<string, unknown>;
+  onUpdateMetadata?: (patch: Record<string, unknown>) => Promise<void>;
   customTools?: CustomToolDef[];
   searchLorebook?: LorebookSearchFn;
   spotify?: SpotifyCredentials;
@@ -93,6 +95,10 @@ async function executeSingleTool(
       return triggerEvent(args);
     case "search_lorebook":
       return searchLorebook(args, context?.searchLorebook);
+    case "read_chat_summary":
+      return readChatSummary(context?.chatMeta);
+    case "append_chat_summary":
+      return appendChatSummary(args, context);
     case "spotify_get_playlists":
       return spotifyGetPlaylists(args, context?.spotify);
     case "spotify_get_playlist_tracks":
@@ -109,7 +115,15 @@ async function executeSingleTool(
       if (custom) return executeCustomTool(custom, args);
       return {
         error: `Unknown tool: ${name}`,
-        available: ["roll_dice", "update_game_state", "set_expression", "trigger_event", "search_lorebook"],
+        available: [
+          "roll_dice",
+          "update_game_state",
+          "set_expression",
+          "trigger_event",
+          "search_lorebook",
+          "read_chat_summary",
+          "append_chat_summary",
+        ],
       };
     }
   }
@@ -236,6 +250,29 @@ function setExpression(args: Record<string, unknown>): Record<string, unknown> {
     expression: args.expression,
     display: `🎭 ${args.characterName}: expression → ${args.expression}`,
   };
+}
+
+function readChatSummary(chatMeta?: Record<string, unknown>): Record<string, unknown> {
+  const summary = typeof chatMeta?.summary === "string" ? chatMeta.summary : "";
+  return { summary };
+}
+
+async function appendChatSummary(
+  args: Record<string, unknown>,
+  context?: ToolExecutionContext,
+): Promise<Record<string, unknown>> {
+  const text = String(args.text ?? "").trim();
+  if (!text) {
+    return { error: "append_chat_summary requires non-empty text" };
+  }
+  if (!context?.onUpdateMetadata) {
+    return { error: "Chat metadata updates are not available in this context" };
+  }
+
+  const existing = typeof context.chatMeta?.summary === "string" ? context.chatMeta.summary.trim() : "";
+  const summary = existing ? `${existing}\n\n${text}` : text;
+  await context.onUpdateMetadata({ summary });
+  return { summary };
 }
 
 function triggerEvent(args: Record<string, unknown>): Record<string, unknown> {
