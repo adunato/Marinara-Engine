@@ -4,6 +4,7 @@
 import type { BaseLLMProvider, ChatMessage, LLMToolDefinition, LLMToolCall } from "../llm/base-provider.js";
 import type { AgentResult, AgentContext, AgentResultType } from "@marinara-engine/shared";
 import { getDefaultAgentPrompt } from "@marinara-engine/shared";
+import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { logger } from "../../lib/logger.js";
 
 /** Strip HTML/XML-style tags (e.g. <div style="..."> <br> <speaker>) from text to save tokens. */
