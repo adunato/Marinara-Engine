@@ -1,4 +1,4 @@
-# Implementation Plan: Custom Chat Summary Agent
+# Implementation Plan: Enable Custom Chat Memory Agents
 
 ## Prerequisites
 
@@ -10,10 +10,12 @@
 
 ### 1. Finalize Summary Agent Design
 
-- Decide whether the summary agent is implemented as a built-in agent type, seeded default agent, or configurable template.
-- Define when the summary agent runs in the generation lifecycle.
+- Define how normal user-built agents can be configured to act as chat memory agents.
+- Decide whether the implementation needs a template, preset, or documentation-only prompt to help users create a memory agent.
+- Define when a custom memory agent should run in the generation lifecycle.
 - Define the summary update contract: append, replace, structured patch, or a constrained combination.
 - Document expected enablement and failure behavior in the HLD before implementation.
+- Document coexistence with the existing built-in chat summary agent.
 
 ### 2. Define Summary Tool Contracts
 
@@ -86,17 +88,30 @@ Files likely affected:
 
 Tasks:
 
-- Add any necessary summary-agent type, defaults, or configuration affordances.
+- Add any necessary configuration affordances for user-built custom memory agents.
 - Ensure allowed tools are clear and constrained.
 - Ensure the UI communicates enabled/disabled state through existing patterns.
+- Do not replace or migrate the built-in chat summary agent in this CR.
 
-### 7. Verification
+### 7. Document Test Agent Prompt
+
+- Add manual test documentation for a custom chat memory agent prompt.
+- Use this initial prompt for verification:
+
+```text
+You are the chat memory keeper. After each assistant response, review the recent conversation and the existing chat summary. If the new exchange includes durable facts, relationship changes, preferences, plans, unresolved tasks, or important story developments, update the chat summary using the available summary tool.
+
+Keep the summary concise and cumulative. Preserve important existing context. Do not include transient wording, repetitive dialogue, or details that are unlikely to matter later. If no durable memory update is needed, do not call the update tool.
+```
+
+### 8. Verification
 
 - Run `pnpm check`.
-- Run targeted manual generation tests with the summary agent enabled.
+- Run targeted manual generation tests with a user-built custom memory agent enabled.
 - Verify a summary update persists to chat metadata.
 - Verify summary UI updates without a full page refresh.
-- Verify generation still works when the summary agent is disabled.
+- Verify generation still works when the custom memory agent is disabled.
+- Verify the built-in chat summary agent remains unaffected.
 - Verify unrelated tools and custom tools still execute.
 
 ## Files Affected
@@ -119,6 +134,7 @@ Final implementation may narrow this list after design iteration.
 ## Rollback
 
 - Revert the CR branch commits.
-- Remove summary-agent configuration and summary tool definitions.
+- Remove custom memory-agent configuration changes and summary tool definitions.
 - Revert metadata I/O context changes and SSE metadata patch handling.
+- Confirm the built-in chat summary agent behavior is unchanged.
 - Confirm `pnpm check` passes after rollback.
