@@ -1,0 +1,4 @@
+interface:
+  display_name: "Marinara Upstream PR"
+  short_description: "Prepare clean upstream Marinara PR branches"
+  default_prompt: "Use $marinara-upstream-pr to prepare this CR for an upstream PR."
