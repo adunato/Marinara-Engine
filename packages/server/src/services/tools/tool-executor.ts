@@ -127,6 +127,11 @@ async function executeSingleTool(
           "search_lorebook",
           "read_chat_summary",
           "append_chat_summary",
+          "spotify_get_playlists",
+          "spotify_get_playlist_tracks",
+          "spotify_search",
+          "spotify_play",
+          "spotify_set_volume",
         ],
       };
     }
