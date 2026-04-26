@@ -25,6 +25,42 @@ import {
 
 const GALLERY_DIR = join(DATA_DIR, "gallery");
 
+export type MetadataPatch = Record<string, unknown>;
+export type MetadataUpdater = (current: MetadataPatch) => MetadataPatch | Promise<MetadataPatch>;
+
+const metadataPatchQueues = new Map<string, Promise<void>>();
+
+async function withMetadataPatchQueue<T>(chatId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = metadataPatchQueues.get(chatId) ?? Promise.resolve();
+  const queued = previous.catch(() => undefined).then(operation);
+  const queuedVoid = queued.then(
+    () => undefined,
+    () => undefined,
+  );
+  metadataPatchQueues.set(chatId, queuedVoid);
+
+  try {
+    return await queued;
+  } finally {
+    if (metadataPatchQueues.get(chatId) === queuedVoid) {
+      metadataPatchQueues.delete(chatId);
+    }
+  }
+}
+
+function parseMetadata(raw: unknown): MetadataPatch {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? (parsed as MetadataPatch) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof raw === "object" ? (raw as MetadataPatch) : {};
+}
+
 function resolveTimestamps(overrides?: TimestampOverrides | null) {
   const normalized = normalizeTimestampOverrides(overrides);
   const createdAt = normalized?.createdAt ?? now();
@@ -108,6 +144,23 @@ export function createChatsStorage(db: DB) {
         .set({ metadata: JSON.stringify(metadata), updatedAt: now() })
         .where(eq(chats.id, id));
       return this.getById(id);
+    },
+
+    async patchMetadata(id: string, patchOrUpdater: MetadataPatch | MetadataUpdater) {
+      return withMetadataPatchQueue(id, async () => {
+        const existing = await this.getById(id);
+        if (!existing) return null;
+
+        const current = parseMetadata(existing.metadata);
+        const patch = typeof patchOrUpdater === "function" ? await patchOrUpdater({ ...current }) : patchOrUpdater;
+        const merged = { ...current, ...patch };
+
+        await db
+          .update(chats)
+          .set({ metadata: JSON.stringify(merged), updatedAt: now() })
+          .where(eq(chats.id, id));
+        return this.getById(id);
+      });
     },
 
     async remove(id: string) {

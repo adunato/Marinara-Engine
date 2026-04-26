@@ -44,6 +44,12 @@ import {
   useDeleteKnowledgeSource,
 } from "../../hooks/use-knowledge-sources";
 import { cn } from "../../lib/utils";
+import {
+  getAgentRunIntervalMeta,
+  getCadenceInputValue,
+  parseOptionalCadenceInputValue,
+  stepCadenceValue,
+} from "../../lib/agent-cadence";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import {
   BUILT_IN_AGENTS,
@@ -93,21 +99,6 @@ const PHASE_META: Record<AgentPhase, { label: string; color: string; icon: typeo
   },
 };
 
-const EVERY_RUN_LABEL = "Every run";
-
-function getCadenceInputValue(value: number | ""): string {
-  return value === 1 ? EVERY_RUN_LABEL : String(value);
-}
-
-function parseCadenceInputValue(value: string, max: number): number | "" {
-  const trimmed = value.trim();
-  if (trimmed === "") return "";
-  if (EVERY_RUN_LABEL.toLowerCase().startsWith(trimmed.toLowerCase())) return 1;
-
-  const parsed = parseInt(trimmed, 10);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, parsed)) : 1;
-}
-
 // ═══════════════════════════════════════════════
 //  Main Editor
 // ═══════════════════════════════════════════════
@@ -133,6 +124,9 @@ export function AgentEditor() {
 
   // Custom agent = DB entry with no matching built-in
   const isCustomAgent = !builtIn && !!dbConfig;
+  const customRunIntervalMeta = isCustomAgent
+    ? getAgentRunIntervalMeta(dbConfig?.type ?? agentDetailId ?? "", false)
+    : null;
 
   // Default prompt for this agent type
   const defaultPrompt = useMemo(() => (agentDetailId ? getDefaultAgentPrompt(agentDetailId) : ""), [agentDetailId]);
@@ -738,11 +732,11 @@ export function AgentEditor() {
           )}
 
           {/* ── Triggers After (Chat Summary agent) ── */}
-          {isCustomAgent && (
+          {isCustomAgent && customRunIntervalMeta && (
             <FieldGroup
-              label="Trigger Cadence"
+              label={customRunIntervalMeta.label}
               icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
-              help="How many user messages must be sent since this custom agent last ran before it is eligible to run again. Leave blank to run whenever its phase runs."
+              help={customRunIntervalMeta.help}
             >
               <div className="flex items-center gap-3">
                 <div className="relative w-28">
@@ -754,13 +748,12 @@ export function AgentEditor() {
                     onKeyDown={(e) => {
                       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
                       e.preventDefault();
-                      const current = localRunInterval === "" ? 1 : localRunInterval;
                       const delta = e.key === "ArrowUp" ? 1 : -1;
-                      setLocalRunInterval(Math.max(1, Math.min(200, current + delta)));
+                      setLocalRunInterval(stepCadenceValue(localRunInterval, delta, customRunIntervalMeta.max));
                       markDirty();
                     }}
                     onChange={(e) => {
-                      setLocalRunInterval(parseCadenceInputValue(e.target.value, 200));
+                      setLocalRunInterval(parseOptionalCadenceInputValue(e.target.value, customRunIntervalMeta.max));
                       markDirty();
                     }}
                     className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 pr-8 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
@@ -770,8 +763,7 @@ export function AgentEditor() {
                       type="button"
                       aria-label="Increase trigger cadence"
                       onClick={() => {
-                        const current = localRunInterval === "" ? 1 : localRunInterval;
-                        setLocalRunInterval(Math.max(1, Math.min(200, current + 1)));
+                        setLocalRunInterval(stepCadenceValue(localRunInterval, 1, customRunIntervalMeta.max));
                         markDirty();
                       }}
                       className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
@@ -782,8 +774,7 @@ export function AgentEditor() {
                       type="button"
                       aria-label="Decrease trigger cadence"
                       onClick={() => {
-                        const current = localRunInterval === "" ? 1 : localRunInterval;
-                        setLocalRunInterval(Math.max(1, Math.min(200, current - 1)));
+                        setLocalRunInterval(stepCadenceValue(localRunInterval, -1, customRunIntervalMeta.max));
                         markDirty();
                       }}
                       className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
@@ -792,11 +783,9 @@ export function AgentEditor() {
                     </button>
                   </div>
                 </div>
-                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">user messages</span>
+                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{customRunIntervalMeta.unit}</span>
               </div>
-              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                Set to 1 or leave blank to run every time this agent's phase runs.
-              </p>
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">{customRunIntervalMeta.help}</p>
             </FieldGroup>
           )}
 
