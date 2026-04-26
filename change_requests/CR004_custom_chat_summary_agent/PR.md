@@ -1,13 +1,18 @@
 ## Why this change
 
-Custom agents can already perform user-defined tasks, but they did not have a safe way to maintain the persisted chat summary as part of normal chat generation. This change enables user-built memory agents to read the current chat summary and append new durable summary content, while keeping the existing built-in Automated Chat Summary agent available as a complementary option.
+Custom agents can already perform user-defined tasks, but they were missing three platform capabilities needed for reliable custom memory workflows:
+
+- Built-in tools that can read and append the persisted chat summary.
+- A tool execution path that can update chat metadata and hot-patch the client chat state after generation-side changes.
+- A generic trigger cadence setting so custom agents can run every N user messages instead of every eligible generation.
+
+Together, these changes enable user-built memory agents to maintain chat summary data as part of normal chat generation, while keeping the existing built-in Automated Chat Summary agent available as a complementary option.
 
 ## What changed
 
 - Added built-in `read_chat_summary` and `append_chat_summary` tools for agents.
-- Wired summary tools into generation so custom agents can read and append persisted chat summary metadata.
-- Added metadata patch handling so client chat data refreshes after summary tool updates.
-- Added generic trigger cadence for custom agents via `settings.runInterval`.
+- Added support for tool execution to update chat metadata and emit a client metadata patch event. The summary tools use this for chat summary updates, but the behavior is part of the shared tool execution path.
+- Added generic trigger cadence for custom agents via `settings.runInterval`, allowing all custom agents to run every N user messages.
 - Added trigger cadence controls to the agent editor and add-agent modal, including an `Every run` display for cadence value `1`.
 - Preserved the existing built-in Automated Chat Summary agent behavior and scope.
 
@@ -22,6 +27,7 @@ Custom agents can already perform user-defined tasks, but they did not have a sa
 
 - Verified the new chat summary tools appear in the agent tool selection UI.
 - Verified a custom post-processing agent can use `read_chat_summary` and `append_chat_summary` to append new summary content.
+- Verified chat summary tool updates refresh client chat metadata after generation.
 - Verified custom-agent trigger cadence can be configured when editing an agent and when adding an agent to a chat.
 - Verified cadence value `1` displays as `Every run` and can be incremented with the explicit stepper controls.
 
