@@ -19,7 +19,8 @@ Tasks:
 
 - Add `ChatSummarySnapshotSource`.
 - Add `ChatSummarySnapshot`.
-- Add optional `chatSummarySnapshot` and `contextTrimMode` fields to `ChatMetadata`.
+- Include a bounded `previousAnchors` list in the snapshot shape.
+- Add optional `chatSummarySnapshot` and `trimAfterChatSummary` fields to `ChatMetadata`.
 - Keep `[key: string]: unknown` compatibility for existing metadata.
 
 ### 2. Add Server Snapshot Helpers
@@ -33,6 +34,7 @@ Tasks:
 
 - Implement a helper to resolve the latest summary anchor from a message list.
 - Implement a helper to append or replace summary text and optionally stamp `chatSummarySnapshot`.
+- When stamping a new snapshot, push the previous current anchor into bounded `previousAnchors`.
 - Ensure helper returns updated metadata for SSE/client refresh paths.
 - Keep manual metadata updates outside this helper unless they pass an explicit trusted source.
 
@@ -86,9 +88,10 @@ Tasks:
 
 - Add a resolver that takes `chatMessages` and `chatSummarySnapshot`.
 - Exact-match `anchorMessageId` first.
-- Fall back to `anchorMessageCreatedAt` when the ID was deleted.
+- Fall back to the newest resolvable `previousAnchors` entry when the current anchor ID was deleted or is invalid.
+- Use timestamp fallback only when it is unambiguous.
 - Fail open when the marker is missing, stale, points outside the copied branch, or would produce unsafe empty context.
-- Compose with `contextMessageLimit` so the final prompt uses the shorter suffix.
+- Apply summary trimming as the context floor, then apply `contextMessageLimit` as the last-N ceiling.
 - Keep conversation-start filtering and regeneration exclusion behavior intact.
 
 ### 7. Branch and Delete Handling
@@ -100,40 +103,37 @@ Files likely affected:
 
 Tasks:
 
-- Clear `chatSummarySnapshot` when branch creation clears `summary`.
-- Do not eagerly clear snapshots during message deletion for MVP; rely on generation-time resolution.
+- Preserve `summary` when branching.
+- Remap `chatSummarySnapshot.anchorMessageId` and `previousAnchors.messageId` through the source-to-branch message ID map.
+- If the current anchor was not copied, promote the newest copied previous anchor to the current anchor.
+- If no anchor was copied, preserve `summary` but clear `chatSummarySnapshot`.
+- Do not eagerly clear snapshots during message deletion; rely on generation-time resolution through previous valid anchors.
 - Add tests or manual verification for deleted anchor fallback.
 
-### 8. Add Manual Trim Route
-
-Files likely affected:
-
-- `packages/server/src/routes/chats.routes.ts`
-- `packages/server/src/services/storage/chats.storage.ts`
-- `packages/shared/src/schemas/chat.schema.ts` if a request/response schema is added
-
-Tasks:
-
-- Add `POST /chats/:id/trim-before-summary`.
-- Resolve the snapshot against current persisted messages server-side.
-- Delete messages at or before the anchor only when the anchor resolves safely.
-- Return deleted count and remaining count.
-- Refuse ambiguous markers with a 400 response.
-
-### 9. Add Chat Settings Controls
+### 8. Add Chat Settings Controls
 
 Files likely affected:
 
 - `packages/client/src/components/chat/ChatSettingsDrawer.tsx`
-- `packages/client/src/hooks/use-chats.ts`
 
 Tasks:
 
 - Add a Context Limit option for summary-based trimming.
 - Display marker status from `metadata.chatSummarySnapshot`.
-- Add a confirmed `Trim Messages Before Summary` action.
-- Invalidate `chatKeys.messages(chat.id)`, `chatKeys.messageCount(chat.id)`, and `chatKeys.detail(chat.id)` after manual trim.
+- Keep `Limit Context Messages` available as the ceiling and `Trim After Chat Summary` available as the floor.
+- Avoid adding any message deletion, pruning, or manual persisted trim action.
 - Keep layout consistent with the existing Context Limit panel.
+
+### 9. Track Follow-Up Summary Generation Scope
+
+Files likely affected:
+
+- `change_requests/CR005_chat_summary_auto_trim/HLD.md`
+
+Tasks:
+
+- Keep "summarize only messages since the last summary marker" as a documented non-goal/follow-up for both the Chat Summary Generate button and built-in Chat Summary agent.
+- Do not implement this behavior in CR005 unless the CR scope is explicitly expanded.
 
 ### 10. Verification
 
@@ -143,15 +143,14 @@ Tasks:
 - Verify manual summary save does not stamp or change the marker.
 - Verify custom `append_chat_summary` stamps the marker.
 - Verify summary trim affects generation prompt context.
-- Verify last-N limit still works alone and with summary trim.
-- Verify deleting the anchor does not break generation.
-- Verify branching clears or safely remaps the snapshot.
-- Verify manual trim deletes the expected messages and refreshes UI message numbering.
+- Verify last-N limit still works alone and acts as a ceiling with summary trim.
+- Verify deleting the current anchor falls back to the previous valid anchor or fails open.
+- Verify branching preserves the summary and remaps/promotes/clears the snapshot safely.
+- Verify no CR005 path deletes persisted chat messages.
 
 ## Rollback
 
 - Revert CR005 implementation commits.
-- Remove `chatSummarySnapshot` and `contextTrimMode` handling.
-- Remove the manual trim route and UI action.
+- Remove `chatSummarySnapshot` and `trimAfterChatSummary` handling.
 - Confirm existing `contextMessageLimit`, Chat Summary Generate, built-in Chat Summary agent, and CR004 summary tools still work.
 - Run `pnpm check`.
