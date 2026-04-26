@@ -1,4 +1,4 @@
 interface:
   display_name: "Marinara CodeRabbit Review"
   short_description: "Plan and address CodeRabbit review comments"
-  default_prompt: "Use $marinara-coderabbit-review to triage CodeRabbit comments, produce an observation/recommendation/solution plan, and implement approved fixes."
+  default_prompt: "Use $marinara-coderabbit-review to triage CodeRabbit comments, produce an observation/recommendation/solution plan before editing, wait for approval, and then implement approved fixes."

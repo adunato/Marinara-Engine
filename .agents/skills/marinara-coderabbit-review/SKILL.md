@@ -12,8 +12,12 @@ description: Use when working in the Marinara Engine repo with CodeRabbit PR rev
    - Check whether newer commits already fixed the issue.
    - Separate actionable bugs from documentation nits and stale comments.
 
-2. Produce a structured plan before editing when the user asks for planning, triage, or a recap.
+2. Produce a structured plan before editing for every new CodeRabbit review batch.
+   - Do this even when the user asks to address, fix, or implement the comments.
+   - Skip the plan only when the user explicitly says to proceed without planning or when continuing an already approved plan.
    - Keep CodeRabbit's observation and recommendation distinct from the proposed local solution.
+   - Wait for user approval before editing code, docs, tests, or workflow files.
+   - For trivial nits only, a compact plan is acceptable, but it must still identify the observed issue and proposed change.
    - Use this shape for each item:
 
 ```markdown
