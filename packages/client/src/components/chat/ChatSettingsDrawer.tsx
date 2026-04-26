@@ -140,6 +140,8 @@ type AgentRunIntervalMeta = {
   max: number;
 };
 
+const EVERY_RUN_LABEL = "Every run";
+
 function parseAgentSettings(raw: unknown): Record<string, unknown> {
   if (!raw) return {};
   if (typeof raw === "string") {
@@ -156,6 +158,19 @@ function parseAgentSettings(raw: unknown): Record<string, unknown> {
 function normalizePositiveInteger(value: unknown, fallback: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.min(max, Math.trunc(value)));
+}
+
+function getCadenceInputValue(value: number): string {
+  return value === 1 ? EVERY_RUN_LABEL : String(value);
+}
+
+function parseCadenceInputValue(value: string, fallback: number, max: number): number {
+  const trimmed = value.trim();
+  if (trimmed === "") return fallback;
+  if (EVERY_RUN_LABEL.toLowerCase().startsWith(trimmed.toLowerCase())) return 1;
+
+  const parsed = parseInt(trimmed, 10);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, parsed)) : fallback;
 }
 
 function isEnabledFlag(value: unknown): boolean {
@@ -3744,19 +3759,50 @@ export function ChatSettingsDrawer({
                 </label>
                 <div className="flex items-center gap-3">
                   <input
-                    type="number"
+                    type={agentAddPreview.agent.builtIn ? "number" : "text"}
+                    inputMode={agentAddPreview.agent.builtIn ? undefined : "numeric"}
                     min={1}
                     max={agentAddIntervalMeta.max}
-                    value={agentAddPreview.runInterval}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value, 10);
+                    value={
+                      agentAddPreview.agent.builtIn
+                        ? agentAddPreview.runInterval
+                        : getCadenceInputValue(agentAddPreview.runInterval)
+                    }
+                    onFocus={(e) => {
+                      if (!agentAddPreview.agent.builtIn) e.target.select();
+                    }}
+                    onKeyDown={(e) => {
+                      if (agentAddPreview.agent.builtIn || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                      e.preventDefault();
+                      const delta = e.key === "ArrowUp" ? 1 : -1;
                       setAgentAddPreview((current) =>
                         current
                           ? {
                               ...current,
-                              runInterval: Number.isFinite(value)
-                                ? Math.max(1, Math.min(agentAddIntervalMeta.max, value))
-                                : agentAddIntervalMeta.defaultValue,
+                              runInterval: Math.max(
+                                1,
+                                Math.min(agentAddIntervalMeta.max, (current.runInterval ?? 1) + delta),
+                              ),
+                            }
+                          : current,
+                      );
+                    }}
+                    onChange={(e) => {
+                      setAgentAddPreview((current) =>
+                        current
+                          ? {
+                              ...current,
+                              runInterval: agentAddPreview.agent.builtIn
+                                ? parseCadenceInputValue(
+                                    e.target.value,
+                                    agentAddIntervalMeta.defaultValue,
+                                    agentAddIntervalMeta.max,
+                                  )
+                                : parseCadenceInputValue(
+                                    e.target.value,
+                                    current.runInterval ?? 1,
+                                    agentAddIntervalMeta.max,
+                                  ),
                             }
                           : current,
                       );

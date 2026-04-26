@@ -78,6 +78,21 @@ const PHASE_META: Record<AgentPhase, { label: string; color: string; icon: typeo
   },
 };
 
+const EVERY_RUN_LABEL = "Every run";
+
+function getCadenceInputValue(value: number | ""): string {
+  return value === 1 ? EVERY_RUN_LABEL : String(value);
+}
+
+function parseCadenceInputValue(value: string, max: number): number | "" {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  if (EVERY_RUN_LABEL.toLowerCase().startsWith(trimmed.toLowerCase())) return 1;
+
+  const parsed = parseInt(trimmed, 10);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, parsed)) : 1;
+}
+
 // ═══════════════════════════════════════════════
 //  Main Editor
 // ═══════════════════════════════════════════════
@@ -713,16 +728,22 @@ export function AgentEditor() {
             >
               <div className="flex items-center gap-3">
                 <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={localRunInterval}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setLocalRunInterval(v === "" ? "" : Math.max(1, Math.min(200, parseInt(v) || 1)));
+                  type="text"
+                  inputMode="numeric"
+                  value={getCadenceInputValue(localRunInterval)}
+                  onFocus={(e) => e.target.select()}
+                  onKeyDown={(e) => {
+                    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                    e.preventDefault();
+                    const current = localRunInterval === "" ? 1 : localRunInterval;
+                    const delta = e.key === "ArrowUp" ? 1 : -1;
+                    setLocalRunInterval(Math.max(1, Math.min(200, current + delta)));
                     markDirty();
                   }}
-                  placeholder="Every run"
+                  onChange={(e) => {
+                    setLocalRunInterval(parseCadenceInputValue(e.target.value, 200));
+                    markDirty();
+                  }}
                   className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 />
                 <span className="text-[0.6875rem] text-[var(--muted-foreground)]">user messages</span>
