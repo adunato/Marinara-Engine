@@ -24,6 +24,12 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
+import {
+  applyChatSummaryContextTrim,
+  buildSummarySnapshotPatch,
+  createSummaryAnchor,
+  remapChatSummarySnapshotForBranch,
+} from "./generate/chat-summary-snapshot.js";
 
 export async function chatsRoutes(app: FastifyInstance) {
   const storage = createChatsStorage(app.db);
@@ -503,6 +509,8 @@ export async function chatsRoutes(app: FastifyInstance) {
               break;
             }
           }
+
+          filteredMessages = applyChatSummaryContextTrim(filteredMessages, chatMeta);
 
           // Apply context message limit
           const contextLimit = chatMeta.contextMessageLimit as number | null;
@@ -1053,13 +1061,6 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     if (!newChat) return reply.status(500).send({ error: "Failed to create branch" });
 
-    // Copy metadata (preset, lorebooks, agents, persona settings, etc.) from source chat
-    if (sourceChat.metadata) {
-      // Preserve all settings but clear transient state like summaries
-      const { summary, daySummaries, weekSummaries, ...settingsToKeep } = sourceMeta;
-      await storage.updateMetadata(newChat.id, settingsToKeep);
-    }
-
     // Copy messages from source chat, using the active swipe's content.
     // Preserve each message's original createdAt timestamp so ordering and
     // display times remain identical to the source chat.
@@ -1102,6 +1103,23 @@ export async function chatsRoutes(app: FastifyInstance) {
 
       // Stop if we hit the specified message
       if (upToMessageId && msg.id === upToMessageId) break;
+    }
+
+    // Copy metadata after messages so summary snapshot anchors can be remapped to copied message IDs.
+    if (sourceChat.metadata) {
+      const remappedSnapshot = remapChatSummarySnapshotForBranch(
+        sourceMeta.chatSummarySnapshot,
+        sourceToBranchedMessageId,
+      );
+      const metadataForBranch = { ...sourceMeta };
+      delete metadataForBranch.daySummaries;
+      delete metadataForBranch.weekSummaries;
+      if (remappedSnapshot) {
+        metadataForBranch.chatSummarySnapshot = remappedSnapshot;
+      } else {
+        delete metadataForBranch.chatSummarySnapshot;
+      }
+      await storage.updateMetadata(newChat.id, metadataForBranch);
     }
 
     // Fix updatedAt: createMessage sets the chat's updatedAt to each message's
@@ -1300,15 +1318,26 @@ export async function chatsRoutes(app: FastifyInstance) {
       const first = cleaned.indexOf("{");
       const last = cleaned.lastIndexOf("}");
       const json = JSON.parse(cleaned.slice(first, last + 1));
-      summaryText = json.summary ?? result.content;
+      summaryText = String(json.summary ?? result.content).trim();
     } catch {
       summaryText = result.content.trim();
+    }
+    if (!summaryText) {
+      return reply.status(500).send({ error: "AI returned an empty summary" });
     }
 
     // Append to existing summary (don't replace)
     const existing = ((chatMeta.summary as string) ?? "").trim();
     const combined = existing ? `${existing}\n\n${summaryText}` : summaryText;
-    const merged = { ...chatMeta, summary: combined };
+    const merged = {
+      ...chatMeta,
+      ...buildSummarySnapshotPatch({
+        currentMeta: chatMeta,
+        summary: combined,
+        source: "manual_generate",
+        anchor: createSummaryAnchor(recentMessages),
+      }),
+    };
     await storage.updateMetadata(req.params.id, merged);
 
     return { summary: combined };

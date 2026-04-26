@@ -75,10 +75,37 @@ export interface WeekSummaryEntry {
   keyDetails: string[];
 }
 
+/** Source that last advanced the chat summary snapshot marker. */
+export type ChatSummarySnapshotSource = "built_in_agent" | "manual_generate" | "append_chat_summary_tool";
+
+/** A previous summary anchor retained as a fallback if the current anchor is deleted. */
+export interface ChatSummaryPreviousAnchor {
+  messageId: string;
+  messageCreatedAt: string | null;
+  updatedAt: string;
+}
+
+/** Marker describing the latest trusted chat summary coverage point. */
+export interface ChatSummarySnapshot {
+  source: ChatSummarySnapshotSource;
+  updatedAt: string;
+  anchorMessageId: string | null;
+  anchorMessageCreatedAt: string | null;
+  previousAnchors: ChatSummaryPreviousAnchor[];
+  coveredMessageCount: number;
+  summaryLength: number;
+}
+
 /** Extra metadata stored on a chat. */
 export interface ChatMetadata {
   /** Summary text for context injection */
   summary: string | null;
+  /** Last trusted point covered by a system-managed chat summary update. */
+  chatSummarySnapshot?: ChatSummarySnapshot | null;
+  /** When true, prompt context excludes messages at or before the latest valid chat summary marker. */
+  trimAfterChatSummary?: boolean;
+  /** Optional fixed ceiling for how many recent messages are sent to the model. */
+  contextMessageLimit?: number | null;
   /** Custom tags for organisation */
   tags: string[];
   /** Whether agents are enabled for this chat */

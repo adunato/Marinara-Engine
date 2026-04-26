@@ -219,6 +219,17 @@ export function ChatSettingsDrawer({
     () => (typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {})),
     [chat.metadata],
   );
+  const chatSummarySnapshot = metadata.chatSummarySnapshot as
+    | {
+        updatedAt?: string;
+        coveredMessageCount?: number;
+        anchorMessageId?: string | null;
+      }
+    | null
+    | undefined;
+  const chatSummarySnapshotStatus = chatSummarySnapshot?.updatedAt
+    ? `${chatSummarySnapshot.coveredMessageCount ?? 0} messages covered`
+    : "No Chat Summary update yet";
   const chatMode = (chat as unknown as { mode?: string }).mode ?? "roleplay";
   const isConversation = chatMode === "conversation";
   const isGame = chatMode === "game";
@@ -3555,6 +3566,48 @@ export function ChatSettingsDrawer({
                   />
                   <span className="text-[0.625rem] text-[var(--muted-foreground)]">messages</span>
                 </div>
+              )}
+              <button
+                onClick={() =>
+                  updateMeta.mutate({
+                    id: chat.id,
+                    trimAfterChatSummary: metadata.trimAfterChatSummary ? null : true,
+                  })
+                }
+                className={cn(
+                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                  metadata.trimAfterChatSummary
+                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+                )}
+              >
+                <div className="min-w-0">
+                  <span className="text-xs font-medium">Trim After Chat Summary</span>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    Start context after the last summary marker
+                  </p>
+                  <p className="mt-0.5 text-[0.5625rem] text-[var(--muted-foreground)]">
+                    {chatSummarySnapshotStatus}
+                  </p>
+                </div>
+                <div
+                  className={cn(
+                    "ml-3 h-5 w-9 shrink-0 overflow-hidden rounded-full p-0.5 transition-colors",
+                    metadata.trimAfterChatSummary ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                      metadata.trimAfterChatSummary && "translate-x-3.5",
+                    )}
+                  />
+                </div>
+              </button>
+              {metadata.contextMessageLimit && metadata.trimAfterChatSummary && (
+                <p className="px-1 text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]">
+                  Summary trim skips covered history first; the message limit caps the remaining context.
+                </p>
               )}
             </div>
           </Section>

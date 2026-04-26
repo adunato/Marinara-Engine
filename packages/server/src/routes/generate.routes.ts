@@ -86,6 +86,11 @@ import {
   wrapFields,
   type SimpleMessage,
 } from "./generate/generate-route-utils.js";
+import {
+  applyChatSummaryContextTrim,
+  buildSummarySnapshotPatch,
+  createSummaryAnchor,
+} from "./generate/chat-summary-snapshot.js";
 import { logger } from "../lib/logger.js";
 import {
   buildHistoricalLorebookKeeperContext,
@@ -462,9 +467,11 @@ export async function generateRoutes(app: FastifyInstance) {
         lorebookKeeperMessages = lorebookKeeperMessages.filter((m: any) => m.id !== input.regenerateMessageId);
       }
 
-      // ── Context message limit (from chat metadata, off by default) ──
       const chatMeta = parseExtra(chat.metadata) as Record<string, unknown>;
       const lorebookKeeperSettings = getLorebookKeeperSettings(chatMeta);
+      // ── Context trimming (from chat metadata, off by default) ──
+      chatMessages = applyChatSummaryContextTrim(chatMessages, chatMeta);
+      lorebookKeeperMessages = applyChatSummaryContextTrim(lorebookKeeperMessages, chatMeta);
       const contextMessageLimit = chatMeta.contextMessageLimit as number | null;
       if (contextMessageLimit && contextMessageLimit > 0 && chatMessages.length > contextMessageLimit) {
         chatMessages = chatMessages.slice(-contextMessageLimit);
@@ -3864,6 +3871,7 @@ export async function generateRoutes(app: FastifyInstance) {
           .slice(0, 20)
           .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
       };
+      let lastSavedMsg: any = null;
       const updateChatMetadataForTools = async (patchOrUpdater: MetadataPatchInput) => {
         let emittedPatch: Record<string, unknown> = {};
         const updatedChat = await chats.patchMetadata(input.chatId, async (currentMeta) => {
@@ -3877,6 +3885,26 @@ export async function generateRoutes(app: FastifyInstance) {
         reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: emittedPatch })}\n\n`);
         return updatedMeta;
       };
+      const appendChatSummaryForTools = async (text: string) => {
+        const trimmedText = text.trim();
+        let emittedPatch: Record<string, unknown> = {};
+        const updatedChat = await chats.patchMetadata(input.chatId, async (currentMeta) => {
+          const currentSummary = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";
+          const summary = currentSummary ? `${currentSummary}\n\n${trimmedText}` : trimmedText;
+          const latestMessages = await chats.listMessages(input.chatId);
+          emittedPatch = buildSummarySnapshotPatch({
+            currentMeta,
+            summary,
+            source: "append_chat_summary_tool",
+            anchor: createSummaryAnchor(latestMessages, lastSavedMsg),
+          });
+          return emittedPatch;
+        });
+        const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
+        Object.assign(chatMeta, updatedMeta);
+        reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: emittedPatch })}\n\n`);
+        return updatedMeta;
+      };
       const baseToolExecutionContext = {
         gameState: gameState ? (gameState as unknown as Record<string, unknown>) : undefined,
         customTools: customToolDefs,
@@ -3884,6 +3912,7 @@ export async function generateRoutes(app: FastifyInstance) {
         searchLorebook: searchLorebookForTools,
         chatMeta,
         onUpdateMetadata: updateChatMetadataForTools,
+        onAppendChatSummary: appendChatSummaryForTools,
       };
 
       // ── Resolve tool context for all agents ──
@@ -5088,7 +5117,6 @@ export async function generateRoutes(app: FastifyInstance) {
       }
 
       // ── Run generation ──
-      let lastSavedMsg: any = null;
       const collectedCommands: Array<{ command: CharacterCommand; characterId: string | null; messageId: string }> = [];
       const collectedOocMessages: string[] = [];
 
@@ -5958,9 +5986,16 @@ export async function generateRoutes(app: FastifyInstance) {
               const csData = result.data as Record<string, unknown>;
               const newText = ((csData.summary as string) ?? "").trim();
               if (newText) {
-                const updatedMeta = await updateChatMetadataForTools((currentMeta) => {
+                const updatedMeta = await updateChatMetadataForTools(async (currentMeta) => {
                   const existing = ((currentMeta.summary as string) ?? "").trim();
-                  return { summary: existing ? `${existing}\n\n${newText}` : newText };
+                  const summary = existing ? `${existing}\n\n${newText}` : newText;
+                  const latestMessages = await chats.listMessages(input.chatId);
+                  return buildSummarySnapshotPatch({
+                    currentMeta,
+                    summary,
+                    source: "built_in_agent",
+                    anchor: createSummaryAnchor(latestMessages, lastSavedMsg),
+                  });
                 });
                 const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : newText;
                 reply.raw.write(`data: ${JSON.stringify({ type: "chat_summary", data: { summary: combined } })}\n\n`);
