@@ -3,7 +3,7 @@
 Custom agents can already perform user-defined tasks, but they were missing three platform capabilities needed for reliable custom memory workflows:
 
 - Built-in tools that can read and append the persisted chat summary.
-- A tool execution path that can update chat metadata and hot-patch the client chat state after generation-side changes.
+- Tool execution support for updating chat metadata and hot-patching the client chat state after generation-side changes.
 - A generic trigger cadence setting so custom agents can run every N user messages instead of every eligible generation.
 
 Together, these changes enable user-built memory agents to maintain chat summary data as part of normal chat generation, while keeping the existing built-in Automated Chat Summary agent available as a complementary option.
