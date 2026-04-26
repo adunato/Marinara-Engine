@@ -54,15 +54,18 @@ function redactSensitiveValue(value: unknown): unknown {
 
 function formatToolPayloadForLog(payload: string, maxLength = 400): string {
   const truncate = (value: string) => (value.length > maxLength ? `${value.slice(0, maxLength)}...` : value);
-  try {
-    const parsed = JSON.parse(payload);
-    const formatted = JSON.stringify(redactSensitiveValue(parsed));
-    return truncate(formatted);
-  } catch {
-    const scrubbed = payload
+  const scrubSensitiveText = (value: string) =>
+    value
       .replace(/(Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi, "$1[REDACTED]")
       .replace(/((?:access|refresh|id)?[_-]?token["'\s:=]+)([^,\s"']+)/gi, "$1[REDACTED]")
       .replace(/((?:api[_-]?key|password|secret|authorization|cookie|credential)["'\s:=]+)([^,\s"']+)/gi, "$1[REDACTED]");
+
+  try {
+    const parsed = JSON.parse(payload);
+    const formatted = JSON.stringify(redactSensitiveValue(parsed));
+    return truncate(scrubSensitiveText(formatted));
+  } catch {
+    const scrubbed = scrubSensitiveText(payload);
     return truncate(scrubbed);
   }
 }
@@ -196,6 +199,7 @@ async function executeAgentWithTools(
   const MAX_TOOL_ROUNDS = 5;
   const loopMessages = [...initialMessages];
   let totalTokens = 0;
+  const debugAgentsEnabled = isDebugAgentsEnabled();
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const result = await provider.chatComplete(loopMessages, {
@@ -234,14 +238,20 @@ async function executeAgentWithTools(
 
     // Execute each tool call and append results
     for (const tc of result.toolCalls) {
-      console.log(`[agent-tools] ${config.type} calling: ${tc.function.name}`);
-      if (isDebugAgentsEnabled()) {
-        console.log(`[agent-tools] ${config.type} args: ${formatToolPayloadForLog(tc.function.arguments)}`);
+      logger.info("[agent-tools] %s calling: %s", config.type, tc.function.name);
+      if (debugAgentsEnabled) {
+        logger.debug("[agent-tools] %s args: %s", config.type, formatToolPayloadForLog(tc.function.arguments));
       }
-      const toolResult = await toolContext.executeToolCall(tc);
-      console.log(`[agent-tools] ${config.type} ${tc.function.name} completed`);
-      if (isDebugAgentsEnabled()) {
-        console.log(`[agent-tools] ${config.type} result: ${formatToolPayloadForLog(toolResult)}`);
+      let toolResult: string;
+      try {
+        toolResult = await toolContext.executeToolCall(tc);
+      } catch (err) {
+        logger.error(err, "[agent-tools] %s %s failed", config.type, tc.function.name);
+        throw err;
+      }
+      logger.info("[agent-tools] %s %s completed", config.type, tc.function.name);
+      if (debugAgentsEnabled) {
+        logger.debug("[agent-tools] %s result: %s", config.type, formatToolPayloadForLog(toolResult));
       }
       loopMessages.push({
         role: "tool",
