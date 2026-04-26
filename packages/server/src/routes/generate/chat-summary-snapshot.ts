@@ -72,6 +72,10 @@ export function buildSummarySnapshotPatch(args: {
   anchor: SummaryAnchor;
   now?: string;
 }): { summary: string; chatSummarySnapshot: ChatSummarySnapshot } {
+  if (!args.summary.trim()) {
+    throw new Error("summary must be non-empty");
+  }
+
   const previous = normalizeSnapshot(args.currentMeta.chatSummarySnapshot);
   const updatedAt = args.now ?? new Date().toISOString();
   const previousAnchors = previous?.previousAnchors ? [...previous.previousAnchors] : [];
@@ -133,7 +137,10 @@ export function resolveChatSummaryTrimIndex(
     const firstAfter = messages.findIndex((message) => {
       return typeof message.createdAt === "string" && message.createdAt > timestamp;
     });
-    if (firstAfter > 0) return { trimIndex: firstAfter, source: "timestamp" };
+    const previousCreatedAt = messages[firstAfter - 1]?.createdAt;
+    if (firstAfter > 0 && typeof previousCreatedAt === "string" && previousCreatedAt < timestamp) {
+      return { trimIndex: firstAfter, source: "timestamp" };
+    }
   }
 
   return null;
@@ -146,7 +153,8 @@ export function applyChatSummaryContextTrim<T extends MessageLike>(
   if (metadata.trimAfterChatSummary !== true) return messages;
   const resolved = resolveChatSummaryTrimIndex(messages, metadata.chatSummarySnapshot);
   if (!resolved) return messages;
-  if (resolved.trimIndex <= 0 || resolved.trimIndex >= messages.length) return messages;
+  if (resolved.trimIndex <= 0) return messages;
+  if (resolved.trimIndex >= messages.length) return [];
   return messages.slice(resolved.trimIndex);
 }
 

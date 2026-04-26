@@ -154,10 +154,10 @@ If both options are enabled, label the behavior clearly: summary trim excludes a
 ## Validation
 
 - `pnpm check` passes.
-- Manual test: built-in Chat Summary agent updates `summary` and stamps `chatSummarySnapshot`.
-- Manual test: Chat Summary popover Generate button stamps the marker.
-- Manual test: manual summary edit changes `summary` but leaves `chatSummarySnapshot` unchanged.
-- Manual test: custom agent using `append_chat_summary` appends summary text and stamps the marker.
-- Manual test: enabling summary trim sends only messages after the snapshot marker.
-- Manual test: deleting the current anchor message uses the previous valid anchor or fails open without emptying context.
-- Manual test: branching a chat preserves summary and remaps the snapshot to copied message IDs, or safely clears only the snapshot when no copied anchor remains.
+- Planned manual test: built-in Chat Summary agent updates `summary` and stamps `chatSummarySnapshot`.
+- Planned manual test: Chat Summary popover Generate button stamps the marker.
+- Planned manual test: manual summary edit changes `summary` but leaves `chatSummarySnapshot` unchanged.
+- Planned manual test: custom agent using `append_chat_summary` appends summary text and stamps the marker.
+- Planned manual test: enabling summary trim sends only messages after the snapshot marker.
+- Planned manual test: deleting the current anchor message uses the previous valid anchor or fails open without emptying context.
+- Planned manual test: branching a chat preserves summary and remaps the snapshot to copied message IDs, or safely clears only the snapshot when no copied anchor remains.

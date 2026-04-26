@@ -103,7 +103,7 @@ export interface ChatMetadata {
   /** Last trusted point covered by a system-managed chat summary update. */
   chatSummarySnapshot?: ChatSummarySnapshot | null;
   /** When true, prompt context excludes messages at or before the latest valid chat summary marker. */
-  trimAfterChatSummary?: boolean;
+  trimAfterChatSummary?: boolean | null;
   /** Optional fixed ceiling for how many recent messages are sent to the model. */
   contextMessageLimit?: number | null;
   /** Custom tags for organisation */

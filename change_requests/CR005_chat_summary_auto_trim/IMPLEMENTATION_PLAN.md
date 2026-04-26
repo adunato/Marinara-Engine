@@ -137,16 +137,16 @@ Tasks:
 
 ### 10. Verification
 
-- Run `pnpm check`.
-- Verify built-in Chat Summary agent stamps the marker.
-- Verify Generate button stamps the marker.
-- Verify manual summary save does not stamp or change the marker.
-- Verify custom `append_chat_summary` stamps the marker.
-- Verify summary trim affects generation prompt context.
-- Verify last-N limit still works alone and acts as a ceiling with summary trim.
-- Verify deleting the current anchor falls back to the previous valid anchor or fails open.
-- Verify branching preserves the summary and remaps/promotes/clears the snapshot safely.
-- Verify no CR005 path deletes persisted chat messages.
+- [ ] Run `pnpm check`.
+- [ ] Built-in Chat Summary agent stamps marker.
+- [ ] Generate button stamps marker.
+- [ ] Manual summary save does NOT stamp/change marker.
+- [ ] Custom `append_chat_summary` stamps marker.
+- [ ] Summary trim affects generation context.
+- [ ] Last-N limit remains a ceiling with summary trim.
+- [ ] Deleting current anchor falls back or fails open.
+- [ ] Branching preserves/remaps/promotes/clears snapshot safely.
+- [ ] No CR005 path deletes persisted messages.
 
 ## Rollback
 

@@ -98,7 +98,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     const chat = await storage.getById(req.params.id);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
     const existing = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
-    const incoming = req.body as Record<string, unknown>;
+    const incoming = { ...(req.body as Record<string, unknown>) };
+    delete incoming.chatSummarySnapshot;
     // Validate Discord webhook URL if provided
     if (typeof incoming.discordWebhookUrl === "string" && incoming.discordWebhookUrl.trim()) {
       const url = incoming.discordWebhookUrl.trim();
@@ -1327,18 +1328,17 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
 
     // Append to existing summary (don't replace)
-    const existing = ((chatMeta.summary as string) ?? "").trim();
-    const combined = existing ? `${existing}\n\n${summaryText}` : summaryText;
-    const merged = {
-      ...chatMeta,
-      ...buildSummarySnapshotPatch({
-        currentMeta: chatMeta,
+    let combined = summaryText;
+    await storage.patchMetadata(req.params.id, (currentMeta) => {
+      const existing = ((currentMeta.summary as string) ?? "").trim();
+      combined = existing ? `${existing}\n\n${summaryText}` : summaryText;
+      return buildSummarySnapshotPatch({
+        currentMeta,
         summary: combined,
         source: "manual_generate",
         anchor: createSummaryAnchor(recentMessages),
-      }),
-    };
-    await storage.updateMetadata(req.params.id, merged);
+      });
+    });
 
     return { summary: combined };
   });

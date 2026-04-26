@@ -894,6 +894,8 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
             chatMessages = rStartIdx > 0 ? refreshed.slice(rStartIdx) : refreshed;
+            chatMessages = applyChatSummaryContextTrim(chatMessages, chatMeta);
+            lorebookKeeperMessages = chatMessages;
             if (contextMessageLimit && contextMessageLimit > 0 && chatMessages.length > contextMessageLimit) {
               chatMessages = chatMessages.slice(-contextMessageLimit);
             }
@@ -3887,6 +3889,8 @@ export async function generateRoutes(app: FastifyInstance) {
       };
       const appendChatSummaryForTools = async (text: string) => {
         const trimmedText = text.trim();
+        if (!trimmedText) return chatMeta;
+
         let emittedPatch: Record<string, unknown> = {};
         const updatedChat = await chats.patchMetadata(input.chatId, async (currentMeta) => {
           const currentSummary = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";

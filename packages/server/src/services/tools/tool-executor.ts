@@ -275,17 +275,12 @@ async function appendChatSummary(
   if (!text) {
     return { error: "append_chat_summary requires non-empty text" };
   }
-  if (!context?.onUpdateMetadata) {
-    if (context?.onAppendChatSummary) {
-      const updated = await context.onAppendChatSummary(text);
-      return { summary: typeof updated.summary === "string" ? updated.summary : text };
-    }
-    return { error: "Chat metadata updates are not available in this context" };
-  }
-
-  if (context.onAppendChatSummary) {
+  if (context?.onAppendChatSummary) {
     const updated = await context.onAppendChatSummary(text);
     return { summary: typeof updated.summary === "string" ? updated.summary : text };
+  }
+  if (!context?.onUpdateMetadata) {
+    return { error: "Chat metadata updates are not available in this context" };
   }
 
   const updated = await context.onUpdateMetadata((currentMeta) => {
