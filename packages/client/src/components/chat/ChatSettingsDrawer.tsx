@@ -167,7 +167,7 @@ function normalizeNonNegativeInteger(value: unknown, fallback: number, max: numb
   return Math.max(0, Math.min(max, Math.trunc(value)));
 }
 
-function getAgentRunIntervalMeta(agentType: string): AgentRunIntervalMeta | null {
+function getAgentRunIntervalMeta(agentType: string, isBuiltIn = true): AgentRunIntervalMeta | null {
   switch (agentType) {
     case "director":
       return {
@@ -194,6 +194,15 @@ function getAgentRunIntervalMeta(agentType: string): AgentRunIntervalMeta | null
         max: 200,
       };
     default:
+      if (!isBuiltIn) {
+        return {
+          label: "Trigger Cadence",
+          unit: "user messages",
+          help: "How many user messages should pass since this custom agent last ran before it triggers again. Set to 1 to run whenever its phase runs.",
+          defaultValue: 1,
+          max: 200,
+        };
+      }
       return null;
   }
 }
@@ -680,7 +689,7 @@ export function ChatSettingsDrawer({
       ...getDefaultBuiltInAgentSettings(agent.id),
       ...parseAgentSettings(config?.settings),
     };
-    const intervalMeta = getAgentRunIntervalMeta(agent.id);
+    const intervalMeta = getAgentRunIntervalMeta(agent.id, agent.builtIn);
     setAgentAddPreview({
       agent,
       config,
@@ -701,7 +710,7 @@ export function ChatSettingsDrawer({
       ...parseAgentSettings(config?.settings),
       contextSize,
     };
-    const intervalMeta = getAgentRunIntervalMeta(agent.id);
+    const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
     if (intervalMeta && runInterval != null) {
       nextSettings.runInterval = runInterval;
     }
@@ -741,7 +750,9 @@ export function ChatSettingsDrawer({
     }
   };
 
-  const agentAddIntervalMeta = agentAddPreview ? getAgentRunIntervalMeta(agentAddPreview.agent.id) : null;
+  const agentAddIntervalMeta = agentAddPreview
+    ? getAgentRunIntervalMeta(agentAddPreview.agent.id, agentAddPreview.agent.builtIn)
+    : null;
 
   const snapshotCurrentPresetSettings = useCallback((): ChatPresetSettings => {
     return {
