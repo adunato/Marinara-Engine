@@ -5921,12 +5921,10 @@ export async function generateRoutes(app: FastifyInstance) {
               const csData = result.data as Record<string, unknown>;
               const newText = ((csData.summary as string) ?? "").trim();
               if (newText) {
-                const updatedChat = await chats.patchMetadata(input.chatId, (currentMeta) => {
+                const updatedMeta = await updateChatMetadataForTools((currentMeta) => {
                   const existing = ((currentMeta.summary as string) ?? "").trim();
                   return { summary: existing ? `${existing}\n\n${newText}` : newText };
                 });
-                const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : chatMeta;
-                Object.assign(chatMeta, updatedMeta);
                 const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : newText;
                 reply.raw.write(`data: ${JSON.stringify({ type: "chat_summary", data: { summary: combined } })}\n\n`);
               }

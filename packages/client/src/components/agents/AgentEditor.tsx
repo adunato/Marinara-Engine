@@ -769,7 +769,6 @@ export function AgentEditor() {
                 </div>
                 <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{customRunIntervalMeta.unit}</span>
               </div>
-              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">{customRunIntervalMeta.help}</p>
             </FieldGroup>
           )}
 
