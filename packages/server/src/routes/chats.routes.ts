@@ -1327,11 +1327,9 @@ export async function chatsRoutes(app: FastifyInstance) {
       return reply.status(500).send({ error: "AI returned an empty summary" });
     }
 
-    // Append to existing summary (don't replace)
-    let combined = summaryText;
-    await storage.patchMetadata(req.params.id, (currentMeta) => {
+    const updatedChat = await storage.patchMetadata(req.params.id, (currentMeta) => {
       const existing = ((currentMeta.summary as string) ?? "").trim();
-      combined = existing ? `${existing}\n\n${summaryText}` : summaryText;
+      const combined = existing ? `${existing}\n\n${summaryText}` : summaryText;
       return buildSummarySnapshotPatch({
         currentMeta,
         summary: combined,
@@ -1339,6 +1337,12 @@ export async function chatsRoutes(app: FastifyInstance) {
         anchor: createSummaryAnchor(recentMessages),
       });
     });
+    const updatedMeta = updatedChat
+      ? typeof updatedChat.metadata === "string"
+        ? JSON.parse(updatedChat.metadata)
+        : (updatedChat.metadata ?? {})
+      : {};
+    const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : summaryText;
 
     return { summary: combined };
   });

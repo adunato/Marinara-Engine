@@ -479,7 +479,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
       const isGoogleProvider = conn.provider === "google";
 
-      const mappedMessages = chatMessages.map((m: any) => {
+      const mapChatMessagesForPrompt = (messages: typeof chatMessages) => messages.map((m: any) => {
         const extra = parseExtra(m.extra);
         const attachments = extra.attachments as Array<{ type: string; data: string; filename?: string }> | undefined;
         const images = attachments?.filter((a) => a.type.startsWith("image/")).map((a) => a.data);
@@ -507,6 +507,7 @@ export async function generateRoutes(app: FastifyInstance) {
           ...geminiParts,
         };
       });
+      let mappedMessages = mapChatMessagesForPrompt(chatMessages);
 
       // Attach current request's images to the last user message (they're already saved in extra,
       // but the message was just created and may be the last in mappedMessages)
@@ -899,16 +900,8 @@ export async function generateRoutes(app: FastifyInstance) {
             if (contextMessageLimit && contextMessageLimit > 0 && chatMessages.length > contextMessageLimit) {
               chatMessages = chatMessages.slice(-contextMessageLimit);
             }
-            finalMessages = chatMessages.map((m: any) => {
-              const ex = parseExtra(m.extra);
-              const att = ex.attachments as Array<{ type: string; data: string }> | undefined;
-              const imgs = att?.filter((a: any) => a.type.startsWith("image/")).map((a: any) => a.data);
-              return {
-                role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
-                content: m.content as string,
-                ...(imgs?.length ? { images: imgs } : {}),
-              };
-            });
+            mappedMessages = mapChatMessagesForPrompt(chatMessages);
+            finalMessages = mappedMessages;
           }
           // Send "typing" event — client switches to "X is typing..."
           reply.raw.write(`data: ${JSON.stringify({ type: "typing", characters: convoCharNames })}\n\n`);
@@ -3884,7 +3877,7 @@ export async function generateRoutes(app: FastifyInstance) {
         });
         const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
         Object.assign(chatMeta, updatedMeta);
-        reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: emittedPatch })}\n\n`);
+        trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
         return updatedMeta;
       };
       const appendChatSummaryForTools = async (text: string) => {
@@ -3906,7 +3899,7 @@ export async function generateRoutes(app: FastifyInstance) {
         });
         const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
         Object.assign(chatMeta, updatedMeta);
-        reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: emittedPatch })}\n\n`);
+        trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
         return updatedMeta;
       };
       const baseToolExecutionContext = {
