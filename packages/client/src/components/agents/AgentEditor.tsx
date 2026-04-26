@@ -28,6 +28,8 @@ import {
   Trash2,
   Layers,
   Music,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   BookOpen,
   Upload,
@@ -743,25 +745,53 @@ export function AgentEditor() {
               help="How many user messages must be sent since this custom agent last ran before it is eligible to run again. Leave blank to run whenever its phase runs."
             >
               <div className="flex items-center gap-3">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={getCadenceInputValue(localRunInterval)}
-                  onFocus={(e) => e.target.select()}
-                  onKeyDown={(e) => {
-                    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-                    e.preventDefault();
-                    const current = localRunInterval === "" ? 1 : localRunInterval;
-                    const delta = e.key === "ArrowUp" ? 1 : -1;
-                    setLocalRunInterval(Math.max(1, Math.min(200, current + delta)));
-                    markDirty();
-                  }}
-                  onChange={(e) => {
-                    setLocalRunInterval(parseCadenceInputValue(e.target.value, 200));
-                    markDirty();
-                  }}
-                  className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                />
+                <div className="relative w-28">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={getCadenceInputValue(localRunInterval)}
+                    onFocus={(e) => e.target.select()}
+                    onKeyDown={(e) => {
+                      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                      e.preventDefault();
+                      const current = localRunInterval === "" ? 1 : localRunInterval;
+                      const delta = e.key === "ArrowUp" ? 1 : -1;
+                      setLocalRunInterval(Math.max(1, Math.min(200, current + delta)));
+                      markDirty();
+                    }}
+                    onChange={(e) => {
+                      setLocalRunInterval(parseCadenceInputValue(e.target.value, 200));
+                      markDirty();
+                    }}
+                    className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 pr-8 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  />
+                  <div className="absolute right-1 top-1/2 flex -translate-y-1/2 flex-col overflow-hidden rounded-md">
+                    <button
+                      type="button"
+                      aria-label="Increase trigger cadence"
+                      onClick={() => {
+                        const current = localRunInterval === "" ? 1 : localRunInterval;
+                        setLocalRunInterval(Math.max(1, Math.min(200, current + 1)));
+                        markDirty();
+                      }}
+                      className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      <ChevronUp size="0.6875rem" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Decrease trigger cadence"
+                      onClick={() => {
+                        const current = localRunInterval === "" ? 1 : localRunInterval;
+                        setLocalRunInterval(Math.max(1, Math.min(200, current - 1)));
+                        markDirty();
+                      }}
+                      className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      <ChevronDown size="0.6875rem" />
+                    </button>
+                  </div>
+                </div>
                 <span className="text-[0.6875rem] text-[var(--muted-foreground)]">user messages</span>
               </div>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
