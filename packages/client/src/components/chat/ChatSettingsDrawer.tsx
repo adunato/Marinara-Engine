@@ -12,6 +12,7 @@ import {
   Plug,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Check,
   Plus,
   Trash2,
@@ -3758,58 +3759,115 @@ export function ChatSettingsDrawer({
                   {agentAddIntervalMeta.label}
                 </label>
                 <div className="flex items-center gap-3">
-                  <input
-                    type={agentAddPreview.agent.builtIn ? "number" : "text"}
-                    inputMode={agentAddPreview.agent.builtIn ? undefined : "numeric"}
-                    min={1}
-                    max={agentAddIntervalMeta.max}
-                    value={
-                      agentAddPreview.agent.builtIn
-                        ? agentAddPreview.runInterval
-                        : getCadenceInputValue(agentAddPreview.runInterval)
-                    }
-                    onFocus={(e) => {
-                      if (!agentAddPreview.agent.builtIn) e.target.select();
-                    }}
-                    onKeyDown={(e) => {
-                      if (agentAddPreview.agent.builtIn || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
-                      e.preventDefault();
-                      const delta = e.key === "ArrowUp" ? 1 : -1;
-                      setAgentAddPreview((current) =>
-                        current
-                          ? {
-                              ...current,
-                              runInterval: Math.max(
-                                1,
-                                Math.min(agentAddIntervalMeta.max, (current.runInterval ?? 1) + delta),
-                              ),
-                            }
-                          : current,
-                      );
-                    }}
-                    onChange={(e) => {
-                      setAgentAddPreview((current) =>
-                        current
-                          ? {
-                              ...current,
-                              runInterval: agentAddPreview.agent.builtIn
-                                ? parseCadenceInputValue(
-                                    e.target.value,
-                                    agentAddIntervalMeta.defaultValue,
-                                    agentAddIntervalMeta.max,
-                                  )
-                                : parseCadenceInputValue(
+                  {agentAddPreview.agent.builtIn ? (
+                    <input
+                      type="number"
+                      min={1}
+                      max={agentAddIntervalMeta.max}
+                      value={agentAddPreview.runInterval}
+                      onChange={(e) => {
+                        setAgentAddPreview((current) =>
+                          current
+                            ? {
+                                ...current,
+                                runInterval: parseCadenceInputValue(
+                                  e.target.value,
+                                  agentAddIntervalMeta.defaultValue,
+                                  agentAddIntervalMeta.max,
+                                ),
+                              }
+                            : current,
+                        );
+                      }}
+                      disabled={addingAgentToChat}
+                      className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                  ) : (
+                    <div className="relative w-28">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={getCadenceInputValue(agentAddPreview.runInterval)}
+                        onFocus={(e) => e.target.select()}
+                        onKeyDown={(e) => {
+                          if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                          e.preventDefault();
+                          const delta = e.key === "ArrowUp" ? 1 : -1;
+                          setAgentAddPreview((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  runInterval: Math.max(
+                                    1,
+                                    Math.min(agentAddIntervalMeta.max, (current.runInterval ?? 1) + delta),
+                                  ),
+                                }
+                              : current,
+                          );
+                        }}
+                        onChange={(e) => {
+                          setAgentAddPreview((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  runInterval: parseCadenceInputValue(
                                     e.target.value,
                                     current.runInterval ?? 1,
                                     agentAddIntervalMeta.max,
                                   ),
-                            }
-                          : current,
-                      );
-                    }}
-                    disabled={addingAgentToChat}
-                    className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
-                  />
+                                }
+                              : current,
+                          );
+                        }}
+                        disabled={addingAgentToChat}
+                        className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 pr-8 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 flex-col overflow-hidden rounded-md">
+                        <button
+                          type="button"
+                          aria-label="Increase trigger cadence"
+                          disabled={addingAgentToChat}
+                          onClick={() => {
+                            setAgentAddPreview((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    runInterval: Math.max(
+                                      1,
+                                      Math.min(agentAddIntervalMeta.max, (current.runInterval ?? 1) + 1),
+                                    ),
+                                  }
+                                : current,
+                            );
+                          }}
+                          className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <ChevronUp size="0.6875rem" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Decrease trigger cadence"
+                          disabled={addingAgentToChat}
+                          onClick={() => {
+                            setAgentAddPreview((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    runInterval: Math.max(
+                                      1,
+                                      Math.min(agentAddIntervalMeta.max, (current.runInterval ?? 1) - 1),
+                                    ),
+                                  }
+                                : current,
+                            );
+                          }}
+                          className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <ChevronDown size="0.6875rem" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{agentAddIntervalMeta.unit}</span>
                 </div>
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">{agentAddIntervalMeta.help}</p>
