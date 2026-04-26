@@ -44,7 +44,7 @@ import {
   type ChatMessage,
   type LLMUsage,
 } from "../services/llm/base-provider.js";
-import { executeToolCalls } from "../services/tools/tool-executor.js";
+import { executeToolCalls, type MetadataPatchInput } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { executeAgent } from "../services/agents/agent-executor.js";
@@ -2242,7 +2242,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const lastRunIdx = allChatMessages.findIndex((message: any) => message.id === lastRun.messageId);
         if (lastRunIdx < 0) return Number.POSITIVE_INFINITY;
 
-        return allChatMessages.slice(lastRunIdx + 1).filter((message: any) => message.role === "user").length + 1;
+        return allChatMessages.slice(lastRunIdx + 1).filter((message: any) => message.role === "user").length;
       };
 
       for (let index = resolvedAgents.length - 1; index >= 0; index--) {
@@ -3827,15 +3827,21 @@ export async function generateRoutes(app: FastifyInstance) {
           .slice(0, 20)
           .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
       };
-      const updateChatMetadataForTools = async (patch: Record<string, unknown>) => {
-        const latestChat = await chats.getById(input.chatId);
-        const latestMeta = latestChat ? parseExtra(latestChat.metadata) : chatMeta;
-        const merged = { ...latestMeta, ...patch };
-        Object.assign(chatMeta, merged);
-        await chats.updateMetadata(input.chatId, merged);
-        reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: patch })}\n\n`);
+      const updateChatMetadataForTools = async (patchOrUpdater: MetadataPatchInput) => {
+        let emittedPatch: Record<string, unknown> = {};
+        const updatedChat = await chats.patchMetadata(input.chatId, async (currentMeta) => {
+          const patch =
+            typeof patchOrUpdater === "function" ? await patchOrUpdater({ ...currentMeta }) : patchOrUpdater;
+          emittedPatch = patch;
+          return patch;
+        });
+        const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
+        Object.assign(chatMeta, updatedMeta);
+        reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: emittedPatch })}\n\n`);
+        return updatedMeta;
       };
       const baseToolExecutionContext = {
+        gameState: gameState ? (gameState as unknown as Record<string, unknown>) : undefined,
         customTools: customToolDefs,
         spotify: spotifyCreds,
         searchLorebook: searchLorebookForTools,
@@ -5915,13 +5921,13 @@ export async function generateRoutes(app: FastifyInstance) {
               const csData = result.data as Record<string, unknown>;
               const newText = ((csData.summary as string) ?? "").trim();
               if (newText) {
-                const freshChat = await chats.getById(input.chatId);
-                const existingMeta = freshChat ? parseExtra(freshChat.metadata) : chatMeta;
-                const existing = ((existingMeta.summary as string) ?? "").trim();
-                const combined = existing ? `${existing}\n\n${newText}` : newText;
-                const merged = { ...existingMeta, summary: combined };
-                Object.assign(chatMeta, merged);
-                await chats.updateMetadata(input.chatId, merged);
+                const updatedChat = await chats.patchMetadata(input.chatId, (currentMeta) => {
+                  const existing = ((currentMeta.summary as string) ?? "").trim();
+                  return { summary: existing ? `${existing}\n\n${newText}` : newText };
+                });
+                const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : chatMeta;
+                Object.assign(chatMeta, updatedMeta);
+                const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : newText;
                 reply.raw.write(`data: ${JSON.stringify({ type: "chat_summary", data: { summary: combined } })}\n\n`);
               }
             } catch {

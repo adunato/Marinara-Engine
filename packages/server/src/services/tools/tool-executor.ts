@@ -31,10 +31,14 @@ export interface SpotifyCredentials {
   accessToken: string;
 }
 
+export type MetadataPatch = Record<string, unknown>;
+export type MetadataUpdater = (current: MetadataPatch) => MetadataPatch | Promise<MetadataPatch>;
+export type MetadataPatchInput = MetadataPatch | MetadataUpdater;
+
 export interface ToolExecutionContext {
   gameState?: Record<string, unknown>;
   chatMeta?: Record<string, unknown>;
-  onUpdateMetadata?: (patch: Record<string, unknown>) => Promise<void>;
+  onUpdateMetadata?: (patch: MetadataPatchInput) => Promise<MetadataPatch>;
   customTools?: CustomToolDef[];
   searchLorebook?: LorebookSearchFn;
   spotify?: SpotifyCredentials;
@@ -269,10 +273,11 @@ async function appendChatSummary(
     return { error: "Chat metadata updates are not available in this context" };
   }
 
-  const existing = typeof context.chatMeta?.summary === "string" ? context.chatMeta.summary.trim() : "";
-  const summary = existing ? `${existing}\n\n${text}` : text;
-  await context.onUpdateMetadata({ summary });
-  return { summary };
+  const updated = await context.onUpdateMetadata((currentMeta) => {
+    const existing = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";
+    return { summary: existing ? `${existing}\n\n${text}` : text };
+  });
+  return { summary: typeof updated.summary === "string" ? updated.summary : text };
 }
 
 function triggerEvent(args: Record<string, unknown>): Record<string, unknown> {

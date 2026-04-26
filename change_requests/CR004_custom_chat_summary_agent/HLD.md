@@ -1,4 +1,5 @@
 # Title: Enable Custom Chat Memory Agents
+
 ## Status: Draft
 
 ## Background
@@ -37,7 +38,7 @@ The current direction also needs to avoid brittle tool context plumbing. Built-i
 - Reworking the entire agent system beyond what is needed to enable custom memory-agent support.
 - Introducing a full memory subsystem for all metadata types.
 - Redesigning chat storage or changing the persisted chat metadata format unless required for summary updates.
-- Adding summary-aware context trimming, such as limiting prompt context to messages since the last summary update. Users can manage context manually for now; automated trimming should be handled in a future CR.
+- Adding summary-aware context trimming, such as limiting prompt context to messages since the last summary update. Users can manage context manually for now by configuring a message context window limit or pruning older messages after summary updates; automated trimming should be handled in a future CR.
 - Shipping CR001 or CR003 as separate implementation lines.
 
 ## Proposed Solution
@@ -86,7 +87,7 @@ Agent management should make it possible to create and configure custom memory a
 - Trigger cadence configuration lets users run a custom agent every N eligible chat messages, using a generic custom-agent setting rather than summary-specific scheduling.
 - Documentation includes a recommended test prompt so users can create their own memory agent without relying on a shipped canonical agent.
 - Execution feedback or logs make it possible to tell whether the agent ran, skipped, failed, or successfully patched chat metadata.
-- Coexistence behavior is documented for chats that also use the built-in summary agent.
+- Coexistence behavior is documented for chats that also use the built-in summary agent. Users should avoid enabling multiple summary-writing agents in the same chat unless their cadences are intentionally non-overlapping.
 
 ## Test Agent Prompt
 
@@ -107,7 +108,7 @@ These have been answered and are recorded here to constrain implementation scope
 - Summary tool contract: only `read_chat_summary` and `append_chat_summary` are in scope. No generic chat-memory update tool, replacement tool, or structured memory patch tool is in scope.
 - UI template or preset: no template or preset is required. Documentation of the prompt and required tools is sufficient for this CR.
 - Context trimming: automatic trimming to messages since the last summary update is out of scope for this CR. It can be done manually for now and should be considered as a future CR.
-- Built-in and custom-agent coexistence: if both update the same summary, the outcome is first-come, first-served. The system must handle the race without crashing, but it does not manage or reconcile user-created agents that intentionally operate on the same data pool.
+- Built-in and custom-agent coexistence: if both update the same summary, metadata patches are applied immediately in arrival order. Plain metadata patches use shallow top-level merge semantics with last-write-wins for duplicate keys, while summary appends compute against the latest available metadata at write time. The system does not reconcile user-created agents that intentionally operate on the same data pool.
 
 ## Risks and Mitigations
 
@@ -118,7 +119,7 @@ These have been answered and are recorded here to constrain implementation scope
 - Risk: client invalidation may refetch too often during long streams.
   Mitigation: emit metadata patch events only when metadata is actually patched, and invalidate the chat detail query from that event rather than on every streamed token.
 - Risk: custom memory agents could race with the built-in summary agent when both update the same summary.
-  Mitigation: treat this as user configuration responsibility; ensure concurrent or near-concurrent summary writes do not crash the system and validate that the built-in summary agent remains unaffected by the new custom-agent tooling.
+  Mitigation: serialize metadata writes where possible, apply patches in arrival order, and log or surface write failures without crashing unrelated generation work. Recommend that users avoid multiple summary-writing agents in the same chat or configure non-overlapping cadences, then validate that the built-in summary agent remains unaffected by the new custom-agent tooling.
 
 ## Validation
 

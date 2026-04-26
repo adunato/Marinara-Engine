@@ -61,9 +61,10 @@ Files likely affected:
 Tasks:
 
 - Implement route-owned metadata patch persistence.
-- Merge patches into the request-local metadata object.
+- Merge patches into the request-local `chatMeta` object after persistence.
 - Emit a metadata patch SSE event when metadata changes.
 - Ensure errors are logged and surfaced without crashing unrelated generation work.
+- Define `onUpdateMetadata` semantics here: plain object patches are applied immediately as they arrive, shallow-merged into metadata, and later patches win for duplicate top-level keys. Updater callbacks receive the latest available metadata and are used for append-style writes such as chat summaries.
 
 ### 5. Update Client Summary Refresh
 
