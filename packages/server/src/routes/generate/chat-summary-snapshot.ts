@@ -80,6 +80,21 @@ export function createContiguousSummaryWindow<T extends MessageLike>(
   return messages.slice(-limit);
 }
 
+function resolveTimestampTrimIndex(
+  messages: MessageLike[],
+  timestamp: string | null,
+): { trimIndex: number; source: "timestamp" } | null {
+  if (!timestamp) return null;
+  const firstAfter = messages.findIndex((message) => {
+    return typeof message.createdAt === "string" && message.createdAt > timestamp;
+  });
+  const previousCreatedAt = messages[firstAfter - 1]?.createdAt;
+  if (firstAfter > 0 && typeof previousCreatedAt === "string" && previousCreatedAt < timestamp) {
+    return { trimIndex: firstAfter, source: "timestamp" };
+  }
+  return null;
+}
+
 export function buildSummarySnapshotPatch(args: {
   currentMeta: Record<string, unknown>;
   summary: string;
@@ -138,24 +153,17 @@ export function resolveChatSummaryTrimIndex(
     if (currentIndex >= 0) return { trimIndex: currentIndex + 1, source: "current" };
   }
 
+  const currentTimestampIndex = resolveTimestampTrimIndex(messages, snapshot.anchorMessageCreatedAt);
+  if (currentTimestampIndex) return currentTimestampIndex;
+
   for (const anchor of snapshot.previousAnchors) {
     const previousIndex = messages.findIndex((message) => message.id === anchor.messageId);
     if (previousIndex >= 0) return { trimIndex: previousIndex + 1, source: "previous" };
   }
 
-  const timestamps = [
-    snapshot.anchorMessageCreatedAt,
-    ...snapshot.previousAnchors.map((anchor) => anchor.messageCreatedAt),
-  ].filter((timestamp): timestamp is string => typeof timestamp === "string" && timestamp.length > 0);
-
-  for (const timestamp of timestamps) {
-    const firstAfter = messages.findIndex((message) => {
-      return typeof message.createdAt === "string" && message.createdAt > timestamp;
-    });
-    const previousCreatedAt = messages[firstAfter - 1]?.createdAt;
-    if (firstAfter > 0 && typeof previousCreatedAt === "string" && previousCreatedAt < timestamp) {
-      return { trimIndex: firstAfter, source: "timestamp" };
-    }
+  for (const anchor of snapshot.previousAnchors) {
+    const previousTimestampIndex = resolveTimestampTrimIndex(messages, anchor.messageCreatedAt);
+    if (previousTimestampIndex) return previousTimestampIndex;
   }
 
   return null;

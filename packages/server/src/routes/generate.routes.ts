@@ -3867,6 +3867,7 @@ export async function generateRoutes(app: FastifyInstance) {
           .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
       };
       let lastSavedMsg: any = null;
+      const generatedSummaryMessages: any[] = [];
       const syncInMemoryChatMeta = (nextMeta: Record<string, unknown>) => {
         for (const key of Object.keys(chatMeta)) {
           if (!(key in nextMeta)) delete chatMeta[key];
@@ -3891,24 +3892,18 @@ export async function generateRoutes(app: FastifyInstance) {
         const trimmedText = text.trim();
         if (!trimmedText) return chatMeta;
 
-        let emittedPatch: Record<string, unknown> = {};
-        const updatedChat = await chats.patchMetadata(input.chatId, async (currentMeta) => {
+        return updateChatMetadataForTools(async (currentMeta) => {
           const currentSummary = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";
           const summary = currentSummary ? `${currentSummary}\n\n${trimmedText}` : trimmedText;
-          const summaryAnchorMessages = lastSavedMsg ? [...chatMessages, lastSavedMsg] : chatMessages;
-          emittedPatch = buildSummarySnapshotPatch({
+          const summaryAnchorMessages =
+            generatedSummaryMessages.length > 0 ? [...chatMessages, ...generatedSummaryMessages] : chatMessages;
+          return buildSummarySnapshotPatch({
             currentMeta,
             summary,
             source: "append_chat_summary_tool",
             anchor: createSummaryAnchor(summaryAnchorMessages, lastSavedMsg),
           });
-          return emittedPatch;
         });
-        if (!updatedChat) return chatMeta;
-        const updatedMeta = parseExtra(updatedChat.metadata) as Record<string, unknown>;
-        syncInMemoryChatMeta(updatedMeta);
-        trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
-        return updatedMeta;
       };
       const baseToolExecutionContext = {
         gameState: gameState ? (gameState as unknown as Record<string, unknown>) : undefined,
@@ -5149,6 +5144,7 @@ export async function generateRoutes(app: FastifyInstance) {
           const genResult = await generateForCharacter(charId, messagesWithInstruction);
           if (!genResult) break; // aborted
           lastSavedMsg = genResult.savedMsg;
+          if (genResult.savedMsg) generatedSummaryMessages.push(genResult.savedMsg);
           allResponses.push(genResult.response);
           for (const cmd of genResult.commands) {
             collectedCommands.push({ command: cmd, characterId: charId, messageId: genResult.savedMsg?.id ?? "" });
@@ -5198,6 +5194,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const genResult = await generateForCharacter(targetCharId, sentMessages);
         if (genResult) {
           lastSavedMsg = genResult.savedMsg;
+          if (genResult.savedMsg) generatedSummaryMessages.push(genResult.savedMsg);
           for (const cmd of genResult.commands) {
             collectedCommands.push({
               command: cmd,
@@ -5994,7 +5991,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 const updatedMeta = await updateChatMetadataForTools(async (currentMeta) => {
                   const existing = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";
                   const summary = existing ? `${existing}\n\n${newText}` : newText;
-                  const summaryAnchorMessages = lastSavedMsg ? [...chatMessages, lastSavedMsg] : chatMessages;
+                  const summaryAnchorMessages =
+                    generatedSummaryMessages.length > 0 ? [...chatMessages, ...generatedSummaryMessages] : chatMessages;
                   return buildSummarySnapshotPatch({
                     currentMeta,
                     summary,
