@@ -30,17 +30,22 @@ Remove these from `pr/CRXXX-*` unless the user explicitly requests otherwise:
 ## PR Branch Workflow
 
 1. Confirm the completed CR branch and the intended CR number.
-2. Run the repo-local PR branch helper from the repository root:
+2. Read `change_requests/tracker.md` and confirm the CR is active, not `archived`.
+3. Run the repo-local PR branch helper from the repository root:
 
    ```powershell
    .\.agents\scripts\new-upstream-pr.ps1 -SourceBranch change/CRXXX-short-title -PrBranch pr/CRXXX-short-title
    ```
 
-3. Use `-ResetExisting` only when the user explicitly wants to recreate an existing `pr/CRXXX-*` branch from `upstream-main`.
-4. Use `-NoValidate` only when the user asks for a narrower or deferred validation pass.
-5. Review the helper's `git diff --name-status upstream-main..HEAD` output and confirm local-only artifacts are absent.
-6. Run additional validation required by the touched areas, such as `pnpm db:push` or `pnpm version:check`.
-7. Merge into `upstream-main` only after the user confirms the PR branch is ready.
+4. Use `-ResetExisting` only when the user explicitly wants to recreate an existing `pr/CRXXX-*` branch from `upstream-main`.
+5. Use `-NoValidate` only when the user asks for a narrower or deferred validation pass.
+6. Review the helper's `git diff --name-status upstream-main..HEAD` output and confirm local-only artifacts are absent.
+7. Run additional validation required by the touched areas, such as `pnpm db:push` or `pnpm version:check`.
+8. Update `change_requests/tracker.md` when the CR status changes:
+   - `PR open into origin main` after a PR is actually opened into the target main branch.
+   - `merged into origin main` after that PR is merged.
+   - Add the PR URL or target branch in `Notes` when known.
+9. Merge into `upstream-main` only after the user confirms the PR branch is ready.
 
 The helper fetches `upstream/main` into `upstream-main`, creates the PR branch from `upstream-main`, cherry-picks source commits, strips the local overlay paths, and runs `pnpm check` by default.
 

@@ -33,6 +33,8 @@ Use the repo-local skills for detailed branch workflows:
 - `$marinara-pr-description`: draft or update `change_requests/CRXXX_*/PR.md` from the repository PR template.
 - `$marinara-upstream-pr`: prepare clean `pr/CRXXX` branches with `.agents/scripts/new-upstream-pr.ps1` before upstream PR work.
 
+Keep `change_requests/tracker.md` current when CR state changes, including creation, archive/supersession, local merge, PR opening, and PR merge.
+
 ## Version Truth
 
 - Canonical version: root `package.json`

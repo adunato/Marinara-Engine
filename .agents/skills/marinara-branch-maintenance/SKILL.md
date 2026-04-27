@@ -24,10 +24,15 @@ Keep `local-tools` limited to local repo workflow artifacts:
 - `AGENTS.md`
 - `.gitignore`
 - `change_requests/`
+- `change_requests/tracker.md`
 - `start_dev_client.bat`
 - `start_dev_server.bat`
 
 If another local-only artifact is needed, add it deliberately and update `AGENTS.md` in the same change.
+
+## Tracker Maintenance
+
+Keep `change_requests/tracker.md` in sync with branch workflow changes. Update it when a CR is created, archived, superseded, merged into `main`, opened as a PR, or merged into the PR target branch.
 
 ## Rebuild Main Workflow
 

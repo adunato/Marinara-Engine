@@ -11,8 +11,8 @@ This project also has the generic `change-request` skill. Follow that structure,
 
 ## CR Numbering
 
-1. Inspect `change_requests/`.
-2. Pick the next `CRXXX` number after the highest existing CR folder.
+1. Inspect `change_requests/tracker.md`, active `change_requests/CRXXX_*` folders, and archived `change_requests/archive/CRXXX_*` folders.
+2. Pick the next `CRXXX` number after the highest existing tracked, active, or archived CR.
 3. Use folder names like `change_requests/CR003_short_title`.
 4. Use branch names like `change/CR003-short-title`.
 
@@ -32,8 +32,18 @@ Keep these files in `change/CRXXX-*` and `local-tools`. Remove them from upstrea
 3. Create and switch to `change/CRXXX-short-title`.
 4. Create `HLD.md` with title, status, goals, proposed solution, risks, and validation.
 5. Create `IMPLEMENTATION_PLAN.md` with prerequisites, atomic tasks, files affected, verification, and rollback.
-6. Commit only the CR docs with a message like `docs: init CRXXX short title`.
-7. Ask for HLD approval before writing implementation code when starting a brand-new change.
+6. Update `change_requests/tracker.md` with the new CR title, `standalone` state, short description, dependencies, and notes.
+7. Commit only the CR docs and tracker update with a message like `docs: init CRXXX short title`.
+8. Ask for HLD approval before writing implementation code when starting a brand-new change.
+
+## Tracker Rules
+
+Keep `change_requests/tracker.md` current when a CR is created, archived, superseded, merged into `main`, opened as a PR, or merged into the PR target branch.
+
+- Use `archived` when a CR is retained for reference only.
+- Move archived CR docs under `change_requests/archive/CRXXX_short_title/`.
+- Record supersession in the tracker `Notes` column, such as `Superseded by CR004`.
+- Do not continue active work in archived CR folders.
 
 ## Implementation Rules
 
