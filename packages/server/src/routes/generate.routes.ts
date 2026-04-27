@@ -2274,14 +2274,51 @@ export async function generateRoutes(app: FastifyInstance) {
       );
 
       const builtInAgentTypes = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
+      const logAgentCadenceCheck = (details: {
+        agentType: string;
+        agentName?: string | null;
+        cadenceBasis: "user" | "assistant" | "canon";
+        messagesSince: number;
+        threshold: number;
+        willRun: boolean;
+        reason: string;
+        lastRunMessageId?: string | null;
+      }) => {
+        logger.debug(
+          {
+            chatId: input.chatId,
+            agentType: details.agentType,
+            agentName: details.agentName ?? null,
+            cadenceBasis: details.cadenceBasis,
+            messagesSince: Number.isFinite(details.messagesSince) ? details.messagesSince : null,
+            threshold: details.threshold,
+            willRun: details.willRun,
+            reason: details.reason,
+            lastRunMessageId: details.lastRunMessageId ?? null,
+          },
+          "[agents] Cadence check for %s: %s/%d %s messages -> %s (%s)",
+          details.agentType,
+          Number.isFinite(details.messagesSince) ? String(details.messagesSince) : "first-run",
+          details.threshold,
+          details.cadenceBasis,
+          details.willRun ? "run" : "skip",
+          details.reason,
+        );
+      };
       const userMessagesSinceLastAgentRun = async (agentType: string) => {
         const lastRun = await agentsStore.getLastSuccessfulRunByType(agentType, input.chatId);
-        if (!lastRun) return Number.POSITIVE_INFINITY;
+        if (!lastRun) return { count: Number.POSITIVE_INFINITY, lastRunMessageId: null, lastRunMessageFound: false };
 
         const lastRunIdx = allChatMessages.findIndex((message: any) => message.id === lastRun.messageId);
-        if (lastRunIdx < 0) return Number.POSITIVE_INFINITY;
+        if (lastRunIdx < 0) {
+          return { count: Number.POSITIVE_INFINITY, lastRunMessageId: lastRun.messageId, lastRunMessageFound: false };
+        }
 
-        return allChatMessages.slice(lastRunIdx + 1).filter((message: any) => message.role === "user").length;
+        return {
+          count: allChatMessages.slice(lastRunIdx + 1).filter((message: any) => message.role === "user").length,
+          lastRunMessageId: lastRun.messageId,
+          lastRunMessageFound: true,
+        };
       };
 
       for (let index = resolvedAgents.length - 1; index >= 0; index--) {
@@ -2289,16 +2326,36 @@ export async function generateRoutes(app: FastifyInstance) {
         if (builtInAgentTypes.has(agent.type)) continue;
 
         const runInterval = Number(agent.settings.runInterval ?? 0);
-        if (!Number.isFinite(runInterval) || runInterval <= 1) continue;
+        if (!Number.isFinite(runInterval) || runInterval <= 1) {
+          logAgentCadenceCheck({
+            agentType: agent.type,
+            agentName: agent.name,
+            cadenceBasis: "user",
+            messagesSince: Number.POSITIVE_INFINITY,
+            threshold: 1,
+            willRun: true,
+            reason: "every_run",
+          });
+          continue;
+        }
 
-        const userMessageCount = await userMessagesSinceLastAgentRun(agent.type);
-        if (userMessageCount < runInterval) {
-          logger.debug(
-            "[agents] Skipping custom agent %s until cadence threshold: %d/%d user messages",
-            agent.type,
-            userMessageCount,
-            runInterval,
-          );
+        const cadence = await userMessagesSinceLastAgentRun(agent.type);
+        const willRun = cadence.count >= runInterval;
+        logAgentCadenceCheck({
+          agentType: agent.type,
+          agentName: agent.name,
+          cadenceBasis: "user",
+          messagesSince: cadence.count,
+          threshold: runInterval,
+          willRun,
+          reason: willRun
+            ? cadence.lastRunMessageFound
+              ? "threshold_met"
+              : "first_or_missing_last_run_anchor"
+            : "threshold_not_met",
+          lastRunMessageId: cadence.lastRunMessageId,
+        });
+        if (!willRun) {
           resolvedAgents.splice(index, 1);
         }
       }
@@ -3194,10 +3251,46 @@ export async function generateRoutes(app: FastifyInstance) {
             const lastRunIdx = allChatMessages.findIndex((m: any) => m.id === lastRunMsgId);
             const assistantMsgsSince =
               lastRunIdx >= 0 ? allChatMessages.slice(lastRunIdx + 1).filter((m: any) => m.role === "assistant") : [];
-            if (assistantMsgsSince.length + 1 < runInterval) {
+            const messagesSince = assistantMsgsSince.length + 1;
+            const willRun = messagesSince >= runInterval;
+            logAgentCadenceCheck({
+              agentType: directorAgent.type,
+              agentName: directorAgent.name,
+              cadenceBasis: "assistant",
+              messagesSince,
+              threshold: runInterval,
+              willRun,
+              reason: willRun
+                ? lastRunIdx >= 0
+                  ? "threshold_met"
+                  : "missing_last_run_anchor"
+                : "threshold_not_met",
+              lastRunMessageId: lastRunMsgId,
+            });
+            if (!willRun) {
               resolvedAgents.splice(resolvedAgents.indexOf(directorAgent), 1);
             }
+          } else {
+            logAgentCadenceCheck({
+              agentType: directorAgent.type,
+              agentName: directorAgent.name,
+              cadenceBasis: "assistant",
+              messagesSince: Number.POSITIVE_INFINITY,
+              threshold: runInterval,
+              willRun: true,
+              reason: "first_run",
+            });
           }
+        } else {
+          logAgentCadenceCheck({
+            agentType: directorAgent.type,
+            agentName: directorAgent.name,
+            cadenceBasis: "assistant",
+            messagesSince: Number.POSITIVE_INFINITY,
+            threshold: 1,
+            willRun: true,
+            reason: "every_run",
+          });
         }
       }
 
@@ -3231,10 +3324,29 @@ export async function generateRoutes(app: FastifyInstance) {
           lorebookKeeperMessages,
           lorebookKeeperSettings.readBehindMessages,
         );
+        let lorebookKeeperWillRun = true;
+        let lorebookKeeperReason = "threshold_met";
         if (lorebookKeeperSettings.readBehindMessages > 0 && !historicalLorebookTarget) {
-          resolvedAgents.splice(resolvedAgents.indexOf(lkAgent), 1);
+          lorebookKeeperWillRun = false;
+          lorebookKeeperReason = "no_historical_target";
         } else if (runInterval > 1 && pendingLorebookMessages < runInterval) {
           // Not enough canon messages since the last successful run — remove from pipeline.
+          lorebookKeeperWillRun = false;
+          lorebookKeeperReason = "threshold_not_met";
+        } else if (runInterval <= 1) {
+          lorebookKeeperReason = "every_run";
+        }
+        logAgentCadenceCheck({
+          agentType: lkAgent.type,
+          agentName: lkAgent.name,
+          cadenceBasis: "canon",
+          messagesSince: pendingLorebookMessages,
+          threshold: Math.max(1, runInterval),
+          willRun: lorebookKeeperWillRun,
+          reason: lorebookKeeperReason,
+          lastRunMessageId: lastRun?.messageId ?? null,
+        });
+        if (!lorebookKeeperWillRun) {
           resolvedAgents.splice(resolvedAgents.indexOf(lkAgent), 1);
         }
 
@@ -3430,21 +3542,39 @@ export async function generateRoutes(app: FastifyInstance) {
         const csAgent = resolvedAgents.find((a) => a.type === "chat-summary")!;
         const triggersAfter = (csAgent.settings.runInterval as number) ?? 5;
         let shouldRun = true;
+        let chatSummaryMessagesSince = Number.POSITIVE_INFINITY;
+        let chatSummaryReason = triggersAfter <= 1 ? "every_run" : "first_run";
+        let chatSummaryLastRunMessageId: string | null = null;
 
         if (triggersAfter > 1) {
           const lastRun = await agentsStore.getLastSuccessfulRunByType("chat-summary", input.chatId);
           if (lastRun) {
             const lastRunMsgId = lastRun.messageId;
+            chatSummaryLastRunMessageId = lastRunMsgId;
             const lastRunIdx = allChatMessages.findIndex((m: any) => m.id === lastRunMsgId);
             const userMsgsSince =
               lastRunIdx >= 0 ? allChatMessages.slice(lastRunIdx + 1).filter((m: any) => m.role === "user") : [];
+            chatSummaryMessagesSince = userMsgsSince.length + 1;
             // +1 for the current user message being generated
-            if (userMsgsSince.length + 1 < triggersAfter) {
+            if (chatSummaryMessagesSince < triggersAfter) {
               shouldRun = false;
+              chatSummaryReason = "threshold_not_met";
+            } else {
+              chatSummaryReason = lastRunIdx >= 0 ? "threshold_met" : "missing_last_run_anchor";
             }
           }
           // First run ever: allow it to proceed
         }
+        logAgentCadenceCheck({
+          agentType: csAgent.type,
+          agentName: csAgent.name,
+          cadenceBasis: "user",
+          messagesSince: chatSummaryMessagesSince,
+          threshold: Math.max(1, triggersAfter),
+          willRun: shouldRun,
+          reason: chatSummaryReason,
+          lastRunMessageId: chatSummaryLastRunMessageId,
+        });
 
         if (!shouldRun) {
           resolvedAgents.splice(resolvedAgents.indexOf(csAgent), 1);
