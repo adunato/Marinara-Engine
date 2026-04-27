@@ -530,54 +530,58 @@ export async function generateRoutes(app: FastifyInstance) {
         if (s.enabled !== "true" || s.promptOnly !== "true") return false;
         return true;
       });
-      if (promptOnlyScripts.length > 0) {
-        const totalMessages = mappedMessages.length;
-        for (let msgIdx = 0; msgIdx < totalMessages; msgIdx++) {
-          const msg = mappedMessages[msgIdx]!;
-          const messageDepth = totalMessages - 1 - msgIdx;
-          const placement = msg.role === "user" ? "user_input" : "ai_output";
-          let text = msg.content;
-          for (const script of promptOnlyScripts) {
-            const placements: string[] = (() => {
-              try {
-                return JSON.parse(script.placement as string);
-              } catch {
-                return [];
-              }
-            })();
-            if (!placements.includes(placement)) continue;
-            // Depth range filtering
-            const sMinDepth = script.minDepth as number | null;
-            const sMaxDepth = script.maxDepth as number | null;
-            if (sMinDepth != null && messageDepth < sMinDepth) continue;
-            if (sMaxDepth != null && messageDepth > sMaxDepth) continue;
-            try {
-              const re = new RegExp(script.findRegex as string, script.flags as string);
-              text = text.replace(re, script.replaceString as string);
-              const trims: string[] = (() => {
+      const normalizeMappedMessagesForPrompt = (messages: typeof mappedMessages) => {
+        if (promptOnlyScripts.length > 0) {
+          const totalMessages = messages.length;
+          for (let msgIdx = 0; msgIdx < totalMessages; msgIdx++) {
+            const msg = messages[msgIdx]!;
+            const messageDepth = totalMessages - 1 - msgIdx;
+            const placement = msg.role === "user" ? "user_input" : "ai_output";
+            let text = msg.content;
+            for (const script of promptOnlyScripts) {
+              const placements: string[] = (() => {
                 try {
-                  return JSON.parse(script.trimStrings as string);
+                  return JSON.parse(script.placement as string);
                 } catch {
                   return [];
                 }
               })();
-              for (const t of trims) {
-                if (t) text = text.split(t).join("");
+              if (!placements.includes(placement)) continue;
+              // Depth range filtering
+              const sMinDepth = script.minDepth as number | null;
+              const sMaxDepth = script.maxDepth as number | null;
+              if (sMinDepth != null && messageDepth < sMinDepth) continue;
+              if (sMaxDepth != null && messageDepth > sMaxDepth) continue;
+              try {
+                const re = new RegExp(script.findRegex as string, script.flags as string);
+                text = text.replace(re, script.replaceString as string);
+                const trims: string[] = (() => {
+                  try {
+                    return JSON.parse(script.trimStrings as string);
+                  } catch {
+                    return [];
+                  }
+                })();
+                for (const t of trims) {
+                  if (t) text = text.split(t).join("");
+                }
+              } catch {
+                /* invalid regex — skip */
               }
-            } catch {
-              /* invalid regex — skip */
             }
+            msg.content = text;
           }
-          msg.content = text;
         }
-      }
 
-      // Always collapse 3+ consecutive blank lines into a double newline —
-      // these waste tokens and produce messy logs regardless of user regex settings.
-      // Matches pure newlines AND lines that contain only whitespace.
-      for (const msg of mappedMessages) {
-        msg.content = msg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
-      }
+        // Always collapse 3+ consecutive blank lines into a double newline.
+        // Matches pure newlines AND lines that contain only whitespace.
+        for (const msg of messages) {
+          msg.content = msg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
+        }
+        return messages;
+      };
+
+      mappedMessages = normalizeMappedMessagesForPrompt(mappedMessages);
 
       const characterIds: string[] = JSON.parse(chat.characterIds as string);
 
@@ -900,7 +904,7 @@ export async function generateRoutes(app: FastifyInstance) {
             if (contextMessageLimit && contextMessageLimit > 0 && chatMessages.length > contextMessageLimit) {
               chatMessages = chatMessages.slice(-contextMessageLimit);
             }
-            mappedMessages = mapChatMessagesForPrompt(chatMessages);
+            mappedMessages = normalizeMappedMessagesForPrompt(mapChatMessagesForPrompt(chatMessages));
             finalMessages = mappedMessages;
           }
           // Send "typing" event — client switches to "X is typing..."
@@ -3875,7 +3879,8 @@ export async function generateRoutes(app: FastifyInstance) {
           emittedPatch = patch;
           return patch;
         });
-        const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
+        if (!updatedChat) return chatMeta;
+        const updatedMeta = parseExtra(updatedChat.metadata);
         Object.assign(chatMeta, updatedMeta);
         trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
         return updatedMeta;
@@ -3897,7 +3902,8 @@ export async function generateRoutes(app: FastifyInstance) {
           });
           return emittedPatch;
         });
-        const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
+        if (!updatedChat) return chatMeta;
+        const updatedMeta = parseExtra(updatedChat.metadata);
         Object.assign(chatMeta, updatedMeta);
         trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
         return updatedMeta;

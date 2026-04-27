@@ -26,6 +26,7 @@ import { DATA_DIR } from "../utils/data-dir.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import {
   applyChatSummaryContextTrim,
+  createContiguousSummaryWindow,
   buildSummarySnapshotPatch,
   createSummaryAnchor,
   remapChatSummarySnapshotForBranch,
@@ -95,9 +96,6 @@ export async function chatsRoutes(app: FastifyInstance) {
 
   // Update chat metadata (partial merge)
   app.patch<{ Params: { id: string } }>("/:id/metadata", async (req, reply) => {
-    const chat = await storage.getById(req.params.id);
-    if (!chat) return reply.status(404).send({ error: "Chat not found" });
-    const existing = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
     const incoming = { ...(req.body as Record<string, unknown>) };
     delete incoming.chatSummarySnapshot;
     // Validate Discord webhook URL if provided
@@ -108,8 +106,9 @@ export async function chatsRoutes(app: FastifyInstance) {
       }
       incoming.discordWebhookUrl = url;
     }
-    const merged = { ...existing, ...incoming };
-    return storage.updateMetadata(req.params.id, merged);
+    const updated = await storage.patchMetadata(req.params.id, incoming);
+    if (!updated) return reply.status(404).send({ error: "Chat not found" });
+    return updated;
   });
 
   // Update chat summaries (entry-level merge for day/week summaries).
@@ -1284,7 +1283,10 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     // Build conversation context (use contextSize from popover)
     const allMessages = await storage.listMessages(req.params.id);
-    const recentMessages = allMessages.slice(-contextSize);
+    const recentMessages = createContiguousSummaryWindow(allMessages, chatMeta.chatSummarySnapshot, contextSize);
+    if (recentMessages.length === 0) {
+      return reply.status(400).send({ error: "No new messages to summarize" });
+    }
     const chatLog = recentMessages.map((m: any) => `[${m.role}]: ${(m.content as string).slice(0, 2000)}`).join("\n\n");
 
     const previousSummary = chatMeta.summary ?? null;
