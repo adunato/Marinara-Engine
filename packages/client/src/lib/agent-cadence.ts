@@ -49,7 +49,7 @@ export function getAgentRunIntervalMeta(agentType: string, isBuiltIn = true): Ag
 }
 
 export function getCadenceInputValue(value: number | ""): string {
-  return value === 1 ? EVERY_RUN_LABEL : String(value);
+  return String(value);
 }
 
 export function parseOptionalCadenceInputValue(value: string, max: number): number | "" {
