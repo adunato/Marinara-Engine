@@ -2161,6 +2161,23 @@ export async function generateRoutes(app: FastifyInstance) {
       // Only run agents that are explicitly added to the chat.
       // Empty activeAgentIds = no agents (not "all globally-enabled").
       const enabledConfigs = chatEnableAgents && hasPerChatAgentList ? await agentsStore.list() : [];
+      logger.debug(
+        {
+          chatId: input.chatId,
+          chatEnableAgents,
+          hasPerChatAgentList,
+          activeAgentIds: chatActiveAgentIds,
+          activeAgentTypes: Array.from(perChatAgentSet),
+          configuredAgentTypes: enabledConfigs.map((cfg: any) => cfg.type),
+          configuredAgentCount: enabledConfigs.length,
+        },
+        "[agents] Resolution inputs for chat %s: enableAgents=%s, perChatList=%s, activeTypes=[%s], configuredTypes=[%s]",
+        input.chatId,
+        chatEnableAgents,
+        hasPerChatAgentList,
+        Array.from(perChatAgentSet).join(","),
+        enabledConfigs.map((cfg: any) => cfg.type).join(","),
+      );
 
       // Build ResolvedAgent array — each agent gets its own provider/model or falls back to chat connection
       const resolvedAgents: ResolvedAgent[] = [];
@@ -2192,7 +2209,21 @@ export async function generateRoutes(app: FastifyInstance) {
 
       for (const cfg of enabledConfigs) {
         // If this chat has a per-chat agent list, only include agents in that list
-        if (hasPerChatAgentList && !perChatAgentSet.has(cfg.type)) continue;
+        if (hasPerChatAgentList && !perChatAgentSet.has(cfg.type)) {
+          logger.debug(
+            {
+              chatId: input.chatId,
+              agentId: cfg.id,
+              agentType: cfg.type,
+              agentName: cfg.name,
+              activeAgentTypes: Array.from(perChatAgentSet),
+            },
+            "[agents] Excluding configured agent %s (%s): not in chat active agent list",
+            cfg.type,
+            cfg.name,
+          );
+          continue;
+        }
         const settings = cfg.settings ? JSON.parse(cfg.settings as string) : {};
         let agentProvider = provider;
         let agentModel = conn.model;
@@ -2235,6 +2266,22 @@ export async function generateRoutes(app: FastifyInstance) {
           provider: agentProvider,
           model: agentModel,
         });
+        logger.debug(
+          {
+            chatId: input.chatId,
+            agentId: cfg.id,
+            agentType: cfg.type,
+            agentName: cfg.name,
+            phase: cfg.phase,
+            runInterval: settings.runInterval ?? null,
+            connectionId: cfg.connectionId ?? null,
+            model: agentModel,
+          },
+          "[agents] Included configured agent %s (%s) in phase %s",
+          cfg.type,
+          cfg.name,
+          cfg.phase,
+        );
       }
 
       // Built-in agents with no DB row → use defaults only if explicitly in the per-chat list
@@ -2261,6 +2308,19 @@ export async function generateRoutes(app: FastifyInstance) {
           provider: builtInCached?.provider ?? provider,
           model: builtInCached?.model ?? conn.model,
         });
+        logger.debug(
+          {
+            chatId: input.chatId,
+            agentType: builtIn.id,
+            agentName: builtIn.name,
+            phase: builtIn.phase,
+            runInterval: getDefaultBuiltInAgentSettings(builtIn.id).runInterval ?? null,
+          },
+          "[agents] Included built-in fallback agent %s (%s) in phase %s",
+          builtIn.id,
+          builtIn.name,
+          builtIn.phase,
+        );
       }
 
       logger.info(
