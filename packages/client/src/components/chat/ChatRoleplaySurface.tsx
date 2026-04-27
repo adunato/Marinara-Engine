@@ -87,6 +87,11 @@ const AuthorNotesPanel = lazy(async () => {
   return { default: module.AuthorNotesPanel };
 });
 
+const PANEL_BACKDROP =
+  "fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]";
+const PANEL_CONTAINER =
+  "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in";
+
 function WeatherEffectsConnected() {
   const gs = useGameStateStore((s) => s.current);
   return (
@@ -273,9 +278,9 @@ function ToolbarMenu({ children }: { children: ReactNode }) {
         <button
           onClick={() => setOpen(!open)}
           className={cn(
-            "flex w-9 items-center justify-center rounded-xl border bg-black/40 p-1.5 text-foreground/60 backdrop-blur-md transition-all hover:bg-black/60 hover:text-foreground",
+            "flex w-9 items-center justify-center rounded-xl border bg-[var(--card)] p-1.5 text-foreground/60 backdrop-blur-md transition-all hover:bg-[var(--accent)] hover:text-foreground",
             "border-foreground/10",
-            open && "bg-black/60 border-foreground/20 text-foreground",
+            open && "bg-[var(--accent)] border-foreground/20 text-foreground",
           )}
           title="More options"
         >
@@ -285,7 +290,7 @@ function ToolbarMenu({ children }: { children: ReactNode }) {
           createPortal(
             <div
               ref={popRef}
-              className="fixed z-[9999] flex w-9 flex-col items-center gap-0.5 rounded-xl border border-foreground/10 bg-black/80 p-1 shadow-xl backdrop-blur-xl animate-message-in"
+              className="fixed z-[9999] flex w-9 flex-col items-center gap-0.5 rounded-xl border border-foreground/10 bg-[var(--card)] p-1 shadow-xl backdrop-blur-xl animate-message-in"
               style={{ top: pos.top, right: pos.right }}
               onClick={() => setOpen(false)}
             >
@@ -397,13 +402,13 @@ function WorldInfoButton({ chatId }: { chatId: string | null }) {
         (isMobile ? (
           createPortal(
             <div
-              className="fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]"
+              className={PANEL_BACKDROP}
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             >
               <div className="absolute inset-0 bg-black/30" onClick={() => setOpen(false)} />
               <div
-                className="relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in"
+                className={PANEL_CONTAINER}
                 onClick={(e) => e.stopPropagation()}
               >
                 <Suspense
@@ -487,13 +492,13 @@ function AuthorNotesButton({ chatId, chatMeta }: { chatId: string | null; chatMe
         (isMobile ? (
           createPortal(
             <div
-              className="fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]"
+              className={PANEL_BACKDROP}
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             >
               <div className="absolute inset-0 bg-black/30" onClick={() => setOpen(false)} />
               <div
-                className="relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in"
+                className={PANEL_CONTAINER}
                 onClick={(e) => e.stopPropagation()}
               >
                 <Suspense
@@ -963,7 +968,7 @@ export function ChatRoleplaySurface({
                     <button
                       onClick={onLoadMore}
                       disabled={isFetchingNextPage}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 bg-black/40 px-3 py-1.5 text-xs font-medium text-foreground/70 backdrop-blur-sm transition-all hover:bg-foreground/10 hover:text-foreground/90 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 bg-[var(--card)] px-3 py-1.5 text-xs font-medium text-foreground/70 backdrop-blur-sm transition-all hover:bg-[var(--accent)] hover:text-foreground/90 disabled:opacity-50"
                     >
                       {isFetchingNextPage ? (
                         <Loader2 size="0.75rem" className="animate-spin" />
@@ -977,7 +982,7 @@ export function ChatRoleplaySurface({
 
                 {isLoading && (
                   <div className="flex flex-col items-center gap-3 py-12">
-                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/60" />
+                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-foreground/20 border-t-white/60" />
                   </div>
                 )}
 

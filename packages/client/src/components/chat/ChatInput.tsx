@@ -552,7 +552,7 @@ export const ChatInput = memo(function ChatInput({
     <div className="mari-chat-input chat-input-container px-3 pb-3">
       {/* Slash command autocomplete popup */}
       {completions.length > 0 && (
-        <div className="mb-2 overflow-hidden rounded-xl border border-white/10 bg-black/80 shadow-xl backdrop-blur-xl">
+        <div className="mb-2 overflow-hidden rounded-xl border border-foreground/10 bg-[var(--card)] shadow-xl backdrop-blur-xl">
           {completions.map((cmd, i) => (
             <button
               key={cmd.name}
@@ -627,7 +627,7 @@ export const ChatInput = memo(function ChatInput({
         onDrop={handleDrop}
         className={cn(
           "mari-chat-input-box relative flex items-center gap-1.5 rounded-2xl border-2 px-2.5 py-2.5 transition-all duration-200 sm:gap-2 sm:px-4",
-          "bg-black/40",
+          "bg-[var(--card)]",
           isDragging
             ? "border-blue-400/50 bg-blue-500/10 shadow-lg shadow-blue-500/10"
             : hasInput || attachments.length
@@ -684,7 +684,7 @@ export const ChatInput = memo(function ChatInput({
           rows={1}
           spellCheck
           autoCorrect="on"
-          className="mari-chat-input-textarea max-h-[12.5rem] min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-normal text-[#c3c2c2] placeholder:text-foreground/30 outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="mari-chat-input-textarea max-h-[12.5rem] min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-normal text-foreground/90 placeholder:text-foreground/30 outline-none disabled:cursor-not-allowed disabled:opacity-40"
         />
 
         {/* Emoji picker */}

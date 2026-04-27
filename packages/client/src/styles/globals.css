@@ -421,7 +421,7 @@ strong {
 
 /* Chat message narration text color */
 .mari-message-content {
-  color: #c3c2c2;
+  color: var(--foreground);
 }
 
 /* Hide <style> text inside inline SVGs (browser renders CSS text as visible SVG content) */
@@ -1085,7 +1085,7 @@ summary[class*="cursor-pointer"],
 
 .os-window {
   backdrop-filter: blur(10px);
-  background: #141414d9;
+  background: var(--card);
   border: 2px solid var(--y2k-purple);
   border-radius: 0.75rem;
   position: relative;
@@ -1526,7 +1526,7 @@ summary[class*="cursor-pointer"],
    15. CHAT: ROLEPLAY MODE
    ───────────────────────────────────────────── */
 .rpg-chat-area {
-  background: #0a0a0f;
+  background: var(--background);
 }
 
 .rpg-overlay {
@@ -1539,8 +1539,22 @@ summary[class*="cursor-pointer"],
   );
 }
 
+[data-theme="light"] .rpg-overlay {
+  background: linear-gradient(
+    180deg,
+    rgba(250, 248, 255, 0.4) 0%,
+    rgba(250, 248, 255, 0.25) 30%,
+    rgba(250, 248, 255, 0.3) 70%,
+    rgba(250, 248, 255, 0.45) 100%
+  );
+}
+
 .rpg-vignette {
   background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.3) 100%);
+}
+
+[data-theme="light"] .rpg-vignette {
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(120, 100, 160, 0.12) 100%);
 }
 
 .rpg-avatar-glow {
