@@ -19,6 +19,7 @@ Use this skill only in the Marinara-Engine repository.
 Remove these from `pr/CRXXX-*` unless the user explicitly requests otherwise:
 
 - `.agents/skills/`
+- `.agents/scripts/`
 - `AGENTS.md`
 - `change_requests/`
 - `start_dev_client.bat`
@@ -29,14 +30,19 @@ Remove these from `pr/CRXXX-*` unless the user explicitly requests otherwise:
 ## PR Branch Workflow
 
 1. Confirm the completed CR branch and the intended CR number.
-2. Fetch `upstream main` and fast-forward local `upstream-main` to `upstream/main`.
-3. Create or update `pr/CRXXX-short-title` from `upstream-main`.
-4. Cherry-pick or apply only upstream-relevant commits from `change/CRXXX-*`.
-5. Exclude local-only artifacts listed above.
-6. Validate the resulting diff against `upstream-main` with `git diff --name-status upstream-main..HEAD`.
-7. Run `pnpm check` unless the user asks for a narrower validation.
-8. Run additional validation required by the touched areas, such as `pnpm db:push` or `pnpm version:check`.
-9. Merge into `upstream-main` only after the user confirms the PR branch is ready.
+2. Run the repo-local PR branch helper from the repository root:
+
+   ```powershell
+   .\.agents\scripts\new-upstream-pr.ps1 -SourceBranch change/CRXXX-short-title -PrBranch pr/CRXXX-short-title
+   ```
+
+3. Use `-ResetExisting` only when the user explicitly wants to recreate an existing `pr/CRXXX-*` branch from `upstream-main`.
+4. Use `-NoValidate` only when the user asks for a narrower or deferred validation pass.
+5. Review the helper's `git diff --name-status upstream-main..HEAD` output and confirm local-only artifacts are absent.
+6. Run additional validation required by the touched areas, such as `pnpm db:push` or `pnpm version:check`.
+7. Merge into `upstream-main` only after the user confirms the PR branch is ready.
+
+The helper fetches `upstream/main` into `upstream-main`, creates the PR branch from `upstream-main`, cherry-picks source commits, strips the local overlay paths, and runs `pnpm check` by default.
 
 ## PR Description Guidance
 

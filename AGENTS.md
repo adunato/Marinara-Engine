@@ -31,7 +31,7 @@ Use the repo-local skills for detailed branch workflows:
 - `$marinara-branch-maintenance`: rebuild `main` from `upstream-main`, maintain `local-tools`, and manage local overlay artifacts.
 - `$marinara-change-request`: create and manage `change/CRXXX` branches and `change_requests/` docs.
 - `$marinara-pr-description`: draft or update `change_requests/CRXXX_*/PR.md` from the repository PR template.
-- `$marinara-upstream-pr`: prepare clean `pr/CRXXX` branches and strip local-only artifacts before upstream PR work.
+- `$marinara-upstream-pr`: prepare clean `pr/CRXXX` branches with `.agents/scripts/new-upstream-pr.ps1` before upstream PR work.
 
 ## Version Truth
 

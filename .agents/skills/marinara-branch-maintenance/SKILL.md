@@ -20,6 +20,7 @@ Use this skill only in the Marinara-Engine repository.
 Keep `local-tools` limited to local repo workflow artifacts:
 
 - `.agents/skills/`
+- `.agents/scripts/`
 - `AGENTS.md`
 - `.gitignore`
 - `change_requests/`
