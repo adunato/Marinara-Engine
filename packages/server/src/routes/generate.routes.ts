@@ -530,43 +530,39 @@ export async function generateRoutes(app: FastifyInstance) {
         if (s.enabled !== "true" || s.promptOnly !== "true") return false;
         return true;
       });
+      const promptOnlyScriptDescriptors = promptOnlyScripts
+        .map((script: any) => {
+          try {
+            const placements = JSON.parse(script.placement as string);
+            const trimStrings = JSON.parse(script.trimStrings as string);
+            return {
+              placements: new Set(Array.isArray(placements) ? placements.filter((p) => typeof p === "string") : []),
+              trimStrings: Array.isArray(trimStrings) ? trimStrings.filter((t) => typeof t === "string" && t) : [],
+              regex: new RegExp(script.findRegex as string, script.flags as string),
+              replaceString: String(script.replaceString ?? ""),
+              minDepth: script.minDepth as number | null,
+              maxDepth: script.maxDepth as number | null,
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter((descriptor): descriptor is NonNullable<typeof descriptor> => descriptor != null);
       const normalizeMappedMessagesForPrompt = (messages: typeof mappedMessages) => {
-        if (promptOnlyScripts.length > 0) {
+        if (promptOnlyScriptDescriptors.length > 0) {
           const totalMessages = messages.length;
           for (let msgIdx = 0; msgIdx < totalMessages; msgIdx++) {
             const msg = messages[msgIdx]!;
             const messageDepth = totalMessages - 1 - msgIdx;
             const placement = msg.role === "user" ? "user_input" : "ai_output";
             let text = msg.content;
-            for (const script of promptOnlyScripts) {
-              const placements: string[] = (() => {
-                try {
-                  return JSON.parse(script.placement as string);
-                } catch {
-                  return [];
-                }
-              })();
-              if (!placements.includes(placement)) continue;
-              // Depth range filtering
-              const sMinDepth = script.minDepth as number | null;
-              const sMaxDepth = script.maxDepth as number | null;
-              if (sMinDepth != null && messageDepth < sMinDepth) continue;
-              if (sMaxDepth != null && messageDepth > sMaxDepth) continue;
-              try {
-                const re = new RegExp(script.findRegex as string, script.flags as string);
-                text = text.replace(re, script.replaceString as string);
-                const trims: string[] = (() => {
-                  try {
-                    return JSON.parse(script.trimStrings as string);
-                  } catch {
-                    return [];
-                  }
-                })();
-                for (const t of trims) {
-                  if (t) text = text.split(t).join("");
-                }
-              } catch {
-                /* invalid regex — skip */
+            for (const descriptor of promptOnlyScriptDescriptors) {
+              if (!descriptor.placements.has(placement)) continue;
+              if (descriptor.minDepth != null && messageDepth < descriptor.minDepth) continue;
+              if (descriptor.maxDepth != null && messageDepth > descriptor.maxDepth) continue;
+              text = text.replace(descriptor.regex, descriptor.replaceString);
+              for (const trim of descriptor.trimStrings) {
+                text = text.split(trim).join("");
               }
             }
             msg.content = text;
@@ -3871,6 +3867,12 @@ export async function generateRoutes(app: FastifyInstance) {
           .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
       };
       let lastSavedMsg: any = null;
+      const syncInMemoryChatMeta = (nextMeta: Record<string, unknown>) => {
+        for (const key of Object.keys(chatMeta)) {
+          if (!(key in nextMeta)) delete chatMeta[key];
+        }
+        Object.assign(chatMeta, nextMeta);
+      };
       const updateChatMetadataForTools = async (patchOrUpdater: MetadataPatchInput) => {
         let emittedPatch: Record<string, unknown> = {};
         const updatedChat = await chats.patchMetadata(input.chatId, async (currentMeta) => {
@@ -3880,8 +3882,8 @@ export async function generateRoutes(app: FastifyInstance) {
           return patch;
         });
         if (!updatedChat) return chatMeta;
-        const updatedMeta = parseExtra(updatedChat.metadata);
-        Object.assign(chatMeta, updatedMeta);
+        const updatedMeta = parseExtra(updatedChat.metadata) as Record<string, unknown>;
+        syncInMemoryChatMeta(updatedMeta);
         trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
         return updatedMeta;
       };
@@ -3893,18 +3895,18 @@ export async function generateRoutes(app: FastifyInstance) {
         const updatedChat = await chats.patchMetadata(input.chatId, async (currentMeta) => {
           const currentSummary = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";
           const summary = currentSummary ? `${currentSummary}\n\n${trimmedText}` : trimmedText;
-          const latestMessages = await chats.listMessages(input.chatId);
+          const summaryAnchorMessages = lastSavedMsg ? [...chatMessages, lastSavedMsg] : chatMessages;
           emittedPatch = buildSummarySnapshotPatch({
             currentMeta,
             summary,
             source: "append_chat_summary_tool",
-            anchor: createSummaryAnchor(latestMessages, lastSavedMsg),
+            anchor: createSummaryAnchor(summaryAnchorMessages, lastSavedMsg),
           });
           return emittedPatch;
         });
         if (!updatedChat) return chatMeta;
-        const updatedMeta = parseExtra(updatedChat.metadata);
-        Object.assign(chatMeta, updatedMeta);
+        const updatedMeta = parseExtra(updatedChat.metadata) as Record<string, unknown>;
+        syncInMemoryChatMeta(updatedMeta);
         trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
         return updatedMeta;
       };
@@ -5990,14 +5992,14 @@ export async function generateRoutes(app: FastifyInstance) {
               const newText = ((csData.summary as string) ?? "").trim();
               if (newText) {
                 const updatedMeta = await updateChatMetadataForTools(async (currentMeta) => {
-                  const existing = ((currentMeta.summary as string) ?? "").trim();
+                  const existing = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";
                   const summary = existing ? `${existing}\n\n${newText}` : newText;
-                  const latestMessages = await chats.listMessages(input.chatId);
+                  const summaryAnchorMessages = lastSavedMsg ? [...chatMessages, lastSavedMsg] : chatMessages;
                   return buildSummarySnapshotPatch({
                     currentMeta,
                     summary,
                     source: "built_in_agent",
-                    anchor: createSummaryAnchor(latestMessages, lastSavedMsg),
+                    anchor: createSummaryAnchor(summaryAnchorMessages, lastSavedMsg),
                   });
                 });
                 const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : newText;

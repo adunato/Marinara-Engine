@@ -1330,7 +1330,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
 
     const updatedChat = await storage.patchMetadata(req.params.id, (currentMeta) => {
-      const existing = ((currentMeta.summary as string) ?? "").trim();
+      const existing = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";
       const combined = existing ? `${existing}\n\n${summaryText}` : summaryText;
       return buildSummarySnapshotPatch({
         currentMeta,
@@ -1339,11 +1339,9 @@ export async function chatsRoutes(app: FastifyInstance) {
         anchor: createSummaryAnchor(recentMessages),
       });
     });
-    const updatedMeta = updatedChat
-      ? typeof updatedChat.metadata === "string"
-        ? JSON.parse(updatedChat.metadata)
-        : (updatedChat.metadata ?? {})
-      : {};
+    if (!updatedChat) return reply.status(404).send({ error: "Chat not found" });
+    const updatedMeta =
+      typeof updatedChat.metadata === "string" ? JSON.parse(updatedChat.metadata) : (updatedChat.metadata ?? {});
     const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : summaryText;
 
     return { summary: combined };

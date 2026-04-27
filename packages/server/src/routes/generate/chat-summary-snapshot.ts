@@ -74,15 +74,8 @@ export function createContiguousSummaryWindow<T extends MessageLike>(
   const snapshot = normalizeSnapshot(snapshotValue);
   if (!snapshot) return messages.slice(-limit);
 
-  const anchorIds = [
-    snapshot.anchorMessageId,
-    ...snapshot.previousAnchors.map((anchor) => anchor.messageId),
-  ].filter((messageId): messageId is string => typeof messageId === "string" && messageId.length > 0);
-
-  for (const anchorId of anchorIds) {
-    const anchorIndex = messages.findIndex((message) => message.id === anchorId);
-    if (anchorIndex >= 0) return messages.slice(anchorIndex + 1, anchorIndex + 1 + limit);
-  }
+  const resolved = resolveChatSummaryTrimIndex(messages, snapshot);
+  if (resolved) return messages.slice(resolved.trimIndex, resolved.trimIndex + limit);
 
   return messages.slice(-limit);
 }
