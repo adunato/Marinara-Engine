@@ -1,0 +1,4 @@
+interface:
+  display_name: "Marinara Change Request"
+  short_description: "Create Marinara CR branches and docs"
+  default_prompt: "Use $marinara-change-request to start a new CR for this Marinara change."
