@@ -26,10 +26,11 @@ This repository is a fork of the `pastadevs/marinara-engine` project. Keep branc
 - `change/CRXXX`: per-change working branches mapped to a change request, following the change request skill practice.
 - `pr/CRXXX`: upstream-ready PR branches created after a change is completed and tested. Strip non-upstream artifacts such as design documents before merging these branches into `upstream-main`.
 
-Use the repo-local skills for detailed branch workflows:
+Use the repo-local skills for detailed project workflows:
 
 - `$marinara-branch-maintenance`: rebuild `main` from `upstream-main`, maintain `local-tools`, and manage local overlay artifacts.
 - `$marinara-change-request`: create and manage `change/CRXXX` branches and `change_requests/` docs.
+- `$marinara-coderabbit-review`: triage, verify, plan, and address CodeRabbit PR review comments.
 - `$marinara-pr-description`: draft or update `change_requests/CRXXX_*/PR.md` from the repository PR template.
 - `$marinara-upstream-pr`: prepare clean `pr/CRXXX` branches with `.agents/scripts/new-upstream-pr.ps1` before upstream PR work.
 
