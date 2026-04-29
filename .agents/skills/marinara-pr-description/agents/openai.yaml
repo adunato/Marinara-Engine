@@ -1,4 +1,0 @@
-interface:
-  display_name: "Marinara PR Description"
-  short_description: "Draft PR.md files for Marinara changes"
-  default_prompt: "Use $marinara-pr-description to create or update PR.md for the current Marinara change request."

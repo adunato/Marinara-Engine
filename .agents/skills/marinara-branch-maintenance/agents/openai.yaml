@@ -1,4 +1,0 @@
-interface:
-  display_name: "Marinara Branch Maintenance"
-  short_description: "Maintain Marinara local branch overlays"
-  default_prompt: "Use $marinara-branch-maintenance to refresh main from upstream-main and reapply local-tools."
