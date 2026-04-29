@@ -42,7 +42,10 @@ function Remove-LocalOverlay {
     "AGENTS.md",
     "change_requests",
     "start_dev_client.bat",
-    "start_dev_server.bat"
+    "start_dev_server.bat",
+    "start_dev_server_logged.bat",
+    "filter_server_log.bat",
+    "filter_server_log.ps1"
   )
 
   foreach ($path in $removePaths) {

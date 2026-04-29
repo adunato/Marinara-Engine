@@ -24,6 +24,9 @@ Remove these from `pr/CRXXX-*` unless the user explicitly requests otherwise:
 - `change_requests/`
 - `start_dev_client.bat`
 - `start_dev_server.bat`
+- `start_dev_server_logged.bat`
+- `filter_server_log.bat`
+- `filter_server_log.ps1`
 - local-only `.gitignore` changes
 - design documents, scratch notes, or utility scripts not intended for `pastadevs/main`
 
