@@ -36,6 +36,12 @@ Use the repo-local skills for detailed project workflows:
 
 Keep `change_requests/tracker.md` current when CR state changes, including creation, archive/supersession, local merge, PR opening, and PR merge.
 
+Local-only startup helpers are part of the `local-tools` overlay and must be stripped from upstream PR branches:
+
+- `start_dev_server_logged.bat`
+- `filter_server_log.bat`
+- `filter_server_log.ps1`
+
 ## Version Truth
 
 - Canonical version: root `package.json`

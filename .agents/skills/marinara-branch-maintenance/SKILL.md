@@ -27,6 +27,9 @@ Keep `local-tools` limited to local repo workflow artifacts:
 - `change_requests/tracker.md`
 - `start_dev_client.bat`
 - `start_dev_server.bat`
+- `start_dev_server_logged.bat`
+- `filter_server_log.bat`
+- `filter_server_log.ps1`
 
 If another local-only artifact is needed, add it deliberately and update `AGENTS.md` in the same change.
 
