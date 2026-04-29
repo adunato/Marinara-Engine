@@ -295,7 +295,7 @@ export function buildGmSystemPrompt(ctx: GmPromptContext): string {
   sections.push(
     `<gm_rules>`,
     `You are running a ${ctx.genre} RPG in a ${ctx.setting} setting. Tone: ${ctx.tone}. Difficulty: ${ctx.difficulty}.`,
-    `- Drive the plot, world motion, and consequences. Each turn should deliver at least one of: consequence, discovery, tension, relationship dynamic, world-building, or a concrete world reaction.`,
+    `- Drive the plot, world motion, and consequences. Introduce stakes, dangers, conflicts, consequences, discoveries, tensions, relationship dynamics, world-building, or reactions accordingly.`,
     `- Portray a living world with distinct voices, grounded motives, and realistic awareness.`,
     `- Characters must not sound interchangeable; each person keeps their cadence instead of collapsing into the same clipped voice and has their own way of speaking that you need to capture in dialogues. Fill them with fillers, interruptions, fragments, trailing thoughts, and run-ons when emotion spikes. Use contractions by default unless someone is formal. Let people interrupt, talk past each other, answer the wrong part, and leave things hanging. Preserve the gap between thought, meaning, and speech. Smarties imply and test rather than spell everything out. Crying fractures speech. Laughing breaks words apart. Breathlessness shortens lines. Drunkenness and exhaustion slur or trail. The line itself should sound like the emotion.`,
     `- Enforce strict in-world knowledge boundaries. Characters know only what they personally witnessed, inferred from available evidence, learned from public reputation, or were told by someone in-scene. One character must not know another location's events, hidden motives, secret arcs, private thoughts, or offscreen revelations unless that information plausibly reached them. When unsure, let them be wrong, suspicious, confused, or curious instead of omniscient.`,
@@ -519,7 +519,7 @@ export function buildGmFormatReminder(
     ...(normalizedLanguage && normalizedLanguage.toLowerCase() !== "english"
       ? [
           `LANGUAGE:`,
-          `Write every player-visible line in native ${normalizedLanguage}. Think in it from the start; do not translate from English. The English examples below are format-only; do not imitate their wording or syntax. Before finalizing, silently copy-edit for grammar, word order, punctuation, orthography, and language-specific agreement, removing calques, mixed-language scaffolding, and untranslated filler. Only tags, commands, field names, and deliberate proper nouns or code terms may remain in English.`,
+          `Write prose directly in ${normalizedLanguage} like a native speaker. Think in it from the start, don't translate from English. The English examples below are for formatting only; ignore their wording and syntax. After drafting, reread each sentence and fix: inflection and agreement, verb aspect, word order, prepositions, and anything that sounds translated even if grammatical. Only tags, commands, field names, and intentional proper nouns stay in English.`,
           ``,
         ]
       : []),
@@ -590,15 +590,15 @@ export function buildGmFormatReminder(
     `COMMANDS:`,
     `- Emit commands when canonical game or UI state changes; no command is needed for flavor alone.`,
     `- [choices: "Option A" | "Option B" | "Option C"] - only for explicit player-facing options that require a selection.`,
-    `- [skill_check: skill="Skill Name" dc="1-20" rolls="1-20" modifier="0-10" total="roll + modifier | 1 | 20" result="critical_success | success | failure | critical_failure"] - only when uncertainty or the player's actions should be resolved mechanically. Abandon positivity bias. You choose the roll result fairly, then narrate the consequence in the same turn.`,
+    `- [skill_check: skill="Skill Name" dc="1-20" rolls="1-20" modifier="0-10" total="roll + modifier | 1 | 20" result="critical_success | success | failure | critical_failure"] - only when uncertainty or the player's actions should be resolved mechanically. Abandon positivity bias, you choose the roll result fairly, then narrate the consequence in the same turn.`,
     `- [qte: action1 | action2 | action3, timer: 5s] - only as the final thing in the turn when the player must react to an immediate timed prompt or split-second action. Stop immediately after this tag: choosing an action commits the player's next turn.`,
     ...(ctx.map?.type === "node"
       ? [
           `- [map_update: new_location="Location Name" connected_to="Previous Location Name" node_emoji="emoji"] - only when the party arrives at an entirely new location on the current node map.`,
         ]
       : []),
-    `- [combat: enemies="Enemy 1, Enemy 2"] - when a real combat encounter starts. Emit [state: combat] [combat: ...] only at the very end of the turn, then stop immediately. Combat initiates a new turn with a combat UI.`,
-    `- [inventory: action="add | remove" item="Item A, Item B"] - every real item gain or loss, keep the names short.`,
+    `- [combat: enemies="Enemy 1, Enemy 2" allies="Ally 1, Ally 2 | null"] - only when a real combat encounter starts. Emit [state: combat] [combat: ...] only at the very end of the turn, then stop immediately. Combat initiates a new turn with a combat UI.`,
+    `- [inventory: action="add | remove" item="Item A, Item B"] - every real item gain or loss, keep their names short.`,
     `- [Note: contents] or [Book: contents] - when a new readable note or book is acquired and should be tracked in the journal.`,
     `- [state: exploration | dialogue | combat | travel_rest] - only on actual mode transitions.`,
     `- [reputation: npc="Name" action="helped"] - when an NPC's tracked stance changes because of what happened.`,
@@ -780,10 +780,8 @@ export function buildSetupPrompt(ctx: SetupPromptContext = {}): string {
     `      "name": "NPC Name",`,
     `      "role": "merchant|quest_giver|ally|antagonist|neutral|other",`,
     `      "description": "Personality, appearance, motivation in 1-2 sentences",`,
-    `      "gender": "male|female|nonbinary|unknown",`,
-    `      "pronouns": "e.g. he/him, she/her, they/them",`,
     `      "location": "region_1",`,
-    `      "reputation": 0,`,
+    `      "reputation": 0`,
     `      "_note_reputation": "integer: 0 = neutral, positive = friendly, negative = hostile"`,
     `    }`,
     `  ],`,

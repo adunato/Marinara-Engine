@@ -25,6 +25,8 @@ const STATE_SUBCATEGORY: Record<GameActiveState, string> = {
   travel_rest: "travel_rest",
 };
 
+const MIN_STATE_MUSIC_POOL_SIZE = 6;
+
 // ── Mood keyword associations ──
 // Each mood is an array of keywords that, when found in a tag's name parts
 // or in the context values, increase the tag's score.
@@ -82,6 +84,10 @@ function pickRandom<T>(items: readonly T[]): T {
   return items[Math.floor(Math.random() * items.length)]!;
 }
 
+function uniqueTags(tags: string[]): string[] {
+  return Array.from(new Set(tags));
+}
+
 /**
  * Pick the best music tag for the current game context.
  * Returns `null` when the current music is already appropriate.
@@ -91,20 +97,17 @@ export function scoreMusic(input: MusicScoreInput): string | null {
 
   if (!availableMusic.length) return null;
 
-  // 1. Filter to the primary subcategory for this state
+  // 1. Prefer the primary subcategory for this state, but only use it as the
+  //    whole pool when it has enough variety. Default installs often have just
+  //    one track per state folder; forcing that tiny pool makes music repeat
+  //    even when the user's full music library contains better alternatives.
   const primarySub = STATE_SUBCATEGORY[state];
-  let candidates = availableMusic.filter((tag) => {
-    const parts = tag.split(":");
-    return parts[1] === primarySub;
-  });
-
-  // 2. Fallback: try "custom" subcategory, then all music
-  if (!candidates.length) {
-    candidates = availableMusic.filter((tag) => tag.split(":")[1] === "custom");
-  }
-  if (!candidates.length) {
-    candidates = availableMusic;
-  }
+  const primaryCandidates = availableMusic.filter((tag) => tag.split(":")[1] === primarySub);
+  const customCandidates = availableMusic.filter((tag) => tag.split(":")[1] === "custom");
+  const candidates =
+    primaryCandidates.length >= MIN_STATE_MUSIC_POOL_SIZE
+      ? primaryCandidates
+      : uniqueTags([...primaryCandidates, ...customCandidates, ...availableMusic]);
 
   // 3. If only one candidate, pick it (skip scoring)
   if (candidates.length === 1) {
@@ -126,7 +129,10 @@ export function scoreMusic(input: MusicScoreInput): string | null {
       .toLowerCase()
       .split(/[:\-_]+/)
       .filter((p) => p.length > 1);
-    const score = contextMood.length > 0 ? moodScore(parts, contextMood) : 0;
+    let score = contextMood.length > 0 ? moodScore(parts, contextMood) : 0;
+    const subcategory = tag.split(":")[1];
+    if (subcategory === primarySub) score += 2;
+    if (subcategory === "custom") score += 1;
     return { tag, score };
   });
 

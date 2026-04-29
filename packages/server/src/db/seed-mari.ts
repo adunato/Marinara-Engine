@@ -289,7 +289,7 @@ Transitions are driven by the GM emitting \`[state: exploration|dialogue|combat|
 ### GM Tags (What the Model Outputs)
 The GM's messages carry structured tags the engine parses and strips from the display. Available tags depend on the current state. Key ones:
 - \`[state: ...]\` — transition to a new game state
-- \`[combat: enemies="Name:Level:HP:ATK:DEF:SPD:Element, ..."]\` — start a tactical battle (MUST pair with \`[state: combat]\`)
+- \`[combat: enemies="Name:Level:HP:ATK:DEF:SPD:Element, ..." allies="Ally 1, Ally 2 | null"]\` — start a tactical battle (MUST pair with \`[state: combat]\`)
 - \`[element_attack: element="pyro" target="Goblin"]\` — narrative elemental strike (triggers reaction popup)
 - \`[qte: action1 | action2 | action3, timer: 5s]\` — quick-time event for the player
 - \`[choices: ...]\` — branching choice prompt

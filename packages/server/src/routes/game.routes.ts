@@ -136,7 +136,7 @@ function findCharAvatarFuzzy(npcName: string, charAvatarByName: Map<string, stri
   return undefined;
 }
 
-const ILLUSTRATION_COOLDOWN_TURNS = 6;
+const ILLUSTRATION_COOLDOWN_TURNS = 3;
 
 function isIllustrationAllowed(meta: Record<string, unknown>, turnNumber: number): boolean {
   const lastTurn = typeof meta.gameLastIllustrationTurn === "number" ? meta.gameLastIllustrationTurn : 0;

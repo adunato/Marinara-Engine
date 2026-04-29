@@ -1525,15 +1525,11 @@ export function GameNarration({
         ? null
         : (() => {
             const avatar = findNamedMapValue(speakerAvatarInfos, active.speaker);
-            return avatar
-              ? { name: active.speaker, avatarUrl: avatar.url, expression: active.sprite }
-              : null;
+            return avatar ? { name: active.speaker, avatarUrl: avatar.url, expression: active.sprite } : null;
           })();
 
     // Composite key catches legitimate expression/avatar changes, not just name
-    const nextKey = next
-      ? `${next.name}|${next.expression ?? ""}|${next.avatarUrl ?? ""}`
-      : null;
+    const nextKey = next ? `${next.name}|${next.expression ?? ""}|${next.avatarUrl ?? ""}` : null;
     if (nextKey === lastReportedSpeakerRef.current) return;
     lastReportedSpeakerRef.current = nextKey;
     onActiveSpeakerChange(next);
@@ -2061,7 +2057,8 @@ export function GameNarration({
   const NARRATION_ACTION_BTN =
     "flex items-center gap-1.5 rounded-lg bg-[var(--muted)]/30 px-3 py-1.5 text-xs text-[var(--foreground)]/70 transition-colors hover:bg-[var(--muted)]/50 hover:text-[var(--foreground)] dark:bg-white/10 dark:text-white/70 dark:hover:bg-white/20 dark:hover:text-white";
   const NARRATION_META_BTN =
-    "flex items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--muted)]/20 px-2.5 py-1 text-xs text-[var(--foreground)]/75 transition-colors hover:bg-[var(--muted)]/40 dark:border-white/10 dark:bg-white/5 dark:text-white/75 dark:hover:bg-white/10";
+    "flex min-h-7 items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--muted)]/20 px-2.5 py-1 text-xs text-[var(--foreground)]/75 transition-colors hover:bg-[var(--muted)]/40 dark:border-white/10 dark:bg-white/5 dark:text-white/75 dark:hover:bg-white/10";
+  const NARRATION_ICON_META_BTN = cn(NARRATION_META_BTN, "min-w-7 justify-center px-2");
 
   const handleInterrupt = useCallback(() => {
     // Request only — the parent opens the confirmation modal. We don't pause
@@ -2134,18 +2131,17 @@ export function GameNarration({
         {showInterruptControls && !interruptCommitted && (
           <button
             onClick={handleInterrupt}
-            className="flex items-center gap-1 self-stretch rounded-lg border border-red-500/40 bg-red-500/15 px-2 text-xs font-semibold text-red-200 transition-colors hover:bg-red-500/25 hover:text-red-50 sm:px-2.5 dark:border-red-500/40 dark:bg-red-500/15 dark:text-red-200 dark:hover:bg-red-500/25"
+            className={cn(NARRATION_ICON_META_BTN, "text-red-300 hover:text-red-200 dark:text-red-300")}
             title="Pause the GM so you can write back. Nothing is committed until you send."
             aria-label="Interrupt"
           >
-            <Square size={11} fill="currentColor" />
-            <span className="hidden sm:inline">Interrupt!</span>
+            <Square size={11} className="text-white" fill="currentColor" />
           </button>
         )}
         {showInterruptControls && interruptCommitted && (
           <button
             onClick={handleResume}
-            className="flex items-center gap-1 self-stretch rounded-lg border border-amber-400/40 bg-amber-400/15 px-2 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-400/25 hover:text-amber-50 sm:px-2.5 dark:border-amber-400/40 dark:bg-amber-400/15 dark:text-amber-100 dark:hover:bg-amber-400/25"
+            className={cn(NARRATION_META_BTN, "font-semibold text-amber-200 hover:text-amber-100 dark:text-amber-200")}
             title="Resume narration — your interrupt has not been committed."
             aria-label="Resume"
           >

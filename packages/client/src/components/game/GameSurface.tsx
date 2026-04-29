@@ -54,7 +54,7 @@ import { normalizeGameSegmentEdit, serializeGameSegmentEdit, type GameSegmentEdi
 import { useSceneAnalysis } from "../../hooks/use-scene-analysis";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { parsePartyDialogue } from "../../lib/party-dialogue-parser";
-import type { PartyDialogueLine, CombatSummary, GameMap } from "@marinara-engine/shared";
+import type { PartyDialogueLine, CombatSummary, GameMap, GameActiveState } from "@marinara-engine/shared";
 import type { SceneSegmentEffect } from "@marinara-engine/shared";
 import { scoreMusic, scoreAmbient } from "@marinara-engine/shared";
 import { GameNarration } from "./GameNarration";
@@ -98,6 +98,16 @@ type SceneAssetPresentCharacter = {
 type SpeakingLibraryCharacter = {
   character: GameSurfaceProps["characters"][number];
   aliases: string[];
+};
+
+type GamePartyMemberInfo = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+  nameColor?: string;
+  dialogueColor?: string;
+  canRemove?: boolean;
 };
 
 const NARRATION_NPC_SPEECH_VERB_PATTERN =
@@ -245,6 +255,10 @@ function getActivePartyIds(chatMeta: Record<string, unknown>): string[] {
   return Array.isArray(config?.partyCharacterIds)
     ? (config.partyCharacterIds as string[]).filter((id) => typeof id === "string" && id.trim().length > 0)
     : [];
+}
+
+function mergeUniqueIds(...groups: string[][]): string[] {
+  return Array.from(new Set(groups.flat().filter((id) => typeof id === "string" && id.trim().length > 0)));
 }
 
 function getChatCharacterIds(value: unknown): string[] {
@@ -1185,9 +1199,10 @@ export function GameSurface({
   const setGameTutorialDisabled = useUIStore((s) => s.setGameTutorialDisabled);
   const gameAvatarScale = useUIStore((s) => s.gameAvatarScale);
   const gameSnapshot = useGameStateStore((s) => (s.current?.chatId === activeChatId ? s.current : null));
+  const chatCharacterIds = useMemo(() => getChatCharacterIds(chat.characterIds), [chat.characterIds]);
 
   const sceneWrapCharacterNames = useMemo(() => {
-    const partyIds = getActivePartyIds(chatMeta);
+    const partyIds = mergeUniqueIds(getActivePartyIds(chatMeta), chatCharacterIds);
     const npcByPartyId = buildPartyNpcLookup(npcs, chatMeta.gameNpcs);
     const names = partyIds
       .map(
@@ -1207,7 +1222,7 @@ export function GameSurface({
     }
 
     return [...new Set(names)].slice(0, 100);
-  }, [characterMap, characters, chatMeta, npcs, personaInfo?.name]);
+  }, [characterMap, characters, chatCharacterIds, chatMeta, npcs, personaInfo?.name]);
 
   /** Build weather string from chatMeta.gameWeather if available. */
   const metaWeather = (chatMeta.gameWeather as { type?: string; temperature?: number } | undefined)?.type ?? null;
@@ -1760,7 +1775,7 @@ export function GameSurface({
 
   const gameCharacterIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const id of getChatCharacterIds(chat.characterIds)) {
+    for (const id of chatCharacterIds) {
       if (characterMap.has(id)) ids.add(id);
     }
 
@@ -1773,7 +1788,7 @@ export function GameSurface({
     }
 
     return [...ids];
-  }, [characterMap, chat.characterIds, chatMeta]);
+  }, [characterMap, chatCharacterIds, chatMeta]);
 
   // Fetch sprites for active game characters only. The full library is deliberately
   // not used here because a same-named character card can masquerade as the player.
@@ -2448,6 +2463,12 @@ export function GameSurface({
       .catch(() => {});
 
     const tags = parseGmTags(msg.content);
+    const sceneAnalysisState: GameActiveState =
+      tags.combatEncounter || tags.stateChange === "combat"
+        ? "combat"
+        : tags.stateChange === "exploration" || tags.stateChange === "dialogue" || tags.stateChange === "travel_rest"
+          ? tags.stateChange
+          : gameState;
     const useSidecar = sidecarConfig.useForGameScene && sidecarReady;
     const setupConfig = chatMeta.gameSetupConfig as Record<string, unknown> | null;
     const sceneConnId =
@@ -2535,7 +2556,7 @@ export function GameSurface({
     // the new state is validated, persisted to chatMeta (survives refetch/refresh),
     // and triggers side effects (combat checkpoint, OOC influence).
     if (tags.stateChange) {
-      const next = tags.stateChange as import("@marinara-engine/shared").GameActiveState;
+      const next = sceneAnalysisState;
       const deferCombatTransition = next === "combat" && !!tags.combatEncounter;
       if (deferCombatTransition) {
         // Combat starts after the narrated turn is fully read; the queued encounter
@@ -2586,7 +2607,7 @@ export function GameSurface({
       50,
     );
     const sceneContext = {
-      currentState: gameState,
+      currentState: sceneAnalysisState,
       availableBackgrounds: bgTags,
       availableSfx: sfxTags,
       activeWidgets: hudWidgets,
@@ -2675,10 +2696,18 @@ export function GameSurface({
   };
 
   function applyInlineTags(gmTags: ReturnType<typeof parseGmTags>, assetMap: any, msg: { id: string }) {
+    const sceneAnalysisState: GameActiveState =
+      gmTags.combatEncounter || gmTags.stateChange === "combat"
+        ? "combat"
+        : gmTags.stateChange === "exploration" ||
+            gmTags.stateChange === "dialogue" ||
+            gmTags.stateChange === "travel_rest"
+          ? gmTags.stateChange
+          : gameState;
     // Music is handled by the rule engine, not the GM's inline [music:] tag
     const musicTags = Object.keys(assetMap ?? {}).filter((k) => k.startsWith("music:"));
     const scoredMusic = scoreMusic({
-      state: gameState,
+      state: sceneAnalysisState,
       weather: gameSnapshot?.weather ?? null,
       timeOfDay: gameSnapshot?.time ?? null,
       currentMusic: useGameAssetStore.getState().currentMusic,
@@ -2696,7 +2725,7 @@ export function GameSurface({
     // Ambient is handled by the rule engine, not the GM's inline [ambient:] tag
     const ambientTags = Object.keys(assetMap ?? {}).filter((k) => k.startsWith("ambient:"));
     const scoredAmbient = scoreAmbient({
-      state: gameState,
+      state: sceneAnalysisState,
       weather: gameSnapshot?.weather ?? null,
       timeOfDay: gameSnapshot?.time ?? null,
       currentAmbient: useGameAssetStore.getState().currentAmbient,
@@ -3407,6 +3436,75 @@ export function GameSurface({
     [activeChatId, inventoryItems, updateChatMetadata],
   );
 
+  const handleUseCombatInventoryItem = useCallback(
+    async (itemName: string) => {
+      if (!activeChatId) return;
+
+      const normalizedItemName = normalizeInventoryName(itemName);
+      const updatedInventory = removeInventoryUnit(inventoryItems, normalizedItemName);
+      if (updatedInventory === inventoryItems) {
+        toast.error(`${normalizedItemName || itemName} is no longer in your inventory.`);
+        return;
+      }
+
+      const currentGameState = useGameStateStore.getState().current;
+      const currentPlayerStats = currentGameState?.chatId === activeChatId ? currentGameState.playerStats : null;
+      const nextPlayerStats = currentPlayerStats
+        ? (() => {
+            const updatedDetailedInventory = removeInventoryUnit(currentPlayerStats.inventory, normalizedItemName);
+            return updatedDetailedInventory === currentPlayerStats.inventory
+              ? currentPlayerStats
+              : { ...currentPlayerStats, inventory: updatedDetailedInventory };
+          })()
+        : null;
+      const shouldPatchGameState =
+        Boolean(currentGameState?.chatId === activeChatId) &&
+        Boolean(currentPlayerStats) &&
+        nextPlayerStats !== currentPlayerStats;
+      let patchedGameState = false;
+
+      try {
+        if (shouldPatchGameState && nextPlayerStats) {
+          await api.patch(`/chats/${activeChatId}/game-state`, { playerStats: nextPlayerStats });
+          patchedGameState = true;
+        }
+
+        await updateChatMetadata.mutateAsync({
+          id: activeChatId,
+          gameInventory: updatedInventory,
+        });
+
+        setInventoryItems(updatedInventory);
+        if (shouldPatchGameState && currentGameState && nextPlayerStats) {
+          useGameStateStore.getState().setGameState({
+            ...currentGameState,
+            playerStats: nextPlayerStats,
+          });
+        }
+
+        api
+          .post("/game/journal/entry", {
+            chatId: activeChatId,
+            type: "item",
+            data: { item: normalizedItemName, action: "used", quantity: 1 },
+          })
+          .catch(() => {});
+
+        setInventoryNotifications([`You used ${normalizedItemName}.`]);
+        if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
+        notificationTimerRef.current = setTimeout(() => setInventoryNotifications([]), 4000);
+        toast.success(`Used ${normalizedItemName}.`);
+      } catch (error) {
+        if (patchedGameState) {
+          api.patch(`/chats/${activeChatId}/game-state`, { playerStats: currentPlayerStats }).catch(() => {});
+        }
+        const message = error instanceof Error ? error.message : `Failed to use ${normalizedItemName}.`;
+        toast.error(message);
+      }
+    },
+    [activeChatId, inventoryItems, updateChatMetadata],
+  );
+
   const handleRenameInventoryItem = useCallback(
     async (currentName: string, nextName: string) => {
       if (!activeChatId) return null;
@@ -3630,7 +3728,7 @@ export function GameSurface({
   // Party members from setup config
   const partyMembers = useMemo(() => {
     const config = chatMeta.gameSetupConfig as Record<string, unknown> | undefined;
-    const ids = getActivePartyIds(chatMeta);
+    const ids = mergeUniqueIds(getActivePartyIds(chatMeta), chatCharacterIds);
     const npcByPartyId = buildPartyNpcLookup(npcs, chatMeta.gameNpcs);
     const baseMembers = ids
       .map((id) => {
@@ -3657,15 +3755,7 @@ export function GameSurface({
           canRemove: true,
         };
       })
-      .filter(Boolean) as Array<{
-      id: string;
-      name: string;
-      avatarUrl: string | null;
-      avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
-      nameColor?: string;
-      dialogueColor?: string;
-      canRemove?: boolean;
-    }>;
+      .filter(Boolean) as GamePartyMemberInfo[];
 
     if (personaInfo?.name) {
       const configPersonaId = (config?.personaId as string | undefined) ?? null;
@@ -3693,7 +3783,7 @@ export function GameSurface({
     }
 
     return baseMembers;
-  }, [chatMeta, characters, characterMap, npcs, personaInfo]);
+  }, [chatCharacterIds, chatMeta, characters, characterMap, npcs, personaInfo]);
 
   // Auto-open the in-game tutorial on the user's first game.
   // Guard: only when setup is complete, party is loaded, and the user
@@ -3905,7 +3995,68 @@ export function GameSurface({
     }));
     setCombatEnemies(enemyCombatants);
 
-    const partyCombatants: Combatant[] = partyMembers
+    const playerMembers = partyMembers.filter((member) => member.id.startsWith("persona:"));
+    const npcByPartyId = buildPartyNpcLookup(npcs, chatMeta.gameNpcs);
+    const resolveAllyMember = (allyName: string): GamePartyMemberInfo | null => {
+      const partyMember = findNamedEntry(partyMembers, allyName, (member) => member.name);
+      if (partyMember) return partyMember;
+
+      const libraryCharacter = findNamedEntry(characters, allyName, (character) => character.name);
+      if (libraryCharacter) {
+        const fromMap = characterMap.get(libraryCharacter.id);
+        return {
+          id: libraryCharacter.id,
+          name: libraryCharacter.name,
+          avatarUrl: libraryCharacter.avatarUrl ?? null,
+          avatarCrop: libraryCharacter.avatarCrop ?? fromMap?.avatarCrop ?? null,
+          nameColor: fromMap?.nameColor,
+          dialogueColor: fromMap?.dialogueColor,
+          canRemove: false,
+        };
+      }
+
+      const trackedNpc = findNamedEntry(Array.from(npcByPartyId.values()), allyName, (npc) => npc.name);
+      if (trackedNpc) {
+        return {
+          id: buildPartyNpcId(trackedNpc.name),
+          name: trackedNpc.name,
+          avatarUrl: trackedNpc.avatarUrl ?? null,
+          canRemove: false,
+        };
+      }
+
+      const presentCharacter = gameSnapshot?.presentCharacters?.find((candidate) =>
+        candidate.name ? characterNamesMatch(candidate.name, allyName) : false,
+      );
+      const presentName = presentCharacter?.name?.trim() || allyName.trim();
+      return presentName
+        ? {
+            id: presentCharacter?.characterId ?? buildPartyNpcId(presentName),
+            name: presentName,
+            avatarUrl: null,
+            canRemove: false,
+          }
+        : null;
+    };
+
+    const combatMembers: GamePartyMemberInfo[] =
+      enc.allies === null
+        ? playerMembers
+        : Array.isArray(enc.allies)
+          ? [
+              ...playerMembers,
+              ...enc.allies
+                .map(resolveAllyMember)
+                .filter((member): member is GamePartyMemberInfo => !!member && !member.id.startsWith("persona:")),
+            ]
+          : partyMembers;
+    const uniqueCombatMembers = Array.from(
+      new Map(
+        combatMembers.filter((member) => !!member.id && !!member.name).map((member) => [member.id, member]),
+      ).values(),
+    );
+
+    const partyCombatants: Combatant[] = uniqueCombatMembers
       .filter((m) => !!m.id && !!m.name)
       .map((m) => {
         const isPlayerMember = m.id.startsWith("persona:");
@@ -3977,7 +4128,7 @@ export function GameSurface({
       // partyMembers always includes at least a persona fallback, so this is defense-in-depth
       // for a future refactor. If we ever land here, abort cleanly and roll back to exploration
       // so the player isn't stranded in combat state with no UI.
-      console.warn("[game] Combat aborted: party is empty or malformed.", { partyMembers });
+      console.warn("[game] Combat aborted: party is empty or malformed.", { partyMembers, allies: enc.allies });
       setCombatEnemies(null);
       useGameModeStore.getState().setGameState("exploration");
       if (activeChatId) {
@@ -3993,6 +4144,10 @@ export function GameSurface({
     gameSnapshot,
     activeChatId,
     chatMeta.gameCharacterCards,
+    chatMeta.gameNpcs,
+    characters,
+    characterMap,
+    npcs,
     transitionGameState,
     sessionNumber,
   ]);
@@ -4034,7 +4189,7 @@ export function GameSurface({
     // Build base cards from character data — name and avatar only.
     // Subtitle, status, stats, etc. come exclusively from the game snapshot.
     const config = chatMeta.gameSetupConfig as Record<string, unknown> | undefined;
-    const partyIds = getActivePartyIds(chatMeta);
+    const partyIds = mergeUniqueIds(getActivePartyIds(chatMeta), chatCharacterIds);
     const npcByPartyId = buildPartyNpcLookup(npcs, chatMeta.gameNpcs);
     for (const charId of partyIds) {
       const c = characters.find((ch) => ch.id === charId);
@@ -4160,7 +4315,7 @@ export function GameSurface({
     }
 
     return cards;
-  }, [chatMeta, gameSnapshot, personaInfo, characters, npcs, sessionNumber]);
+  }, [chatCharacterIds, chatMeta, gameSnapshot, personaInfo, characters, npcs, sessionNumber]);
 
   const handleSaveCharacterSheet = useCallback(
     async (cardTitle: string, gameCard: GameCharacterSheetGameCard | undefined) => {
@@ -5745,41 +5900,44 @@ export function GameSurface({
                   ) : undefined;
 
                   if (combatUiActive) {
+                    const combatControlsSlot = (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setCombatLogsOpen(true)}
+                          className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/65 px-3 py-1.5 text-xs font-semibold text-white/80 shadow-lg backdrop-blur-md transition-colors hover:bg-black/80 hover:text-white"
+                          title="Open combat logs"
+                        >
+                          <ScrollText size={13} />
+                          Logs
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleReturnToPreCombatTurn}
+                          disabled={!latestAssistantMsg?.id}
+                          className="flex items-center gap-1.5 rounded-lg border border-amber-300/25 bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-100 shadow-lg backdrop-blur-md transition-colors hover:bg-amber-500/30 disabled:opacity-50"
+                          title="Exit combat and remove the turn that started it"
+                        >
+                          <RotateCcw size={13} />
+                          Previous Turn
+                        </button>
+                      </>
+                    );
+
                     return (
                       <div className="relative h-full min-h-0">
                         <GameCombatUI
                           chatId={activeChatId}
                           party={combatParty}
                           enemies={combatEnemies}
+                          inventoryItems={inventoryItems}
                           onCombatEnd={handleCombatEnd}
+                          onInventoryItemUsed={handleUseCombatInventoryItem}
+                          onOpenInventory={() => setInventoryOpen(true)}
                           onSpriteSuggestionChange={setCombatSpriteSuggestion}
-                          narration={
-                            latestAssistantMsg?.content
-                              ? parseGmTags(latestAssistantMsg.content).cleanContent
-                              : undefined
-                          }
+                          narration="Combat starts!"
+                          combatControlsSlot={combatControlsSlot}
                         />
-                        <div className="pointer-events-auto absolute left-3 top-3 z-30 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setCombatLogsOpen(true)}
-                            className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/65 px-3 py-1.5 text-xs font-semibold text-white/80 shadow-lg backdrop-blur-md transition-colors hover:bg-black/80 hover:text-white"
-                            title="Open combat logs"
-                          >
-                            <ScrollText size={13} />
-                            Logs
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleReturnToPreCombatTurn}
-                            disabled={!latestAssistantMsg?.id}
-                            className="flex items-center gap-1.5 rounded-lg border border-amber-300/25 bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-100 shadow-lg backdrop-blur-md transition-colors hover:bg-amber-500/30 disabled:opacity-50"
-                            title="Exit combat and remove the turn that started it"
-                          >
-                            <RotateCcw size={13} />
-                            Previous Turn
-                          </button>
-                        </div>
                       </div>
                     );
                   }

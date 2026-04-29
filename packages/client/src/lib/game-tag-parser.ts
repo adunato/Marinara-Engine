@@ -21,6 +21,12 @@ export interface CombatEncounterTag {
     /** Element the enemy attacks with (for elemental reaction chains) */
     element?: string;
   }>;
+  /**
+   * Names of allies who should join the player side. `undefined` means the GM
+   * used the legacy format, so the engine falls back to the configured party.
+   * `null` means the GM explicitly requested no extra allies.
+   */
+  allies?: string[] | null;
 }
 
 export interface SkillCheckTag {
@@ -114,7 +120,34 @@ function parseQteMatch(match: RegExpMatchArray): { actions: string[]; timer: num
   return actions.length > 0 && !isNaN(timer) ? { actions, timer } : null;
 }
 
-function parseCombatEncounter(raw: string): CombatEncounterTag | null {
+function parseTagAttributes(body: string): Map<string, string> {
+  const values = new Map<string, string>();
+  const attributes = Array.from(body.matchAll(/(\w+)\s*=\s*("[^"]*"|'[^']*'|[^\s\]]+)/g));
+  for (const match of attributes) {
+    const key = match[1]?.trim().toLowerCase();
+    const rawValue = match[2]?.trim();
+    if (!key || !rawValue) continue;
+    values.set(key, rawValue.replace(/^['"]|['"]$/g, ""));
+  }
+  return values;
+}
+
+function parseCombatAllies(raw: string | undefined): string[] | null | undefined {
+  if (raw == null) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed || /^(?:null|none|no\s+allies|solo)$/i.test(trimmed)) return null;
+
+  const allies = trimmed
+    .split(/[|,]/)
+    .map((entry) => entry.trim().replace(/^["']|["']$/g, ""))
+    .filter((entry) => entry && !/^(?:null|none|no\s+allies|solo)$/i.test(entry));
+
+  return allies.length > 0 ? allies : null;
+}
+
+function parseCombatEncounter(body: string): CombatEncounterTag | null {
+  const attributes = parseTagAttributes(body);
+  const raw = attributes.get("enemies") ?? body;
   const enemyEntries = raw
     .split(",")
     .map((entry) => entry.trim())
@@ -147,7 +180,10 @@ function parseCombatEncounter(raw: string): CombatEncounterTag | null {
     }
   }
 
-  return enemies.length > 0 ? { enemies } : null;
+  if (enemies.length === 0) return null;
+
+  const allies = parseCombatAllies(attributes.get("allies"));
+  return allies === undefined ? { enemies } : { enemies, allies };
 }
 
 /**
@@ -710,7 +746,7 @@ export function parseGmTags(content: string): ParsedGmTags {
   }
 
   const qteRegex = /\[qte:\s*(.+?),\s*timer:\s*(\d+)s?\]/i;
-  const combatRegex = /\[combat:\s*enemies="([^"]+)"\]/i;
+  const combatRegex = /\[combat:\s*([^\]]+)\]/i;
   const qteTerminalMatch = text.match(qteRegex);
   const combatTerminalMatch = text.match(combatRegex);
   const terminalCandidates: Array<{ index: number; tag: string }> = [];
@@ -769,7 +805,7 @@ export function parseGmTags(content: string): ParsedGmTags {
   }
   text = text.replace(/\[reputation:\s*npc="[^"]+"\s*action="[^"]+"\]/gi, "");
 
-  // [combat: enemies="Goblin:5:40:8:5:6, Skeleton:3:25:6:3:4"]
+  // [combat: enemies="Goblin:5:40:8:5:6, Skeleton:3:25:6:3:4" allies="Dottore, Nasira"]
   // Format: Name:Level:HP:ATK:DEF:SPD — comma separated for multiple enemies
   // Simplified format: [combat: enemies="Goblin, Skeleton"] (auto-generates stats from level)
   const combatMatch = text.match(combatRegex);
