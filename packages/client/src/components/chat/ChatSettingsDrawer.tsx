@@ -631,6 +631,7 @@ export function ChatSettingsDrawer({
   const [toolSearch, setToolSearch] = useState("");
   const [choiceModalPresetId, setChoiceModalPresetId] = useState<string | null>(null);
   const [agentAddPreview, setAgentAddPreview] = useState<AgentAddPreview | null>(null);
+  const [agentAddCadenceInputFocused, setAgentAddCadenceInputFocused] = useState(false);
   const [addingAgentToChat, setAddingAgentToChat] = useState(false);
   const [isRegeneratingSchedules, setIsRegeneratingSchedules] = useState(false);
   // Synchronous lock to close the re-entry gap: React state commits are async, so two
@@ -3860,8 +3861,16 @@ export function ChatSettingsDrawer({
                       <input
                         type="text"
                         inputMode="numeric"
-                        value={getCadenceInputValue(agentAddPreview.runInterval)}
-                        onFocus={(e) => e.target.select()}
+                        value={
+                          agentAddCadenceInputFocused
+                            ? String(agentAddPreview.runInterval)
+                            : getCadenceInputValue(agentAddPreview.runInterval)
+                        }
+                        onFocus={(e) => {
+                          setAgentAddCadenceInputFocused(true);
+                          e.target.select();
+                        }}
+                        onBlur={() => setAgentAddCadenceInputFocused(false)}
                         onKeyDown={(e) => {
                           if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
                           e.preventDefault();

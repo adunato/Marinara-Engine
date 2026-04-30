@@ -139,6 +139,7 @@ export function AgentEditor() {
   const [localImageConnectionId, setLocalImageConnectionId] = useState("");
   const [localContextSize, setLocalContextSize] = useState<number | "">("");
   const [localRunInterval, setLocalRunInterval] = useState<number | "">("");
+  const [customCadenceInputFocused, setCustomCadenceInputFocused] = useState(false);
   const [localPrompt, setLocalPrompt] = useState("");
   const [localInjectAsSection, setLocalInjectAsSection] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
@@ -743,8 +744,12 @@ export function AgentEditor() {
                   <input
                     type="text"
                     inputMode="numeric"
-                    value={getCadenceInputValue(localRunInterval)}
-                    onFocus={(e) => e.target.select()}
+                    value={customCadenceInputFocused ? String(localRunInterval) : getCadenceInputValue(localRunInterval)}
+                    onFocus={(e) => {
+                      setCustomCadenceInputFocused(true);
+                      e.target.select();
+                    }}
+                    onBlur={() => setCustomCadenceInputFocused(false)}
                     onKeyDown={(e) => {
                       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
                       e.preventDefault();
