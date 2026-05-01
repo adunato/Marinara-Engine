@@ -18,7 +18,6 @@ Custom agents can participate in generation, but they did not have a clean way t
 
 ### Manual verification notes
 
-- Not completed in this session.
 - Create a custom agent with the documented memory-keeper prompt, allow it to use summary tools, generate a chat response, and verify the persisted summary updates.
 - Configure the custom agent to run every N eligible chat messages and verify it does not run before the cadence threshold is met.
 - Verify summary UI refreshes when the custom agent updates metadata.
