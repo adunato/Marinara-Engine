@@ -124,8 +124,10 @@ export function AgentEditor() {
 
   // Custom agent = DB entry with no matching built-in
   const isCustomAgent = !builtIn && !!dbConfig;
-  const customRunIntervalMeta = isCustomAgent
-    ? getAgentRunIntervalMeta(dbConfig?.type ?? agentDetailId ?? "", false)
+  const isNewCustomAgent = agentDetailId === "__new__";
+  const customRunIntervalMeta =
+    isCustomAgent || isNewCustomAgent
+      ? getAgentRunIntervalMeta(isNewCustomAgent ? "__new__" : (dbConfig?.type ?? agentDetailId ?? ""), false)
     : null;
 
   // Default prompt for this agent type
@@ -733,7 +735,7 @@ export function AgentEditor() {
           )}
 
           {/* ── Triggers After (Chat Summary agent) ── */}
-          {isCustomAgent && customRunIntervalMeta && (
+          {(isCustomAgent || isNewCustomAgent) && customRunIntervalMeta && (
             <FieldGroup
               label={customRunIntervalMeta.label}
               icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}

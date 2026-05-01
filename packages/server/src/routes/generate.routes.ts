@@ -4078,7 +4078,9 @@ export async function generateRoutes(app: FastifyInstance) {
         });
         const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
         Object.assign(chatMeta, updatedMeta);
-        reply.raw.write(`data: ${JSON.stringify({ type: "metadata_patch", data: emittedPatch })}\n\n`);
+        agentContext.chatSummary =
+          typeof chatMeta.summary === "string" && chatMeta.summary.trim() ? chatMeta.summary.trim() : null;
+        trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
         return updatedMeta;
       };
       const baseToolExecutionContext = {

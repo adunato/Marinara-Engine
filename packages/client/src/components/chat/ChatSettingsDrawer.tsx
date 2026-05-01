@@ -698,6 +698,7 @@ export function ChatSettingsDrawer({
   }, [open]);
 
   const openAgentAddModal = (agent: AvailableAgent) => {
+    setAgentAddCadenceInputFocused(false);
     const config = agentConfigsByType.get(agent.id) ?? null;
     const mergedSettings = {
       ...getDefaultBuiltInAgentSettings(agent.id),
