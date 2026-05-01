@@ -270,7 +270,10 @@ async function appendChatSummary(
   args: Record<string, unknown>,
   context?: ToolExecutionContext,
 ): Promise<Record<string, unknown>> {
-  const text = String(args.text ?? "").trim();
+  if (typeof args.text !== "string") {
+    return { error: "append_chat_summary requires non-empty text" };
+  }
+  const text = args.text.trim();
   if (!text) {
     return { error: "append_chat_summary requires non-empty text" };
   }
