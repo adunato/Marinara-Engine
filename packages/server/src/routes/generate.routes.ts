@@ -3853,8 +3853,14 @@ export async function generateRoutes(app: FastifyInstance) {
       // Tool Resolution (Main Generation + Agent Pipeline)
       // ────────────────────────────────────────
       const inputBody = req.body as Record<string, unknown>;
-      const enableTools = inputBody.enableTools === true || chatMeta.enableTools === true;
+      const enableChatTools = inputBody.enableTools === true || chatMeta.enableTools === true;
+      const enableAgentTools = resolvedAgents.some((agent) => {
+        const agentSettings = typeof agent.settings === "string" ? JSON.parse(agent.settings) : agent.settings || {};
+        return Array.isArray(agentSettings.enabledTools) && agentSettings.enabledTools.length > 0;
+      });
+      const resolveTools = enableChatTools || enableAgentTools;
       let toolDefs: LLMToolDefinition[] | undefined;
+      const allToolDefs: LLMToolDefinition[] = [];
       const customToolDefs: Array<{
         name: string;
         executionType: string;
@@ -3863,7 +3869,7 @@ export async function generateRoutes(app: FastifyInstance) {
         scriptBody: string | null;
       }> = [];
 
-      if (enableTools) {
+      if (resolveTools) {
         // Per-chat tool selection (empty = all tools)
         const chatActiveToolIds: string[] = Array.isArray(chatMeta.activeToolIds)
           ? (chatMeta.activeToolIds as string[])
@@ -3872,11 +3878,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const registeredToolSources = new Map<string, "built-in" | "custom">();
 
         // Built-in tools
-        const builtInFiltered = hasToolFilter
-          ? BUILT_IN_TOOLS.filter((t) => chatActiveToolIds.includes(t.name))
-          : BUILT_IN_TOOLS;
-        toolDefs = [];
-        for (const t of builtInFiltered) {
+        for (const t of BUILT_IN_TOOLS) {
           const existingSource = registeredToolSources.get(t.name);
           if (existingSource) {
             throw new Error(
@@ -3884,7 +3886,7 @@ export async function generateRoutes(app: FastifyInstance) {
             );
           }
           registeredToolSources.set(t.name, "built-in");
-          toolDefs.push({
+          allToolDefs.push({
             type: "function" as const,
             function: {
               name: t.name,
@@ -3896,10 +3898,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         // Custom tools from DB
         const enabledCustomTools = await customToolsStore.listEnabled();
-        const customFiltered = hasToolFilter
-          ? enabledCustomTools.filter((ct: any) => chatActiveToolIds.includes(ct.name))
-          : enabledCustomTools;
-        for (const ct of customFiltered) {
+        for (const ct of enabledCustomTools) {
           const existingSource = registeredToolSources.get(ct.name);
           if (existingSource) {
             logger.warn(
@@ -3952,7 +3951,7 @@ export async function generateRoutes(app: FastifyInstance) {
               scriptBody: ct.scriptBody,
             });
 
-            toolDefs.push({
+            allToolDefs.push({
               type: "function" as const,
               function: {
                 name: ct.name,
@@ -3970,12 +3969,18 @@ export async function generateRoutes(app: FastifyInstance) {
             );
           }
         }
+
+        if (enableChatTools) {
+          toolDefs = hasToolFilter
+            ? allToolDefs.filter((td) => chatActiveToolIds.includes(td.function.name))
+            : allToolDefs;
+        }
       }
 
       // ── Spotify Token Refresh (Early) ──
-      const resolvedToolNames = new Set((toolDefs ?? []).map((td) => td.function.name));
+      const resolvedToolNames = new Set(allToolDefs.map((td) => td.function.name));
       const spotifyToolNames = new Set(DEFAULT_AGENT_TOOLS.spotify ?? []);
-      const chatAllowsSpotify = Array.from(resolvedToolNames).some((name) => spotifyToolNames.has(name));
+      const chatAllowsSpotify = (toolDefs ?? []).some((td) => spotifyToolNames.has(td.function.name));
       const anyAgentAllowsSpotify = resolvedAgents.some((agent) => {
         const agentSettings = typeof agent.settings === "string" ? JSON.parse(agent.settings) : agent.settings || {};
         const agentEnabledNames = Array.isArray(agentSettings.enabledTools)
@@ -3984,7 +3989,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const agentResolvedNames = agentEnabledNames.filter((name) => resolvedToolNames.has(name));
         return agentResolvedNames.some((name) => spotifyToolNames.has(name));
       });
-      const needsSpotify = enableTools && (chatAllowsSpotify || anyAgentAllowsSpotify);
+      const needsSpotify = (enableChatTools && chatAllowsSpotify) || anyAgentAllowsSpotify;
       // Look beyond resolved agents only to reuse stored Spotify credentials when Spotify tools are allowed.
       const spotifyAgent = needsSpotify
         ? (resolvedAgents.find((a) => a.type === "spotify") ??
@@ -4103,7 +4108,7 @@ export async function generateRoutes(app: FastifyInstance) {
           : [];
         if (agentEnabledNames.length === 0) continue;
 
-        const agentTools = (toolDefs ?? []).filter((td) => agentEnabledNames.includes(td.function.name));
+        const agentTools = allToolDefs.filter((td) => agentEnabledNames.includes(td.function.name));
         if (agentTools.length === 0) continue;
         const allowedToolNames = new Set(agentTools.map((td) => td.function.name));
 
@@ -4914,7 +4919,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          if (enableTools && provider.chatComplete) {
+          if (enableChatTools && provider.chatComplete) {
             const MAX_TOOL_ROUNDS = 5;
             let loopMessages: ChatMessage[] = initialProviderMessages;
             // ── Seed encrypted reasoning cache from DB ──

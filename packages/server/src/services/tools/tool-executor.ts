@@ -266,6 +266,25 @@ function readChatSummary(chatMeta?: Record<string, unknown>): Record<string, unk
   return { summary };
 }
 
+function sanitizePersistedSummaryText(text: string): string {
+  return text
+    .replace(/&(amp|lt|gt);/g, (_match, entity: string) => {
+      switch (entity) {
+        case "amp":
+          return "&";
+        case "lt":
+          return "<";
+        case "gt":
+          return ">";
+        default:
+          return _match;
+      }
+    })
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function appendChatSummary(
   args: Record<string, unknown>,
   context?: ToolExecutionContext,
@@ -277,15 +296,17 @@ async function appendChatSummary(
   if (!text) {
     return { error: "append_chat_summary requires non-empty text" };
   }
+  const sanitizedText = sanitizePersistedSummaryText(text);
   if (!context?.onUpdateMetadata) {
     return { error: "Chat metadata updates are not available in this context" };
   }
 
   const updated = await context.onUpdateMetadata((currentMeta) => {
-    const existing = typeof currentMeta.summary === "string" ? currentMeta.summary.trim() : "";
-    return { summary: existing ? `${existing}\n\n${text}` : text };
+    const existing =
+      typeof currentMeta.summary === "string" ? sanitizePersistedSummaryText(currentMeta.summary.trim()) : "";
+    return { summary: existing ? `${existing}\n\n${sanitizedText}` : sanitizedText };
   });
-  return { summary: typeof updated.summary === "string" ? updated.summary : text };
+  return { summary: typeof updated.summary === "string" ? updated.summary : sanitizedText };
 }
 
 function triggerEvent(args: Record<string, unknown>): Record<string, unknown> {
