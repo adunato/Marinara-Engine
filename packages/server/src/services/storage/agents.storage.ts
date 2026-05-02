@@ -209,6 +209,18 @@ export function createAgentsStorage(db: DB) {
       return rows[0]?.agent_runs ?? null;
     },
 
+    /** Get the most recent run of an agent type in a given chat, regardless of success. */
+    async getLastRunByType(agentType: string, chatId: string) {
+      const rows = await db
+        .select()
+        .from(agentRuns)
+        .innerJoin(agentConfigs, eq(agentRuns.agentConfigId, agentConfigs.id))
+        .where(and(eq(agentConfigs.type, agentType), eq(agentRuns.chatId, chatId)))
+        .orderBy(desc(agentRuns.createdAt))
+        .limit(1);
+      return rows[0]?.agent_runs ?? null;
+    },
+
     /** Get all echo chamber messages for a chat, ordered by creation time. */
     async getEchoMessages(chatId: string) {
       const rows = await db

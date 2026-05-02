@@ -2400,7 +2400,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
       const builtInAgentTypes = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
       const userMessagesSinceLastAgentRun = async (agentType: string) => {
-        const lastRun = await agentsStore.getLastSuccessfulRunByType(agentType, input.chatId);
+        const lastRun = await agentsStore.getLastRunByType(agentType, input.chatId);
         if (!lastRun) return Number.POSITIVE_INFINITY;
 
         const lastRunIdx = allChatMessages.findIndex((message: any) => message.id === lastRun.messageId);
@@ -3979,8 +3979,9 @@ export async function generateRoutes(app: FastifyInstance) {
 
       // ── Spotify Token Refresh (Early) ──
       const resolvedToolNames = new Set(allToolDefs.map((td) => td.function.name));
+      const chatResolvedToolNames = new Set((toolDefs ?? []).map((td) => td.function.name));
       const spotifyToolNames = new Set(DEFAULT_AGENT_TOOLS.spotify ?? []);
-      const chatAllowsSpotify = (toolDefs ?? []).some((td) => spotifyToolNames.has(td.function.name));
+      const chatAllowsSpotify = Array.from(chatResolvedToolNames).some((name) => spotifyToolNames.has(name));
       const anyAgentAllowsSpotify = resolvedAgents.some((agent) => {
         const agentSettings = typeof agent.settings === "string" ? JSON.parse(agent.settings) : agent.settings || {};
         const agentEnabledNames = Array.isArray(agentSettings.enabledTools)
@@ -5045,15 +5046,17 @@ export async function generateRoutes(app: FastifyInstance) {
                 ...(result.providerMetadata ? { providerMetadata: result.providerMetadata } : {}),
               });
 
-              const permittedToolCalls = result.toolCalls.filter((call) => resolvedToolNames.has(call.function.name));
+              const permittedToolCalls = result.toolCalls.filter((call) =>
+                chatResolvedToolNames.has(call.function.name),
+              );
               const deniedToolResults = result.toolCalls
-                .filter((call) => !resolvedToolNames.has(call.function.name))
+                .filter((call) => !chatResolvedToolNames.has(call.function.name))
                 .map((call) => ({
                   toolCallId: call.id,
                   name: call.function.name,
                   result: JSON.stringify({
                     error: `Tool not allowed in this context: ${call.function.name}`,
-                    allowed: Array.from(resolvedToolNames),
+                    allowed: Array.from(chatResolvedToolNames),
                   }),
                   success: false,
                 }));

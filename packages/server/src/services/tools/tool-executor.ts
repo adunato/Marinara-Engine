@@ -35,6 +35,9 @@ export type MetadataPatch = Record<string, unknown>;
 export type MetadataUpdater = (current: MetadataPatch) => MetadataPatch | Promise<MetadataPatch>;
 export type MetadataPatchInput = MetadataPatch | MetadataUpdater;
 
+const MAX_APPEND_BYTES = 16 * 1024;
+const MAX_TOTAL_SUMMARY_BYTES = 64 * 1024;
+
 export interface ToolExecutionContext {
   gameState?: Record<string, unknown>;
   chatMeta?: Record<string, unknown>;
@@ -285,6 +288,30 @@ function sanitizePersistedSummaryText(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function utf8ByteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+function trimToUtf8Bytes(text: string, maxBytes: number, fromStart = false): string {
+  if (maxBytes <= 0) return "";
+  if (utf8ByteLength(text) <= maxBytes) return text;
+
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const candidate = fromStart ? text.slice(text.length - mid) : text.slice(0, mid);
+    if (utf8ByteLength(candidate) <= maxBytes) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  const trimmed = fromStart ? text.slice(text.length - low) : text.slice(0, low);
+  return fromStart ? trimmed.replace(/^[\uDC00-\uDFFF]/, "") : trimmed.replace(/[\uD800-\uDBFF]$/, "");
+}
+
 async function appendChatSummary(
   args: Record<string, unknown>,
   context?: ToolExecutionContext,
@@ -296,7 +323,10 @@ async function appendChatSummary(
   if (!text) {
     return { error: "append_chat_summary requires non-empty text" };
   }
-  const sanitizedText = sanitizePersistedSummaryText(text);
+  const sanitizedText = trimToUtf8Bytes(sanitizePersistedSummaryText(text), MAX_APPEND_BYTES).trim();
+  if (!sanitizedText) {
+    return { error: "append_chat_summary exceeds per-append size limit" };
+  }
   if (!context?.onUpdateMetadata) {
     return { error: "Chat metadata updates are not available in this context" };
   }
@@ -304,7 +334,8 @@ async function appendChatSummary(
   const updated = await context.onUpdateMetadata((currentMeta) => {
     const existing =
       typeof currentMeta.summary === "string" ? sanitizePersistedSummaryText(currentMeta.summary.trim()) : "";
-    return { summary: existing ? `${existing}\n\n${sanitizedText}` : sanitizedText };
+    const summary = existing ? `${existing}\n\n${sanitizedText}` : sanitizedText;
+    return { summary: trimToUtf8Bytes(summary, MAX_TOTAL_SUMMARY_BYTES, true).trim() };
   });
   return { summary: typeof updated.summary === "string" ? updated.summary : sanitizedText };
 }
