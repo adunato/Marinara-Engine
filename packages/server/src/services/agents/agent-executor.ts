@@ -202,7 +202,7 @@ async function executeAgentWithTools(
   const MAX_TOOL_ROUNDS = 5;
   const loopMessages = [...initialMessages];
   let totalTokens = 0;
-  const debugAgentsEnabled = isDebugAgentsEnabled() || logger.isLevelEnabled("debug");
+  const debugAgentsEnabled = isDebugAgentsEnabled() && logger.isLevelEnabled("debug");
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const result = await provider.chatComplete(loopMessages, {
