@@ -4086,6 +4086,11 @@ export async function generateRoutes(app: FastifyInstance) {
           return patch;
         });
         const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
+        for (const key of Object.keys(chatMeta)) {
+          if (!(key in updatedMeta)) {
+            delete chatMeta[key];
+          }
+        }
         Object.assign(chatMeta, updatedMeta);
         agentContext.chatSummary =
           typeof chatMeta.summary === "string" && chatMeta.summary.trim() ? chatMeta.summary.trim() : null;
