@@ -12,6 +12,7 @@ import {
   Plug,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Check,
   Plus,
   Trash2,
@@ -76,6 +77,12 @@ import {
   chatKeys,
 } from "../../hooks/use-chats";
 import { api } from "../../lib/api-client";
+import {
+  getAgentRunIntervalMeta,
+  getCadenceInputValue,
+  parseCadenceInputValue,
+  stepCadenceValue,
+} from "../../lib/agent-cadence";
 import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
 import { useUIStore } from "../../stores/ui.store";
 import {
@@ -135,14 +142,6 @@ type AgentAddPreview = {
   runInterval: number | null;
 };
 
-type AgentRunIntervalMeta = {
-  label: string;
-  unit: string;
-  help: string;
-  defaultValue: number;
-  max: number;
-};
-
 function parseAgentSettings(raw: unknown): Record<string, unknown> {
   if (!raw) return {};
   if (typeof raw === "string") {
@@ -168,37 +167,6 @@ function isEnabledFlag(value: unknown): boolean {
 function normalizeNonNegativeInteger(value: unknown, fallback: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(0, Math.min(max, Math.trunc(value)));
-}
-
-function getAgentRunIntervalMeta(agentType: string): AgentRunIntervalMeta | null {
-  switch (agentType) {
-    case "director":
-      return {
-        label: "Run Interval",
-        unit: "assistant messages",
-        help: "How many assistant messages should pass before the Narrative Director jumps in again. Higher values make it less aggressive.",
-        defaultValue: 5,
-        max: 100,
-      };
-    case "lorebook-keeper":
-      return {
-        label: "Run Interval",
-        unit: "assistant messages",
-        help: "How many assistant messages should pass between Lorebook Keeper updates.",
-        defaultValue: 8,
-        max: 100,
-      };
-    case "chat-summary":
-      return {
-        label: "Triggers After",
-        unit: "user messages",
-        help: "How many user messages should pass before the Automated Chat Summary updates again.",
-        defaultValue: 5,
-        max: 200,
-      };
-    default:
-      return null;
-  }
 }
 
 export function ChatSettingsDrawer({
@@ -663,6 +631,7 @@ export function ChatSettingsDrawer({
   const [toolSearch, setToolSearch] = useState("");
   const [choiceModalPresetId, setChoiceModalPresetId] = useState<string | null>(null);
   const [agentAddPreview, setAgentAddPreview] = useState<AgentAddPreview | null>(null);
+  const [agentAddCadenceInputFocused, setAgentAddCadenceInputFocused] = useState(false);
   const [addingAgentToChat, setAddingAgentToChat] = useState(false);
   const [isRegeneratingSchedules, setIsRegeneratingSchedules] = useState(false);
   // Synchronous lock to close the re-entry gap: React state commits are async, so two
@@ -729,12 +698,13 @@ export function ChatSettingsDrawer({
   }, [open]);
 
   const openAgentAddModal = (agent: AvailableAgent) => {
+    setAgentAddCadenceInputFocused(false);
     const config = agentConfigsByType.get(agent.id) ?? null;
     const mergedSettings = {
       ...getDefaultBuiltInAgentSettings(agent.id),
       ...parseAgentSettings(config?.settings),
     };
-    const intervalMeta = getAgentRunIntervalMeta(agent.id);
+    const intervalMeta = getAgentRunIntervalMeta(agent.id, agent.builtIn);
     setAgentAddPreview({
       agent,
       config,
@@ -755,7 +725,7 @@ export function ChatSettingsDrawer({
       ...parseAgentSettings(config?.settings),
       contextSize,
     };
-    const intervalMeta = getAgentRunIntervalMeta(agent.id);
+    const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
     if (intervalMeta && runInterval != null) {
       nextSettings.runInterval = runInterval;
     }
@@ -795,7 +765,9 @@ export function ChatSettingsDrawer({
     }
   };
 
-  const agentAddIntervalMeta = agentAddPreview ? getAgentRunIntervalMeta(agentAddPreview.agent.id) : null;
+  const agentAddIntervalMeta = agentAddPreview
+    ? getAgentRunIntervalMeta(agentAddPreview.agent.id, agentAddPreview.agent.builtIn)
+    : null;
 
   const snapshotCurrentPresetSettings = useCallback((): ChatPresetSettings => {
     return {
@@ -3862,27 +3834,126 @@ export function ChatSettingsDrawer({
                   {agentAddIntervalMeta.label}
                 </label>
                 <div className="flex items-center gap-3">
-                  <input
-                    type="number"
-                    min={1}
-                    max={agentAddIntervalMeta.max}
-                    value={agentAddPreview.runInterval}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value, 10);
-                      setAgentAddPreview((current) =>
-                        current
-                          ? {
-                              ...current,
-                              runInterval: Number.isFinite(value)
-                                ? Math.max(1, Math.min(agentAddIntervalMeta.max, value))
-                                : agentAddIntervalMeta.defaultValue,
-                            }
-                          : current,
-                      );
-                    }}
-                    disabled={addingAgentToChat}
-                    className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
-                  />
+                  {agentAddPreview.agent.builtIn ? (
+                    <input
+                      type="number"
+                      min={1}
+                      max={agentAddIntervalMeta.max}
+                      value={agentAddPreview.runInterval}
+                      onChange={(e) => {
+                        setAgentAddPreview((current) =>
+                          current
+                            ? {
+                                ...current,
+                                runInterval: parseCadenceInputValue(
+                                  e.target.value,
+                                  agentAddIntervalMeta.defaultValue,
+                                  agentAddIntervalMeta.max,
+                                ),
+                              }
+                            : current,
+                        );
+                      }}
+                      disabled={addingAgentToChat}
+                      className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                  ) : (
+                    <div className="relative w-28">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={
+                          agentAddCadenceInputFocused
+                            ? String(agentAddPreview.runInterval)
+                            : getCadenceInputValue(agentAddPreview.runInterval)
+                        }
+                        onFocus={(e) => {
+                          setAgentAddCadenceInputFocused(true);
+                          e.target.select();
+                        }}
+                        onBlur={() => setAgentAddCadenceInputFocused(false)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                          e.preventDefault();
+                          const delta = e.key === "ArrowUp" ? 1 : -1;
+                          setAgentAddPreview((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  runInterval: stepCadenceValue(
+                                    current.runInterval ?? 1,
+                                    delta,
+                                    agentAddIntervalMeta.max,
+                                  ),
+                                }
+                              : current,
+                          );
+                        }}
+                        onChange={(e) => {
+                          setAgentAddPreview((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  runInterval: parseCadenceInputValue(
+                                    e.target.value,
+                                    current.runInterval ?? 1,
+                                    agentAddIntervalMeta.max,
+                                  ),
+                                }
+                              : current,
+                          );
+                        }}
+                        disabled={addingAgentToChat}
+                        className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 pr-8 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 flex-col overflow-hidden rounded-md">
+                        <button
+                          type="button"
+                          aria-label="Increase trigger cadence"
+                          disabled={addingAgentToChat}
+                          onClick={() => {
+                            setAgentAddPreview((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    runInterval: stepCadenceValue(
+                                      current.runInterval ?? 1,
+                                      1,
+                                      agentAddIntervalMeta.max,
+                                    ),
+                                  }
+                                : current,
+                            );
+                          }}
+                          className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <ChevronUp size="0.6875rem" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Decrease trigger cadence"
+                          disabled={addingAgentToChat}
+                          onClick={() => {
+                            setAgentAddPreview((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    runInterval: stepCadenceValue(
+                                      current.runInterval ?? 1,
+                                      -1,
+                                      agentAddIntervalMeta.max,
+                                    ),
+                                  }
+                                : current,
+                            );
+                          }}
+                          className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <ChevronDown size="0.6875rem" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{agentAddIntervalMeta.unit}</span>
                 </div>
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">{agentAddIntervalMeta.help}</p>

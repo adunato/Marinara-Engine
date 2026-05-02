@@ -28,6 +28,8 @@ import {
   Trash2,
   Layers,
   Music,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   BookOpen,
   Upload,
@@ -42,6 +44,12 @@ import {
   useDeleteKnowledgeSource,
 } from "../../hooks/use-knowledge-sources";
 import { cn } from "../../lib/utils";
+import {
+  getAgentRunIntervalMeta,
+  getCadenceInputValue,
+  parseOptionalCadenceInputValue,
+  stepCadenceValue,
+} from "../../lib/agent-cadence";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import {
   BUILT_IN_AGENTS,
@@ -116,6 +124,11 @@ export function AgentEditor() {
 
   // Custom agent = DB entry with no matching built-in
   const isCustomAgent = !builtIn && !!dbConfig;
+  const isNewCustomAgent = agentDetailId === "__new__";
+  const customRunIntervalMeta =
+    isCustomAgent || isNewCustomAgent
+      ? getAgentRunIntervalMeta(isNewCustomAgent ? "__new__" : (dbConfig?.type ?? agentDetailId ?? ""), false)
+    : null;
 
   // Default prompt for this agent type
   const defaultPrompt = useMemo(() => (agentDetailId ? getDefaultAgentPrompt(agentDetailId) : ""), [agentDetailId]);
@@ -128,6 +141,7 @@ export function AgentEditor() {
   const [localImageConnectionId, setLocalImageConnectionId] = useState("");
   const [localContextSize, setLocalContextSize] = useState<number | "">("");
   const [localRunInterval, setLocalRunInterval] = useState<number | "">("");
+  const [customCadenceInputFocused, setCustomCadenceInputFocused] = useState(false);
   const [localPrompt, setLocalPrompt] = useState("");
   const [localInjectAsSection, setLocalInjectAsSection] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
@@ -721,6 +735,66 @@ export function AgentEditor() {
           )}
 
           {/* ── Triggers After (Chat Summary agent) ── */}
+          {(isCustomAgent || isNewCustomAgent) && customRunIntervalMeta && (
+            <FieldGroup
+              label={customRunIntervalMeta.label}
+              icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
+              help={customRunIntervalMeta.help}
+            >
+              <div className="flex items-center gap-3">
+                <div className="relative w-28">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={customCadenceInputFocused ? String(localRunInterval) : getCadenceInputValue(localRunInterval)}
+                    onFocus={(e) => {
+                      setCustomCadenceInputFocused(true);
+                      e.target.select();
+                    }}
+                    onBlur={() => setCustomCadenceInputFocused(false)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                      e.preventDefault();
+                      const delta = e.key === "ArrowUp" ? 1 : -1;
+                      setLocalRunInterval(stepCadenceValue(localRunInterval, delta, customRunIntervalMeta.max));
+                      markDirty();
+                    }}
+                    onChange={(e) => {
+                      setLocalRunInterval(parseOptionalCadenceInputValue(e.target.value, customRunIntervalMeta.max));
+                      markDirty();
+                    }}
+                    className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 pr-8 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  />
+                  <div className="absolute right-1 top-1/2 flex -translate-y-1/2 flex-col overflow-hidden rounded-md">
+                    <button
+                      type="button"
+                      aria-label="Increase trigger cadence"
+                      onClick={() => {
+                        setLocalRunInterval(stepCadenceValue(localRunInterval, 1, customRunIntervalMeta.max));
+                        markDirty();
+                      }}
+                      className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      <ChevronUp size="0.6875rem" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Decrease trigger cadence"
+                      onClick={() => {
+                        setLocalRunInterval(stepCadenceValue(localRunInterval, -1, customRunIntervalMeta.max));
+                        markDirty();
+                      }}
+                      className="flex h-4 w-5 items-center justify-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      <ChevronDown size="0.6875rem" />
+                    </button>
+                  </div>
+                </div>
+                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{customRunIntervalMeta.unit}</span>
+              </div>
+            </FieldGroup>
+          )}
+
           {isChatSummaryAgent && (
             <FieldGroup
               label="Triggers After"
