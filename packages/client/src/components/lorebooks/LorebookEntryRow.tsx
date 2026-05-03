@@ -203,10 +203,7 @@ export function LorebookEntryRow({
       onDragEnd={onDragEnd}
     >
       {/* ── Compact row ── */}
-      <div
-        className="group flex cursor-pointer items-center gap-2 px-2 py-1.5"
-        onClick={onToggleExpand}
-      >
+      <div className="group flex cursor-pointer items-center gap-2 px-2 py-1.5" onClick={onToggleExpand}>
         {/* Drag handle */}
         <button
           type="button"
@@ -289,10 +286,7 @@ export function LorebookEntryRow({
         {/* ── Inline editable controls cluster ── */}
         {/* Hidden on very narrow viewports to keep the row from overflowing.
             Users on mobile can expand the drawer to access them. */}
-        <div
-          className="hidden shrink-0 items-center gap-1 md:flex"
-          onClick={(e) => e.stopPropagation()}
-        >
+        <div className="hidden shrink-0 items-center gap-1 md:flex" onClick={(e) => e.stopPropagation()}>
           <CompactSelect
             value={localStatus}
             onChange={(v) => handleStatusChange(v as EntryStatus)}
@@ -380,9 +374,7 @@ export function LorebookEntryRow({
       </div>
 
       {/* ── Expanded drawer ── */}
-      {isExpanded && (
-        <ExpandedDrawer entry={entry} lorebookId={lorebookId} />
-      )}
+      {isExpanded && <ExpandedDrawer entry={entry} lorebookId={lorebookId} />}
     </div>
   );
 }
@@ -449,7 +441,15 @@ function CompactNumber({
       setDraft(String(value));
       return;
     }
-    if (parsed !== value) onCommit(parsed);
+    let clamped = parsed;
+    if (min !== undefined && clamped < min) clamped = min;
+    if (max !== undefined && clamped > max) clamped = max;
+    if (clamped !== value) {
+      setDraft(String(clamped));
+      onCommit(clamped);
+    } else if (clamped !== parsed) {
+      setDraft(String(clamped));
+    }
   };
 
   return (
@@ -571,10 +571,7 @@ function ExpandedDrawer({ entry, lorebookId }: { entry: LorebookEntry; lorebookI
         icon={Key}
         help="Additional keywords used with AND/OR/NOT logic. 'AND' means both primary AND secondary must match. 'NOT' means primary must match but secondary must NOT."
       >
-        <KeysEditor
-          keys={form.secondaryKeys ?? []}
-          onChange={(keys) => update({ secondaryKeys: keys })}
-        />
+        <KeysEditor keys={form.secondaryKeys ?? []} onChange={(keys) => update({ secondaryKeys: keys })} />
         <div className="mt-2 flex items-center gap-3">
           <label className="text-[0.6875rem] text-[var(--muted-foreground)]">Logic:</label>
           {(["and", "or", "not"] as const).map((logic) => (
@@ -615,11 +612,7 @@ function ExpandedDrawer({ entry, lorebookId }: { entry: LorebookEntry; lorebookI
       {/* Toggles row — note: enable / constant / selective are now on the row header,
           so they are intentionally omitted from this block to avoid duplication. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <ToggleButton
-          label="Regex"
-          value={form.useRegex ?? false}
-          onChange={(v) => update({ useRegex: v })}
-        />
+        <ToggleButton label="Regex" value={form.useRegex ?? false} onChange={(v) => update({ useRegex: v })} />
         <ToggleButton
           label="Whole Words"
           value={form.matchWholeWords ?? false}
@@ -680,12 +673,7 @@ function ExpandedDrawer({ entry, lorebookId }: { entry: LorebookEntry; lorebookI
             onChange={(v) => update({ cooldown: v || null })}
             min={0}
           />
-          <NumberField
-            label="Delay"
-            value={form.delay ?? 0}
-            onChange={(v) => update({ delay: v || null })}
-            min={0}
-          />
+          <NumberField label="Delay" value={form.delay ?? 0} onChange={(v) => update({ delay: v || null })} min={0} />
           <NumberField
             label="Ephemeral"
             value={form.ephemeral ?? 0}
@@ -725,9 +713,7 @@ function ExpandedDrawer({ entry, lorebookId }: { entry: LorebookEntry; lorebookI
 
       {/* Save bar — only shows when there are unsaved changes in this drawer. */}
       <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] pt-3">
-        {dirty && (
-          <span className="text-[0.6875rem] text-[var(--muted-foreground)]">Unsaved changes</span>
-        )}
+        {dirty && <span className="text-[0.6875rem] text-[var(--muted-foreground)]">Unsaved changes</span>}
         <button
           onClick={handleSave}
           disabled={!dirty || saving}
