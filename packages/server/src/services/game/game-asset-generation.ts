@@ -19,8 +19,8 @@ import { loadPrompt, GAME_NPC_PORTRAIT, GAME_BACKGROUND, GAME_SCENE_ILLUSTRATION
 const NPC_AVATAR_DIR = join(DATA_DIR, "avatars", "npc");
 const GAME_BACKGROUND_WIDTH = 1024;
 const GAME_BACKGROUND_HEIGHT = 576;
-const GAME_BACKGROUND_EXTS = ["png", "jpg", "jpeg", "webp", "avif", "gif"] as const;
-const GAME_BACKGROUND_EXT_SET = new Set<string>(GAME_BACKGROUND_EXTS);
+export const GENERATED_GAME_BACKGROUND_EXTS = ["png", "jpg", "jpeg", "webp", "avif", "gif"] as const;
+const GAME_BACKGROUND_EXT_SET = new Set<string>(GENERATED_GAME_BACKGROUND_EXTS);
 
 // sharp is optional in the server package. Generated game backgrounds should be
 // stored at the VN canvas ratio when possible, but generation must still work on
@@ -50,6 +50,7 @@ type GameBackgroundImage = {
   ext: string;
 };
 
+/** Return the extension implied by known image file signatures. */
 function detectImageExt(buffer: Buffer): string | null {
   if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return "png";
   if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "jpg";
@@ -73,6 +74,7 @@ function detectImageExt(buffer: Buffer): string | null {
   return null;
 }
 
+/** Prefer the actual encoded bytes, then fall back to provider metadata. */
 function normalizeGeneratedImageExt(result: Pick<ImageGenResult, "mimeType" | "ext">, buffer: Buffer): string {
   const detectedExt = detectImageExt(buffer);
   if (detectedExt) return detectedExt;
@@ -88,6 +90,7 @@ function normalizeGeneratedImageExt(result: Pick<ImageGenResult, "mimeType" | "e
   return "png";
 }
 
+/** Resize generated backgrounds through sharp when available, preserving original format otherwise. */
 async function gameBackgroundImage(result: ImageGenResult): Promise<GameBackgroundImage> {
   const input = Buffer.from(result.base64, "base64");
   const sharp = await getSharp();
@@ -104,12 +107,14 @@ async function gameBackgroundImage(result: ImageGenResult): Promise<GameBackgrou
   }
 }
 
+/** Build the generated game background file path for a slug and extension. */
 function generatedBackgroundPath(targetDir: string, slug: string, ext: string): string {
   return join(targetDir, `${slug}.${ext}`);
 }
 
+/** Find an existing generated background regardless of the saved image format. */
 function existingGeneratedBackgroundPath(targetDir: string, slug: string): string | null {
-  for (const ext of GAME_BACKGROUND_EXTS) {
+  for (const ext of GENERATED_GAME_BACKGROUND_EXTS) {
     const candidate = generatedBackgroundPath(targetDir, slug, ext);
     if (existsSync(candidate)) return candidate;
   }

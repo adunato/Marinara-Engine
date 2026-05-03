@@ -89,6 +89,7 @@ import type {
 } from "@marinara-engine/shared";
 import { getAssetManifest, GAME_ASSETS_DIR } from "../services/game/asset-manifest.service.js";
 import {
+  GENERATED_GAME_BACKGROUND_EXTS,
   generateNpcPortrait,
   generateBackground,
   generateSceneIllustration,
@@ -138,7 +139,6 @@ function findCharAvatarFuzzy(npcName: string, charAvatarByName: Map<string, stri
 }
 
 const ILLUSTRATION_COOLDOWN_TURNS = 2;
-const GENERATED_ILLUSTRATION_EXTS = ["png", "jpg", "jpeg", "webp", "avif", "gif"] as const;
 
 function currentGameSessionNumber(meta: Record<string, unknown>): number | null {
   return typeof meta.gameSessionNumber === "number" && Number.isFinite(meta.gameSessionNumber)
@@ -291,7 +291,7 @@ async function addGeneratedIllustrationToGallery(opts: {
   const slug = opts.tag.slice(prefix.length);
   if (!/^[a-z0-9-]+$/.test(slug)) return;
 
-  const assetPath = GENERATED_ILLUSTRATION_EXTS.map((ext) =>
+  const assetPath = GENERATED_GAME_BACKGROUND_EXTS.map((ext) =>
     join(GAME_ASSETS_DIR, "backgrounds", "illustrations", `${slug}.${ext}`),
   ).find((candidate) => existsSync(candidate));
   if (!assetPath) return;
