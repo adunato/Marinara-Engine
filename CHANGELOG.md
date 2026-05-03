@@ -17,6 +17,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Pygmalion, Jenny, and DataCat added to the Browser.
 - Pinnable taskbar shortcut via custom launcher.
 - Universal Tool Support for agents.
+- Custom agents can now maintain durable chat memory with read/append summary tools, metadata patch streaming, and configurable trigger cadence.
 - New Knowledge Router agent.
 - You can now link Personas to Lorebooks.
 - Drag-and-drop Lorebook entries.

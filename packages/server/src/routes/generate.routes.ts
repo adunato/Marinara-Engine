@@ -44,7 +44,7 @@ import {
   type ChatMessage,
   type LLMUsage,
 } from "../services/llm/base-provider.js";
-import { executeToolCalls } from "../services/tools/tool-executor.js";
+import { executeToolCalls, type MetadataPatchInput } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { executeAgent } from "../services/agents/agent-executor.js";
@@ -2466,6 +2466,36 @@ export async function generateRoutes(app: FastifyInstance) {
         resolvedAgents.map((a) => `${a.type}(${a.phase})`).join(", "),
       );
 
+      const builtInAgentTypes = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
+      const userMessagesSinceLastAgentRun = async (agentType: string) => {
+        const lastRun = await agentsStore.getLastRunByType(agentType, input.chatId);
+        if (!lastRun) return Number.POSITIVE_INFINITY;
+
+        const lastRunIdx = allChatMessages.findIndex((message: any) => message.id === lastRun.messageId);
+        if (lastRunIdx < 0) return Number.POSITIVE_INFINITY;
+
+        return allChatMessages.slice(lastRunIdx + 1).filter((message: any) => message.role === "user").length;
+      };
+
+      for (let index = resolvedAgents.length - 1; index >= 0; index--) {
+        const agent = resolvedAgents[index]!;
+        if (builtInAgentTypes.has(agent.type)) continue;
+
+        const runInterval = Number(agent.settings.runInterval ?? 0);
+        if (!Number.isFinite(runInterval) || runInterval <= 1) continue;
+
+        const userMessageCount = await userMessagesSinceLastAgentRun(agent.type);
+        if (userMessageCount < runInterval) {
+          logger.debug(
+            "[agents] Skipping custom agent %s until cadence threshold: %d/%d user messages",
+            agent.type,
+            userMessageCount,
+            runInterval,
+          );
+          resolvedAgents.splice(index, 1);
+        }
+      }
+
       // Resolve character info (used for agent context AND prompt fallback)
       const charInfo: Array<{
         id: string;
@@ -3890,8 +3920,15 @@ export async function generateRoutes(app: FastifyInstance) {
       // Tool Resolution (Main Generation + Agent Pipeline)
       // ────────────────────────────────────────
       const inputBody = req.body as Record<string, unknown>;
-      const enableTools = inputBody.enableTools === true || chatMeta.enableTools === true;
+      const enableChatTools = inputBody.enableTools === true || chatMeta.enableTools === true;
+      const enableAgentTools = resolvedAgents.some((agent) => {
+        const agentSettings = typeof agent.settings === "string" ? JSON.parse(agent.settings) : agent.settings || {};
+        return Array.isArray(agentSettings.enabledTools) && agentSettings.enabledTools.length > 0;
+      });
+      const resolveTools = enableChatTools || enableAgentTools;
       let toolDefs: LLMToolDefinition[] | undefined;
+      const allToolDefs: LLMToolDefinition[] = [];
+      const agentOnlyToolNames = new Set(["read_chat_summary", "append_chat_summary"]);
       const customToolDefs: Array<{
         name: string;
         executionType: string;
@@ -3900,7 +3937,7 @@ export async function generateRoutes(app: FastifyInstance) {
         scriptBody: string | null;
       }> = [];
 
-      if (enableTools) {
+      if (resolveTools) {
         // Per-chat tool selection (empty = all tools)
         const chatActiveToolIds: string[] = Array.isArray(chatMeta.activeToolIds)
           ? (chatMeta.activeToolIds as string[])
@@ -3909,11 +3946,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const registeredToolSources = new Map<string, "built-in" | "custom">();
 
         // Built-in tools
-        const builtInFiltered = hasToolFilter
-          ? BUILT_IN_TOOLS.filter((t) => chatActiveToolIds.includes(t.name))
-          : BUILT_IN_TOOLS;
-        toolDefs = [];
-        for (const t of builtInFiltered) {
+        for (const t of BUILT_IN_TOOLS) {
           const existingSource = registeredToolSources.get(t.name);
           if (existingSource) {
             throw new Error(
@@ -3921,7 +3954,7 @@ export async function generateRoutes(app: FastifyInstance) {
             );
           }
           registeredToolSources.set(t.name, "built-in");
-          toolDefs.push({
+          allToolDefs.push({
             type: "function" as const,
             function: {
               name: t.name,
@@ -3933,10 +3966,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         // Custom tools from DB
         const enabledCustomTools = await customToolsStore.listEnabled();
-        const customFiltered = hasToolFilter
-          ? enabledCustomTools.filter((ct: any) => chatActiveToolIds.includes(ct.name))
-          : enabledCustomTools;
-        for (const ct of customFiltered) {
+        for (const ct of enabledCustomTools) {
           const existingSource = registeredToolSources.get(ct.name);
           if (existingSource) {
             logger.warn(
@@ -3989,7 +4019,7 @@ export async function generateRoutes(app: FastifyInstance) {
               scriptBody: ct.scriptBody,
             });
 
-            toolDefs.push({
+            allToolDefs.push({
               type: "function" as const,
               function: {
                 name: ct.name,
@@ -4007,12 +4037,21 @@ export async function generateRoutes(app: FastifyInstance) {
             );
           }
         }
+
+        if (enableChatTools) {
+          toolDefs = hasToolFilter
+            ? allToolDefs.filter(
+                (td) => chatActiveToolIds.includes(td.function.name) && !agentOnlyToolNames.has(td.function.name),
+              )
+            : allToolDefs.filter((td) => !agentOnlyToolNames.has(td.function.name));
+        }
       }
 
       // ── Spotify Token Refresh (Early) ──
-      const resolvedToolNames = new Set((toolDefs ?? []).map((td) => td.function.name));
+      const resolvedToolNames = new Set(allToolDefs.map((td) => td.function.name));
+      const chatResolvedToolNames = new Set((toolDefs ?? []).map((td) => td.function.name));
       const spotifyToolNames = new Set(DEFAULT_AGENT_TOOLS.spotify ?? []);
-      const chatAllowsSpotify = Array.from(resolvedToolNames).some((name) => spotifyToolNames.has(name));
+      const chatAllowsSpotify = Array.from(chatResolvedToolNames).some((name) => spotifyToolNames.has(name));
       const anyAgentAllowsSpotify = resolvedAgents.some((agent) => {
         const agentSettings = typeof agent.settings === "string" ? JSON.parse(agent.settings) : agent.settings || {};
         const agentEnabledNames = Array.isArray(agentSettings.enabledTools)
@@ -4021,7 +4060,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const agentResolvedNames = agentEnabledNames.filter((name) => resolvedToolNames.has(name));
         return agentResolvedNames.some((name) => spotifyToolNames.has(name));
       });
-      const needsSpotify = enableTools && (chatAllowsSpotify || anyAgentAllowsSpotify);
+      const needsSpotify = (enableChatTools && chatAllowsSpotify) || anyAgentAllowsSpotify;
       // Look beyond resolved agents only to reuse stored Spotify credentials when Spotify tools are allowed.
       const spotifyAgent = needsSpotify
         ? (resolvedAgents.find((a) => a.type === "spotify") ??
@@ -4105,6 +4144,34 @@ export async function generateRoutes(app: FastifyInstance) {
           .slice(0, 20)
           .map((e: any) => ({ name: e.name, content: e.content, tag: e.tag, keys: e.keys as string[] }));
       };
+      const updateChatMetadataForTools = async (patchOrUpdater: MetadataPatchInput) => {
+        let emittedPatch: Record<string, unknown> = {};
+        const updatedChat = await chats.patchMetadata(input.chatId, async (currentMeta) => {
+          const patch =
+            typeof patchOrUpdater === "function" ? await patchOrUpdater({ ...currentMeta }) : patchOrUpdater;
+          emittedPatch = patch;
+          return patch;
+        });
+        const updatedMeta = updatedChat ? parseExtra(updatedChat.metadata) : { ...chatMeta, ...emittedPatch };
+        for (const key of Object.keys(chatMeta)) {
+          if (!(key in updatedMeta)) {
+            delete chatMeta[key];
+          }
+        }
+        Object.assign(chatMeta, updatedMeta);
+        agentContext.chatSummary =
+          typeof chatMeta.summary === "string" && chatMeta.summary.trim() ? chatMeta.summary.trim() : null;
+        trySendSseEvent(reply, { type: "metadata_patch", data: emittedPatch });
+        return updatedMeta;
+      };
+      const baseToolExecutionContext = {
+        gameState: gameState ? (gameState as unknown as Record<string, unknown>) : undefined,
+        customTools: customToolDefs,
+        spotify: spotifyCreds,
+        searchLorebook: searchLorebookForTools,
+        chatMeta,
+        onUpdateMetadata: updateChatMetadataForTools,
+      };
 
       // ── Resolve tool context for all agents ──
       // This enables built-in and custom tools for any agent in the pipeline.
@@ -4117,7 +4184,7 @@ export async function generateRoutes(app: FastifyInstance) {
           : [];
         if (agentEnabledNames.length === 0) continue;
 
-        const agentTools = (toolDefs ?? []).filter((td) => agentEnabledNames.includes(td.function.name));
+        const agentTools = allToolDefs.filter((td) => agentEnabledNames.includes(td.function.name));
         if (agentTools.length === 0) continue;
         const allowedToolNames = new Set(agentTools.map((td) => td.function.name));
 
@@ -4131,9 +4198,7 @@ export async function generateRoutes(app: FastifyInstance) {
               });
             }
             const results = await executeToolCalls([call], {
-              customTools: customToolDefs,
-              spotify: spotifyCreds,
-              searchLorebook: searchLorebookForTools,
+              ...baseToolExecutionContext,
             });
             return results[0]?.result ?? "Tool execution failed";
           },
@@ -4338,6 +4403,25 @@ export async function generateRoutes(app: FastifyInstance) {
         const preGenResults = pipeline.results.filter(
           (r) => r.agentType !== "knowledge-retrieval" && r.agentType !== "knowledge-router",
         );
+        const latestUserMessageForPreGenRun = [...allChatMessages]
+          .reverse()
+          .find((message: any) => message.role === "user");
+        const preGenRunMessageId = latestUserMessageForPreGenRun?.id ?? "";
+        if (preGenRunMessageId) {
+          for (const result of preGenResults) {
+            if (builtInAgentTypes.has(result.agentType)) continue;
+            try {
+              await agentsStore.saveRun({
+                agentConfigId: result.agentId,
+                chatId: input.chatId,
+                messageId: preGenRunMessageId,
+                result,
+              });
+            } catch {
+              // Non-critical — cadence should not block the generation pipeline.
+            }
+          }
+        }
         const criticalFailed = preGenResults.filter((r) => !r.success && r.type === "secret_plot");
         const nonCriticalFailed = preGenResults.filter((r) => !r.success && r.type !== "secret_plot");
         if (criticalFailed.length > 0) {
@@ -4930,7 +5014,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          if (enableTools && provider.chatComplete) {
+          if (enableChatTools && provider.chatComplete) {
             const MAX_TOOL_ROUNDS = 5;
             let loopMessages: ChatMessage[] = initialProviderMessages;
             // ── Seed encrypted reasoning cache from DB ──
@@ -5056,23 +5140,23 @@ export async function generateRoutes(app: FastifyInstance) {
                 ...(result.providerMetadata ? { providerMetadata: result.providerMetadata } : {}),
               });
 
-              const permittedToolCalls = result.toolCalls.filter((call) => resolvedToolNames.has(call.function.name));
+              const permittedToolCalls = result.toolCalls.filter((call) =>
+                chatResolvedToolNames.has(call.function.name),
+              );
               const deniedToolResults = result.toolCalls
-                .filter((call) => !resolvedToolNames.has(call.function.name))
+                .filter((call) => !chatResolvedToolNames.has(call.function.name))
                 .map((call) => ({
                   toolCallId: call.id,
                   name: call.function.name,
                   result: JSON.stringify({
                     error: `Tool not allowed in this context: ${call.function.name}`,
-                    allowed: Array.from(resolvedToolNames),
+                    allowed: Array.from(chatResolvedToolNames),
                   }),
                   success: false,
                 }));
 
               const executedToolResults = await executeToolCalls(permittedToolCalls, {
-                customTools: customToolDefs,
-                spotify: spotifyCreds,
-                searchLorebook: searchLorebookForTools,
+                ...baseToolExecutionContext,
               });
               const toolResultsById = new Map(
                 [...executedToolResults, ...deniedToolResults].map((result) => [result.toolCallId, result]),
@@ -6457,14 +6541,11 @@ export async function generateRoutes(app: FastifyInstance) {
               const csData = result.data as Record<string, unknown>;
               const newText = ((csData.summary as string) ?? "").trim();
               if (newText) {
-                // Re-fetch fresh metadata so concurrent writes (e.g. /game/start flipping
-                // gameSessionStatus to "active") aren't clobbered by stale captured chat.metadata.
-                const freshChat = await chats.getById(input.chatId);
-                const existingMeta = freshChat ? parseExtra(freshChat.metadata) : parseExtra(chat.metadata);
-                const existing = ((existingMeta.summary as string) ?? "").trim();
-                const combined = existing ? `${existing}\n\n${newText}` : newText;
-                const merged = { ...existingMeta, summary: combined };
-                await chats.updateMetadata(input.chatId, merged);
+                const updatedMeta = await updateChatMetadataForTools((currentMeta) => {
+                  const existing = ((currentMeta.summary as string) ?? "").trim();
+                  return { summary: existing ? `${existing}\n\n${newText}` : newText };
+                });
+                const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : newText;
                 reply.raw.write(`data: ${JSON.stringify({ type: "chat_summary", data: { summary: combined } })}\n\n`);
               }
             } catch {
