@@ -54,8 +54,12 @@ import { HelpTooltip } from "../ui/HelpTooltip";
 import {
   BUILT_IN_AGENTS,
   BUILT_IN_TOOLS,
+  DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_TOOLS,
+  DEFAULT_AGENT_MAX_TOKENS,
   LOCAL_SIDECAR_CONNECTION_ID,
+  MAX_AGENT_MAX_TOKENS,
+  MIN_AGENT_MAX_TOKENS,
   getDefaultBuiltInAgentSettings,
   getDefaultAgentPrompt,
   type AgentPhase,
@@ -110,6 +114,17 @@ const PHASE_META: Record<AgentPhase, { label: string; color: string; icon: typeo
   },
 };
 
+function normalizeAgentMaxTokensInput(value: string): number | "" {
+  if (value === "") return "";
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return "";
+  return Math.max(1, Math.min(MAX_AGENT_MAX_TOKENS, parsed));
+}
+
+function clampAgentMaxTokens(value: number): number {
+  return Math.max(MIN_AGENT_MAX_TOKENS, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(value)));
+}
+
 // ═══════════════════════════════════════════════
 //  Main Editor
 // ═══════════════════════════════════════════════
@@ -151,6 +166,7 @@ export function AgentEditor() {
   const [localConnectionId, setLocalConnectionId] = useState("");
   const [localImageConnectionId, setLocalImageConnectionId] = useState("");
   const [localContextSize, setLocalContextSize] = useState<number | "">("");
+  const [localMaxTokens, setLocalMaxTokens] = useState<number | "">("");
   const [localRunInterval, setLocalRunInterval] = useState<number | "">("");
   const [customCadenceInputFocused, setCustomCadenceInputFocused] = useState(false);
   const [localPrompt, setLocalPrompt] = useState("");
@@ -199,6 +215,7 @@ export function AgentEditor() {
           : dbConfig.settings
         : {};
       setLocalContextSize(settings.contextSize ?? "");
+      setLocalMaxTokens(settings.maxTokens ?? (defaultSettings.maxTokens as number | undefined) ?? "");
       setLocalImageConnectionId((settings.imageConnectionId as string) ?? "");
       setLocalRunInterval(
         (settings.runInterval as number | undefined) ?? (defaultSettings.runInterval as number) ?? "",
@@ -220,6 +237,7 @@ export function AgentEditor() {
       setLocalConnectionId("");
       setLocalImageConnectionId("");
       setLocalContextSize("");
+      setLocalMaxTokens((defaultSettings.maxTokens as number) ?? "");
       setLocalRunInterval((defaultSettings.runInterval as number) ?? "");
       setLocalInjectAsSection(defaultSettings.injectAsSection === true);
       setLocalEnabledTools(DEFAULT_AGENT_TOOLS[builtIn.id] ?? []);
@@ -237,6 +255,7 @@ export function AgentEditor() {
       setLocalConnectionId("");
       setLocalImageConnectionId("");
       setLocalContextSize("");
+      setLocalMaxTokens(DEFAULT_AGENT_MAX_TOKENS);
       setLocalRunInterval(customRunIntervalMeta?.defaultValue ?? "");
       setLocalInjectAsSection(false);
       setLocalEnabledTools([]);
@@ -379,6 +398,7 @@ export function AgentEditor() {
       promptTemplate: localPrompt,
       settings: {
         ...(localContextSize !== "" ? { contextSize: Number(localContextSize) } : {}),
+        ...(localMaxTokens !== "" ? { maxTokens: Number(localMaxTokens) } : {}),
         ...(localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
         ...(localInjectAsSection ? { injectAsSection: true } : {}),
         enabledTools: localEnabledTools,
@@ -426,6 +446,7 @@ export function AgentEditor() {
     localImageConnectionId,
     localPrompt,
     localContextSize,
+    localMaxTokens,
     localRunInterval,
     localInjectAsSection,
     localEnabledTools,
@@ -770,35 +791,76 @@ export function AgentEditor() {
             </FieldGroup>
           )}
 
-          {/* ── Context Size (hidden for Chat Summary — that uses the popover) ── */}
-          {!isChatSummaryAgent && (
-            <FieldGroup
-              label="Context Size"
-              icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
-              help="How many recent chat messages this agent receives as context. More messages = more context but higher token usage. Leave blank for the default (5 messages)."
-            >
-              <div className="flex items-center gap-3">
-                <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={localContextSize}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setLocalContextSize(v === "" ? "" : Math.max(1, Math.min(200, parseInt(v) || 1)));
-                    markDirty();
-                  }}
-                  placeholder="5"
-                  className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                />
-                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">messages</span>
+          <FieldGroup
+            label="Agent Budget"
+            icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
+            help="Controls how much recent chat context the agent reads and how much output room it reserves. If max output is too high for the model context, prompt context can be trimmed."
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              {!isChatSummaryAgent ? (
+                <div>
+                  <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                    Context Size
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={1}
+                      max={200}
+                      value={localContextSize}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setLocalContextSize(v === "" ? "" : Math.max(1, Math.min(200, parseInt(v) || 1)));
+                        markDirty();
+                      }}
+                      placeholder={String(DEFAULT_AGENT_CONTEXT_SIZE)}
+                      className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    />
+                    <span className="text-[0.6875rem] text-[var(--muted-foreground)]">messages</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl bg-[var(--accent)]/50 px-3 py-2.5 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                  Chat Summary context size is managed in the Chat Summary panel inside each chat.
+                </div>
+              )}
+              <div>
+                <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                  Max Output Tokens
+                </label>
+                <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={MIN_AGENT_MAX_TOKENS}
+                      max={MAX_AGENT_MAX_TOKENS}
+                      value={localMaxTokens}
+                    onChange={(e) => {
+                        setLocalMaxTokens(normalizeAgentMaxTokensInput(e.target.value));
+                        markDirty();
+                      }}
+                      onBlur={() => {
+                        if (localMaxTokens !== "") {
+                          setLocalMaxTokens(clampAgentMaxTokens(localMaxTokens));
+                        }
+                      }}
+                      placeholder={String(DEFAULT_AGENT_MAX_TOKENS)}
+                      className="w-32 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    />
+                  <span className="text-[0.6875rem] text-[var(--muted-foreground)]">tokens</span>
+                </div>
               </div>
+            </div>
+            {!isChatSummaryAgent && (
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 Each agent only sees its own context size. When agents are batched together (same model), the highest
-                context size in the batch is used.
+                context size in the batch is used and output budgets are combined.
               </p>
-            </FieldGroup>
-          )}
+            )}
+            <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+              For 8k local models, try {DEFAULT_AGENT_MAX_TOKENS.toLocaleString()} or lower so the agent prompt keeps
+              enough room.
+            </p>
+          </FieldGroup>
 
           {/* ── Triggers After (Chat Summary agent) ── */}
           {(isCustomAgent || isNewCustomAgent) && customRunIntervalMeta && (

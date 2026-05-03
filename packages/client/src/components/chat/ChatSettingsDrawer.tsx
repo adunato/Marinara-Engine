@@ -115,7 +115,11 @@ import { useAgentStore } from "../../stores/agent.store";
 import {
   BUILT_IN_AGENTS,
   BUILT_IN_TOOLS,
+  DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_TOOLS,
+  DEFAULT_AGENT_MAX_TOKENS,
+  MAX_AGENT_MAX_TOKENS,
+  MIN_AGENT_MAX_TOKENS,
   getDefaultBuiltInAgentSettings,
 } from "@marinara-engine/shared";
 import type { Chat, CharacterGroup } from "@marinara-engine/shared";
@@ -154,6 +158,7 @@ type AgentAddPreview = {
   agent: AvailableAgent;
   config: AgentConfigRow | null;
   contextSize: number;
+  maxTokens: number;
   runInterval: number | null;
 };
 
@@ -173,6 +178,16 @@ function parseAgentSettings(raw: unknown): Record<string, unknown> {
 function normalizePositiveInteger(value: unknown, fallback: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.min(max, Math.trunc(value)));
+}
+
+function normalizeAgentMaxTokens(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_AGENT_MAX_TOKENS;
+  return Math.max(MIN_AGENT_MAX_TOKENS, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(value)));
+}
+
+function normalizeAgentMaxTokensInputValue(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(value)));
 }
 
 function isEnabledFlag(value: unknown): boolean {
@@ -732,7 +747,8 @@ export function ChatSettingsDrawer({
     setAgentAddPreview({
       agent,
       config,
-      contextSize: normalizePositiveInteger(mergedSettings.contextSize, 5, 200),
+      contextSize: normalizePositiveInteger(mergedSettings.contextSize, DEFAULT_AGENT_CONTEXT_SIZE, 200),
+      maxTokens: normalizeAgentMaxTokens(mergedSettings.maxTokens),
       runInterval: intervalMeta
         ? normalizePositiveInteger(mergedSettings.runInterval, intervalMeta.defaultValue, intervalMeta.max)
         : null,
@@ -742,12 +758,13 @@ export function ChatSettingsDrawer({
   const confirmAddAgent = async () => {
     if (!agentAddPreview) return;
 
-    const { agent, config, contextSize, runInterval } = agentAddPreview;
+    const { agent, config, contextSize, maxTokens, runInterval } = agentAddPreview;
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
     const nextSettings: Record<string, unknown> = {
       ...getDefaultBuiltInAgentSettings(agent.id),
       ...parseAgentSettings(config?.settings),
       contextSize,
+      maxTokens,
     };
     const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
     if (intervalMeta && runInterval != null) {
@@ -3927,40 +3944,84 @@ export function ChatSettingsDrawer({
               </div>
             </div>
 
-            {agentAddPreview.agent.id !== "chat-summary" ? (
-              <div className="space-y-1.5">
-                <label className="block text-[0.6875rem] font-semibold text-[var(--foreground)]">Context Size</label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={agentAddPreview.contextSize}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value, 10);
-                      setAgentAddPreview((current) =>
-                        current
-                          ? {
-                              ...current,
-                              contextSize: Number.isFinite(value) ? Math.max(1, Math.min(200, value)) : 5,
-                            }
-                          : current,
-                      );
-                    }}
-                    disabled={addingAgentToChat}
-                    className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                  <span className="text-[0.6875rem] text-[var(--muted-foreground)]">messages</span>
+            <div className="space-y-1.5">
+              <label className="block text-[0.6875rem] font-semibold text-[var(--foreground)]">Agent Budget</label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {agentAddPreview.agent.id !== "chat-summary" ? (
+                  <div>
+                    <label className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                      Context Size
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min={1}
+                        max={200}
+                        value={agentAddPreview.contextSize}
+                        onChange={(e) => {
+                          const value = parseInt(e.target.value, 10);
+                          setAgentAddPreview((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  contextSize: Number.isFinite(value)
+                                    ? Math.max(1, Math.min(200, value))
+                                    : DEFAULT_AGENT_CONTEXT_SIZE,
+                                }
+                              : current,
+                          );
+                        }}
+                        disabled={addingAgentToChat}
+                        className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                      <span className="text-[0.6875rem] text-[var(--muted-foreground)]">messages</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-[var(--accent)]/50 px-3 py-2.5 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    Chat Summary context size is managed in the Chat Summary panel after you add the agent.
+                  </div>
+                )}
+                <div>
+                  <label className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                    Max Output Tokens
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={MIN_AGENT_MAX_TOKENS}
+                      max={MAX_AGENT_MAX_TOKENS}
+                      value={agentAddPreview.maxTokens}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value, 10);
+                        setAgentAddPreview((current) =>
+                          current
+                            ? {
+                                ...current,
+                                maxTokens: normalizeAgentMaxTokensInputValue(
+                                  Number.isFinite(value) ? value : undefined,
+                                ),
+                              }
+                            : current,
+                        );
+                      }}
+                      onBlur={() => {
+                        setAgentAddPreview((current) =>
+                          current ? { ...current, maxTokens: normalizeAgentMaxTokens(current.maxTokens) } : current,
+                        );
+                      }}
+                      disabled={addingAgentToChat}
+                      className="w-32 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <span className="text-[0.6875rem] text-[var(--muted-foreground)]">tokens</span>
+                  </div>
                 </div>
-                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                  How many recent chat messages this agent should receive as working context.
-                </p>
               </div>
-            ) : (
-              <div className="rounded-xl bg-[var(--accent)]/50 px-3 py-2.5 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                Context size for automated summaries is managed in the Chat Summary panel after you add the agent.
-              </div>
-            )}
+              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                Context size controls recent chat messages. Max output reserves completion room; lower it on small local
+                contexts if logs show the prompt budget collapsing.
+              </p>
+            </div>
 
             {agentAddIntervalMeta && agentAddPreview.runInterval != null && (
               <div className="space-y-1.5">

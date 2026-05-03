@@ -3,6 +3,7 @@ import { logger } from "../../lib/logger.js";
 import {
   BUILT_IN_AGENTS,
   LOCAL_SIDECAR_CONNECTION_ID,
+  getDefaultBuiltInAgentSettings,
   type AgentContext,
   type AgentResult,
 } from "@marinara-engine/shared";
@@ -402,7 +403,7 @@ async function resolveRetryAgents(args: {
         phase: builtIn.phase,
         promptTemplate: "",
         connectionId: null,
-        settings: {},
+        settings: getDefaultBuiltInAgentSettings(builtIn.id),
         provider,
         model: conn.model,
       },

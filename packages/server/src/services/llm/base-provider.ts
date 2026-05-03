@@ -142,6 +142,7 @@ const CONTEXT_SAFETY_MARGIN_TOKENS = 64;
 const CONTEXT_SAFETY_MARGIN_RATIO = 0.02;
 const MIN_INPUT_BUDGET_TOKENS = 128;
 const MIN_OUTPUT_BUDGET_TOKENS = 128;
+const OUTPUT_BUDGET_REDUCTION_HEADROOM_TOKENS = 64;
 const MIN_CONTENT_CHARS = 48;
 const TRUNCATION_MARKER = "\n\n[Truncated to fit context window]";
 
@@ -317,6 +318,17 @@ export function fitMessagesToContext(
       ? undefined
       : Math.max(1, Math.min(requestedMaxTokens, Math.max(1, usableWindow - reservedInputFloor)));
   let inputBudget = Math.max(0, usableWindow - (maxTokens ?? 0));
+
+  if (estimatedTokensBefore > inputBudget && maxTokens !== undefined) {
+    const minimumOutputBudget = Math.min(MIN_OUTPUT_BUDGET_TOKENS, Math.max(1, usableWindow - 1));
+    const headroom = Math.min(OUTPUT_BUDGET_REDUCTION_HEADROOM_TOKENS, Math.max(0, usableWindow - 1));
+    const maxTokensThatFitPrompt = Math.max(1, usableWindow - estimatedTokensBefore - headroom);
+    const reducedMaxTokens = Math.max(minimumOutputBudget, Math.min(maxTokens, maxTokensThatFitPrompt));
+    if (reducedMaxTokens < maxTokens) {
+      maxTokens = reducedMaxTokens;
+      inputBudget = Math.max(0, usableWindow - maxTokens);
+    }
+  }
 
   if (estimatedTokensBefore <= inputBudget) {
     return {

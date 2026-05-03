@@ -3,7 +3,13 @@
 // ──────────────────────────────────────────────
 import type { BaseLLMProvider, ChatMessage, LLMToolDefinition, LLMToolCall } from "../llm/base-provider.js";
 import type { AgentResult, AgentContext, AgentResultType } from "@marinara-engine/shared";
-import { getDefaultAgentPrompt } from "@marinara-engine/shared";
+import {
+  DEFAULT_AGENT_CONTEXT_SIZE,
+  DEFAULT_AGENT_MAX_TOKENS,
+  MAX_AGENT_MAX_TOKENS,
+  MIN_AGENT_MAX_TOKENS,
+  getDefaultAgentPrompt,
+} from "@marinara-engine/shared";
 import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { logger } from "../../lib/logger.js";
 
@@ -73,6 +79,15 @@ function formatToolPayloadForLog(payload: string, maxLength = 400): string {
   }
 }
 
+function normalizeAgentMaxTokens(value: unknown, fallback = DEFAULT_AGENT_MAX_TOKENS): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(MIN_AGENT_MAX_TOKENS, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(value)));
+}
+
+function applyProviderMaxTokensOverride(provider: BaseLLMProvider, maxTokens: number): number {
+  return provider.maxTokensOverrideValue !== null ? Math.min(maxTokens, provider.maxTokensOverrideValue) : maxTokens;
+}
+
 /**
  * Execute a single agent: build prompt → call LLM → parse response.
  * If toolContext is provided, the agent can make tool calls in a loop.
@@ -111,14 +126,12 @@ export async function executeAgent(
     }
 
     // Build multi-turn message array for this agent (sliced to its own contextSize)
-    const agentContextSize = (config.settings.contextSize as number) || 5;
+    const agentContextSize = (config.settings.contextSize as number) || DEFAULT_AGENT_CONTEXT_SIZE;
     const messages = buildAgentMessages(systemParts.join("\n"), context, config.type, agentContextSize);
 
     // Agents use lower temperature for reliability
     const temperature = (config.settings.temperature as number) ?? 0.3;
-    const rawMaxTokens = Math.max((config.settings.maxTokens as number) ?? 4096, 16384);
-    const maxTokens =
-      provider.maxTokensOverrideValue !== null ? Math.min(rawMaxTokens, provider.maxTokensOverrideValue) : rawMaxTokens;
+    const maxTokens = applyProviderMaxTokensOverride(provider, normalizeAgentMaxTokens(config.settings.maxTokens));
     const streamResponses = context.streaming !== false;
 
     // If tools are available, use the tool call loop
@@ -320,22 +333,20 @@ export async function executeAgentBatch(
     // Build merged system prompt (includes lore + agent extras)
     const systemPrompt = buildBatchSystemPrompt(configs, context);
     // Batch uses the max contextSize among its members
-    const batchContextSize = Math.max(...configs.map((c) => (c.settings.contextSize as number) || 5));
+    const batchContextSize = Math.max(
+      ...configs.map((c) => (c.settings.contextSize as number) || DEFAULT_AGENT_CONTEXT_SIZE),
+    );
     const messages = buildAgentMessages(systemPrompt, context, "__batch__", batchContextSize);
 
-    // Each agent needs enough room for its full JSON output.
-    // Use a generous floor (16384) so the model never runs out mid-response.
-    // Cap to the connection-level maxTokensOverride when set.
-    const maxTokensPerAgent = Math.max(...configs.map((c) => (c.settings.maxTokens as number) ?? 4096));
+    // Each agent reserves its own configured output budget. The context fitter
+    // may still reduce this further if the prompt needs more room.
+    const maxTokensPerAgent = Math.max(...configs.map((c) => normalizeAgentMaxTokens(c.settings.maxTokens)));
     const temperature = Math.min(...configs.map((c) => (c.settings.temperature as number) ?? 0.3));
-    const rawBatchMaxTokens = Math.max(maxTokensPerAgent * configs.length, 16384);
-    const batchMaxTokens =
-      provider.maxTokensOverrideValue !== null
-        ? Math.min(rawBatchMaxTokens, provider.maxTokensOverrideValue)
-        : rawBatchMaxTokens;
+    const rawBatchMaxTokens = Math.min(maxTokensPerAgent * configs.length, MAX_AGENT_MAX_TOKENS);
+    const batchMaxTokens = applyProviderMaxTokensOverride(provider, rawBatchMaxTokens);
     const streamResponses = context.streaming !== false;
     logger.info(
-      `[agent-batch] maxTokens: ${batchMaxTokens} (${maxTokensPerAgent} × ${configs.length} agents, floor 16384${provider.maxTokensOverrideValue !== null ? `, capped at ${provider.maxTokensOverrideValue}` : ""})`,
+      `[agent-batch] maxTokens: ${batchMaxTokens} (${maxTokensPerAgent} × ${configs.length} agents${provider.maxTokensOverrideValue !== null ? `, capped at ${provider.maxTokensOverrideValue}` : ""})`,
     );
 
     logger.debug(`\n[agent-batch] ═══ BATCH PROMPT — [${configs.map((c) => c.type).join(", ")}] — ${model} ═══`);
