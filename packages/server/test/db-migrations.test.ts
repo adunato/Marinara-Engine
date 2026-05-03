@@ -66,6 +66,28 @@ test("startup migrations add lorebook folders schema to existing installs", asyn
         updated_at TEXT NOT NULL
       )`),
     );
+    await db.run(
+      sql.raw(`INSERT INTO lorebooks (
+        id, name, description, category, scan_depth, token_budget, recursive_scanning,
+        character_id, persona_id, chat_id, enabled, generated_by, source_agent_id, tags, created_at, updated_at
+      ) VALUES (
+        'legacy-book', 'Legacy Lorebook', '', 'uncategorized', 2, 2048, 'false',
+        NULL, NULL, NULL, 'true', NULL, NULL, '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      )`),
+    );
+    await db.run(
+      sql.raw(`INSERT INTO lorebook_entries (
+        id, lorebook_id, name, content, keys, secondary_keys, enabled, constant, selective, selective_logic,
+        probability, scan_depth, match_whole_words, case_sensitive, use_regex, position, depth, "order", role,
+        sticky, cooldown, delay, "group", group_weight, tag, relationships, dynamic_state, activation_conditions,
+        schedule, created_at, updated_at
+      ) VALUES (
+        'legacy-entry', 'legacy-book', 'Legacy Entry', 'Survives migration', '[]', '[]', 'true', 'false',
+        'false', 'and', NULL, NULL, 'false', 'false', 'false', 0, 4, 100, 'system',
+        NULL, NULL, NULL, '', NULL, '', '{}', '{}', '[]',
+        NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      )`),
+    );
 
     await runMigrations(db);
     await runMigrations(db);
@@ -74,9 +96,13 @@ test("startup migrations add lorebook folders schema to existing installs", asyn
       sql.raw(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lorebook_folders'`),
     );
     const entryColumns = await db.all<{ name: string }>(sql.raw("PRAGMA table_info(lorebook_entries)"));
+    const preservedEntries = await db.all<{ id: string; folder_id: string | null }>(
+      sql.raw(`SELECT id, folder_id FROM lorebook_entries WHERE id = 'legacy-entry'`),
+    );
 
     assert.equal(folderTables.length, 1);
     assert.ok(entryColumns.some((column) => column.name === "folder_id"));
+    assert.deepEqual(preservedEntries, [{ id: "legacy-entry", folder_id: null }]);
   } finally {
     client.close();
   }
