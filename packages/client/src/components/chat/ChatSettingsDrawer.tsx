@@ -145,7 +145,7 @@ const HIDDEN_ROLEPLAY_AGENTS = new Set([
   "autonomous-messenger",
 ]);
 
-const MODE_INTROS: Record<string, string> = {
+const MODE_INTROS: Record<ChatMode, string> = {
   conversation:
     "Plain chat — no roleplay or game systems built in; autonomous messaging and other tools are optional below.",
   roleplay:
@@ -1194,10 +1194,10 @@ export function ChatSettingsDrawer({
         <div className="flex-1 overflow-y-auto">
           {/* Hardcoded — CHAT_MODES.defaultAgents looks like the source of truth but is currently
               unused, and wouldn't cover non-agent built-ins (GM pipeline, autonomous messaging, etc.) anyway. */}
-          {MODE_INTROS[chatMode] && (
+          {MODE_INTROS[chatMode as ChatMode] && (
             <div className="border-b border-[var(--border)] px-4 py-2.5">
               <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                {MODE_INTROS[chatMode]}
+                {MODE_INTROS[chatMode as ChatMode]}
               </p>
             </div>
           )}
