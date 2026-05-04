@@ -41,23 +41,27 @@ function scheduleAfterFirstLoad(callback: () => void) {
 
 function registerServiceWorker() {
   scheduleAfterFirstLoad(() => {
-    void import("virtual:pwa-register").then(({ registerSW }) => {
-      const updateSW = registerSW({
-        immediate: true,
-        onNeedRefresh() {
-          void updateSW(true);
-        },
-        onRegisteredSW(_swUrl: string, registration?: ServiceWorkerRegistration) {
-          if (!registration) {
-            return;
-          }
+    void import("virtual:pwa-register")
+      .then(({ registerSW }) => {
+        const updateSW = registerSW({
+          immediate: true,
+          onNeedRefresh() {
+            void updateSW(true);
+          },
+          onRegisteredSW(_swUrl: string, registration?: ServiceWorkerRegistration) {
+            if (!registration) {
+              return;
+            }
 
-          window.setInterval(() => {
-            void registration.update();
-          }, 60_000);
-        },
+            window.setInterval(() => {
+              void registration.update();
+            }, 60_000);
+          },
+        });
+      })
+      .catch(() => {
+        // Service worker registration is a progressive enhancement.
       });
-    });
   });
 }
 
