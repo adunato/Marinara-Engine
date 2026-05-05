@@ -31,7 +31,7 @@ COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 
 # Install all dependencies (including dev for building)
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,target=/app/.pnpm-store \
     pnpm install --frozen-lockfile
 
 # Copy source code
@@ -63,7 +63,7 @@ COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 
 # Install production deps only, then strip non-core native modules.
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,target=/app/.pnpm-store \
     pnpm install --frozen-lockfile --prod && \
     # ── Remove onnxruntime (native + WASM) ──
     rm -rf /app/node_modules/.pnpm/onnxruntime-node@* \
