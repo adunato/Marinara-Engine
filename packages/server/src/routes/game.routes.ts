@@ -2502,6 +2502,7 @@ export async function gameRoutes(app: FastifyInstance) {
   const buildHydratedGameMeta = async (
     chatId: string,
     baseMeta: Record<string, unknown>,
+    options: { explicitLocation?: string | null } = {},
   ): Promise<Record<string, unknown>> => {
     const gameStateStore = createGameStateStorage(app.db);
     const latestState = await gameStateStore.getLatest(chatId);
@@ -2513,7 +2514,12 @@ export async function gameRoutes(app: FastifyInstance) {
     }
 
     const activeQuests = extractActiveQuests(latestState?.playerStats);
-    const currentLocation = typeof latestState?.location === "string" ? latestState.location : null;
+    // Prefer a caller-supplied explicit location over the most recent snapshot. The snapshot's
+    // location field only refreshes after /generate persists a new game state, so callers that
+    // have just committed a deliberate move (e.g. /map/move) need to override it — otherwise the
+    // sync and journal reconciliation below run against the previous location.
+    const snapshotLocation = typeof latestState?.location === "string" ? latestState.location : null;
+    const currentLocation = options.explicitLocation ?? snapshotLocation;
     hydratedMeta = syncGameMapMetaPartyPosition(hydratedMeta, currentLocation);
     const currentJournal = (hydratedMeta.gameJournal as Journal) ?? createJournal();
     return {
@@ -4892,14 +4898,32 @@ export async function gameRoutes(app: FastifyInstance) {
       }
     }
 
+    // Resolve the destination's label so hydration's location-derived reconciliation
+    // (syncGameMapMetaPartyPosition + reconcileJournal) runs against the explicit move
+    // instead of the stale snapshot location.
+    const explicitLocation =
+      typeof position === "string"
+        ? (updatedMap.nodes?.find((node) => node.id === position)?.label ?? position)
+        : (updatedMap.cells?.find((cell) => cell.x === position.x && cell.y === position.y)?.label ?? null);
+
     const nextMeta = markNpcsMetAtCurrentLocation(withActiveGameMapMeta(meta, updatedMap));
-    const hydratedMeta = await buildHydratedGameMeta(chatId, nextMeta);
-    await chats.updateMetadata(chatId, hydratedMeta);
+    const hydratedMeta = await buildHydratedGameMeta(chatId, nextMeta, { explicitLocation });
+    // syncGameMapMetaPartyPosition matches by label across all maps, so a label collision
+    // could leave hydratedMeta.gameMap pointing at a different map than the one the client
+    // clicked within. Anchor finalMap to the hydrated copy of the target map (falling back
+    // to updatedMap) and re-apply the exact chosen position so the response stays consistent
+    // with the user's click.
+    const hydratedMaps = getGameMapsFromMeta(hydratedMeta);
+    const hydratedTargetMap =
+      hydratedMaps.find((entry, index) => getGameMapId(entry, index) === targetMapId) ?? updatedMap;
+    const finalMap: GameMap = { ...hydratedTargetMap, partyPosition: position };
+    const finalMeta = withActiveGameMapMeta(hydratedMeta, finalMap);
+    await chats.updateMetadata(chatId, finalMeta);
 
     return {
-      map: (hydratedMeta.gameMap as GameMap) ?? updatedMap,
-      maps: getGameMapsFromMeta(hydratedMeta),
-      activeGameMapId: (hydratedMeta.activeGameMapId as string | null) ?? getGameMapId(hydratedMeta.gameMap as GameMap),
+      map: (finalMeta.gameMap as GameMap) ?? finalMap,
+      maps: getGameMapsFromMeta(finalMeta),
+      activeGameMapId: (finalMeta.activeGameMapId as string | null) ?? getGameMapId(finalMeta.gameMap as GameMap),
     };
   });
 
