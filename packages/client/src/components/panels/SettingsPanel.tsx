@@ -331,6 +331,10 @@ function GeneralSettings() {
   const setTrimIncompleteModelOutput = useUIStore((s) => s.setTrimIncompleteModelOutput);
   const speechToTextEnabled = useUIStore((s) => s.speechToTextEnabled);
   const setSpeechToTextEnabled = useUIStore((s) => s.setSpeechToTextEnabled);
+  const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
+  const setIntuitiveSwipeNavigation = useUIStore((s) => s.setIntuitiveSwipeNavigation);
+  const intuitiveSwipeRerollLatest = useUIStore((s) => s.intuitiveSwipeRerollLatest);
+  const setIntuitiveSwipeRerollLatest = useUIStore((s) => s.setIntuitiveSwipeRerollLatest);
   const rescanGameAssets = useGameAssetStore((s) => s.rescanAssets);
   const assetFileRef = useRef<HTMLInputElement>(null);
   const [assetCategory, setAssetCategory] = useState<GameAssetCategoryId>("backgrounds");
@@ -605,6 +609,22 @@ function GeneralSettings() {
         onChange={setSpeechToTextEnabled}
         help="When on, chat input bars show a microphone button for browser dictation. Handy still works independently by pasting into the focused input field."
       />
+
+      <ToggleSetting
+        label="Intuitive swipe navigation"
+        checked={intuitiveSwipeNavigation}
+        onChange={setIntuitiveSwipeNavigation}
+        help="In Conversation and Roleplay modes, use Left/Right Arrow on desktop or horizontal touch swipes on mobile to move between alternate generations on the latest assistant message."
+      />
+
+      <div className={cn("pl-5 transition-opacity", intuitiveSwipeNavigation ? "" : "pointer-events-none opacity-45")}>
+        <ToggleSetting
+          label="Reroll past the newest swipe"
+          checked={intuitiveSwipeRerollLatest}
+          onChange={setIntuitiveSwipeRerollLatest}
+          help="When intuitive swipes are enabled, pressing Right Arrow or swiping left on the newest swipe of the latest assistant message creates a new reroll."
+        />
+      </div>
 
       <div className="rounded-xl bg-[var(--secondary)]/50 p-4 ring-1 ring-[var(--border)]">
         <div className="mb-3 flex flex-col gap-1">
@@ -2051,7 +2071,8 @@ const CSS_TEMPLATE = `/* ══════════════════�
 `;
 
 function ExtensionsSettings() {
-  const { data: extensions = [] } = useExtensions();
+  const { data: extensions, isLoading } = useExtensions();
+  const extensionList = extensions ?? [];
   const createExtension = useCreateExtension();
   const updateExtension = useUpdateExtension();
   const deleteExtension = useDeleteExtension();
@@ -2095,11 +2116,12 @@ function ExtensionsSettings() {
           enabled: true,
           installedAt,
         });
+        toast.success(`Extension "${name}" installed`);
       } else {
-        toast.error("Only .json and .css extension files are supported.");
+        toast.error("Only .json, .css, and .js extension files are supported.");
       }
-    } catch {
-      toast.error("Failed to import extension.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to import extension.");
     }
     e.target.value = "";
   };
@@ -2124,7 +2146,7 @@ function ExtensionsSettings() {
       <div className="flex flex-col gap-1.5">
         <span className="text-xs font-medium">Installed Extensions</span>
 
-        {extensions.map((ext) => (
+        {extensionList.map((ext) => (
           <div
             key={ext.id}
             className={cn(
@@ -2162,9 +2184,9 @@ function ExtensionsSettings() {
           </div>
         ))}
 
-        {extensions.length === 0 && (
+        {!isLoading && extensionList.length === 0 && (
           <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-            No extensions installed. Import a .json or .css extension file above.
+            No extensions installed. Import a .json, .css, or .js extension file above.
           </p>
         )}
       </div>

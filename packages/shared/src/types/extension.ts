@@ -5,9 +5,10 @@
 /**
  * A user-installed extension stored on the Marinara server.
  *
- * Extension JS is executed in the page via a same-origin <script src> tag
- * pointing at /api/extensions/:id/script.js so the strict CSP (`script-src 'self'`)
- * can stay in place — there is no `new Function(...)` or `eval` involved.
+ * Extension JS is delivered to the client as part of the list payload and
+ * executed in the page via the existing blob-URL loader in
+ * `CustomThemeInjector.tsx`. There is no server-side script-serving endpoint —
+ * CSP/eval characteristics are governed entirely by that loader.
  */
 export interface InstalledExtension {
   id: string;
@@ -15,7 +16,7 @@ export interface InstalledExtension {
   description: string;
   /** Optional CSS injected as a <style> tag while enabled. */
   css?: string | null;
-  /** Optional JavaScript served at /api/extensions/:id/script.js while enabled. */
+  /** Optional JavaScript payload consumed by the client loader while enabled. */
   js?: string | null;
   /** Whether the extension is currently active. */
   enabled: boolean;

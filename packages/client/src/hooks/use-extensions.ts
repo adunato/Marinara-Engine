@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api-client";
+import { api, ApiError } from "../lib/api-client";
 import { useUIStore } from "../stores/ui.store";
 import type { CreateExtensionInput, InstalledExtension, UpdateExtensionInput } from "@marinara-engine/shared";
 
@@ -18,6 +18,29 @@ function findDuplicateExtension(extensions: InstalledExtension[], name: string, 
       (ext) => ext.name === name && (ext.css ?? null) === (css ?? null) && (ext.js ?? null) === (js ?? null),
     ) ?? null
   );
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * POST one extension, backing off on 429 so a long legacy list doesn't dead-end
+ * behind the per-IP `/api/extensions` rate limiter (60 req/min).
+ */
+async function postExtensionWithBackoff(input: CreateExtensionInput): Promise<InstalledExtension> {
+  const MAX_ATTEMPTS = 6;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await api.post<InstalledExtension>("/extensions", input);
+    } catch (err) {
+      lastError = err;
+      if (!(err instanceof ApiError) || err.status !== 429) throw err;
+      // Exponential backoff capped at the 60s rate-limit window.
+      const delay = Math.min(60_000, 2 ** attempt * 1_000);
+      await sleep(delay);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Extension migration failed after retries");
 }
 
 export function useExtensions() {
@@ -76,7 +99,7 @@ export function useLegacyExtensionMigration() {
   const setMigrated = useUIStore((s) => s.setHasMigratedExtensionsToServer);
   const qc = useQueryClient();
   const inFlightRef = useRef(false);
-  const { isSuccess } = useExtensions();
+  const { data: serverExtensions, isSuccess } = useExtensions();
 
   useEffect(() => {
     if (hasMigrated || !isSuccess || inFlightRef.current) {
@@ -90,8 +113,9 @@ export function useLegacyExtensionMigration() {
     inFlightRef.current = true;
     void (async () => {
       try {
-        const serverExtensions = await api.get<InstalledExtension[]>("/extensions");
-        let working = [...serverExtensions];
+        // Reuse the list React Query already fetched instead of issuing a
+        // duplicate GET that would eat into the rate-limit budget.
+        let working = [...(serverExtensions ?? [])];
 
         for (const legacy of legacyExtensions) {
           const css = legacy.css ?? null;
@@ -99,7 +123,7 @@ export function useLegacyExtensionMigration() {
           const duplicate = findDuplicateExtension(working, legacy.name, css, js);
           if (duplicate) continue;
 
-          const created = await api.post<InstalledExtension>("/extensions", {
+          const created = await postExtensionWithBackoff({
             name: legacy.name,
             description: legacy.description ?? "",
             css,
@@ -113,11 +137,12 @@ export function useLegacyExtensionMigration() {
         clearLegacy();
         setMigrated(true);
         await qc.invalidateQueries({ queryKey: extensionKeys.all });
-      } catch {
+      } catch (err) {
         // Leave migration flag untouched so the next app start can retry.
+        console.warn("[Extensions] Legacy migration failed; will retry on next load.", err);
       } finally {
         inFlightRef.current = false;
       }
     })();
-  }, [clearLegacy, hasMigrated, isSuccess, legacyExtensions, qc, setMigrated]);
+  }, [clearLegacy, hasMigrated, isSuccess, legacyExtensions, qc, serverExtensions, setMigrated]);
 }

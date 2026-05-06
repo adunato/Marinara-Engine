@@ -24,17 +24,21 @@ function mapExtension(row: ExtensionRow): InstalledExtension {
 }
 
 export function createExtensionsStorage(db: DB) {
+  // Lexical helper so create()/update() don't depend on `this` — keeps the
+  // storage object safe to destructure or pass as a callback.
+  const getById = async (id: string) => {
+    const rows = await db.select().from(installedExtensions).where(eq(installedExtensions.id, id));
+    const row = rows[0];
+    return row ? mapExtension(row) : null;
+  };
+
   return {
     async list() {
       const rows = await db.select().from(installedExtensions).orderBy(desc(installedExtensions.installedAt));
       return rows.map(mapExtension);
     },
 
-    async getById(id: string) {
-      const rows = await db.select().from(installedExtensions).where(eq(installedExtensions.id, id));
-      const row = rows[0];
-      return row ? mapExtension(row) : null;
-    },
+    getById,
 
     async create(input: CreateExtensionInput) {
       const id = newId();
@@ -50,7 +54,7 @@ export function createExtensionsStorage(db: DB) {
         createdAt: timestamp,
         updatedAt: timestamp,
       });
-      return this.getById(id);
+      return getById(id);
     },
 
     async update(id: string, data: UpdateExtensionInput) {
@@ -63,7 +67,7 @@ export function createExtensionsStorage(db: DB) {
       if (data.js !== undefined) updateFields.js = data.js;
       if (data.enabled !== undefined) updateFields.enabled = data.enabled ? "true" : "false";
       await db.update(installedExtensions).set(updateFields).where(eq(installedExtensions.id, id));
-      return this.getById(id);
+      return getById(id);
     },
 
     async remove(id: string) {
