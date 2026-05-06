@@ -10,9 +10,12 @@ export type SimpleMessage = { role: "system" | "user" | "assistant"; content: st
 export type StoredGenerationParameters = Partial<GenerationParameters>;
 export type PromptAttachment = {
   type?: string | null;
+  url?: string | null;
   data?: string | null;
   filename?: string | null;
   name?: string | null;
+  prompt?: string | null;
+  galleryId?: string | null;
 };
 
 const TEXT_ATTACHMENT_CHAR_LIMIT = 60_000;

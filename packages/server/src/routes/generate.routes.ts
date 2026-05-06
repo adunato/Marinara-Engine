@@ -7337,6 +7337,8 @@ export async function generateRoutes(app: FastifyInstance) {
                         type: "image",
                         url: imageUrl,
                         filename: `illustration.${imageResult.ext}`,
+                        prompt: fullPrompt,
+                        galleryId: (galleryEntry as any)?.id,
                       };
 
                       // Always persist to the swipe row so the attachment survives
@@ -7742,6 +7744,8 @@ export async function generateRoutes(app: FastifyInstance) {
                           type: "image",
                           url: imageUrl,
                           filename: `selfie_${charName.toLowerCase().replace(/\s+/g, "_")}.${imageResult.ext}`,
+                          prompt: imagePrompt,
+                          galleryId: (galleryEntry as any)?.id,
                         };
                         await chats.appendSwipeAttachment(messageId, generationSwipeIndex, attachment);
 

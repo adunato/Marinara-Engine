@@ -42,6 +42,7 @@ import { buildTTSMessageText, resolveTTSVoiceForSpeaker } from "../../lib/tts-di
 import { DIALOGUE_QUOTE_PATTERN_SOURCE, HTML_SAFE_DIALOGUE_QUOTE_PATTERN_SOURCE } from "../../lib/dialogue-quotes";
 import DOMPurify from "dompurify";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
+import { ImagePromptPanel } from "./ImagePromptPanel";
 
 const MESSAGE_ACTION_ICON_SIZE = "1em";
 const MESSAGE_SWIPE_ICON_SIZE = "1.15em";
@@ -696,8 +697,17 @@ export const ChatMessage = memo(function ChatMessage({
   const [showThinking, setShowThinking] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [avatarLightbox, setAvatarLightbox] = useState<string | null>(null);
+  const [avatarLightboxPrompt, setAvatarLightboxPrompt] = useState<string | null>(null);
   const scrollRestoreRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const msgRef = useRef<HTMLDivElement>(null);
+  const openImageLightbox = useCallback((url: string, prompt?: unknown) => {
+    setAvatarLightbox(url);
+    setAvatarLightboxPrompt(typeof prompt === "string" ? prompt.trim() : null);
+  }, []);
+  const closeImageLightbox = useCallback(() => {
+    setAvatarLightbox(null);
+    setAvatarLightboxPrompt(null);
+  }, []);
 
   // Translation
   const { translate, translations, translating } = useTranslate();
@@ -1325,7 +1335,7 @@ export const ChatMessage = memo(function ChatMessage({
                   )}
                   onClick={() => {
                     const visible = mergedAvatars[cycleIndexRef.current];
-                    if (visible) setAvatarLightbox(visible.url);
+                    if (visible) openImageLightbox(visible.url);
                   }}
                   aria-label={`Open ${displayName} avatar`}
                 >
@@ -1349,7 +1359,7 @@ export const ChatMessage = memo(function ChatMessage({
                   <button
                     type="button"
                     className={cn("cursor-pointer overflow-hidden ring-2 ring-white/10", compactAvatarFrameClass)}
-                    onClick={() => setAvatarLightbox(avatarUrl)}
+                    onClick={() => openImageLightbox(avatarUrl)}
                     aria-label={`Open ${displayName} avatar`}
                   >
                     <img
@@ -1466,7 +1476,7 @@ export const ChatMessage = memo(function ChatMessage({
                           className="rpg-avatar-panel-media rpg-avatar-panel absolute inset-0 block h-full w-full cursor-zoom-in overflow-hidden"
                           onClick={() => {
                             const visible = mergedAvatars[cycleIndexRef.current];
-                            if (visible) setAvatarLightbox(visible.url);
+                            if (visible) openImageLightbox(visible.url);
                           }}
                           aria-label={`Open ${displayName} avatar`}
                         >
@@ -1492,7 +1502,7 @@ export const ChatMessage = memo(function ChatMessage({
                             "rpg-avatar-panel-media absolute inset-0 block h-full w-full cursor-zoom-in overflow-hidden",
                             !isUser && "rpg-avatar-panel",
                           )}
-                          onClick={() => setAvatarLightbox(avatarUrl)}
+                          onClick={() => openImageLightbox(avatarUrl)}
                           aria-label={`Open ${displayName} avatar`}
                         >
                           <img
@@ -1555,7 +1565,7 @@ export const ChatMessage = memo(function ChatMessage({
                     <div key={i} className="group/att relative inline-block">
                       <button
                         type="button"
-                        onClick={() => setAvatarLightbox(att.url || att.data)}
+                        onClick={() => openImageLightbox(att.url || att.data, att.prompt)}
                         className="block"
                         title="Open image"
                         aria-label={`Open ${att.filename || att.name || "image"}`}
@@ -1734,17 +1744,27 @@ export const ChatMessage = memo(function ChatMessage({
         {avatarLightbox && (
           <div
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80"
-            onClick={() => setAvatarLightbox(null)}
+            onClick={closeImageLightbox}
           >
-            <img
-              src={avatarLightbox}
-              alt={displayName}
-              decoding="async"
-              className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
-            />
+            <div
+              className="flex max-h-[90vh] w-[min(90vw,64rem)] max-w-[90vw] flex-col items-center gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <img
+                src={avatarLightbox}
+                alt={displayName}
+                decoding="async"
+                className={
+                  avatarLightboxPrompt?.trim()
+                    ? "max-h-[calc(90vh-9rem)] max-w-full rounded-lg object-contain shadow-2xl"
+                    : "max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl"
+                }
+              />
+              <ImagePromptPanel prompt={avatarLightboxPrompt} className="w-full max-w-3xl" />
+            </div>
             <button
               type="button"
-              onClick={() => setAvatarLightbox(null)}
+              onClick={closeImageLightbox}
               aria-label="Close image"
               className="absolute right-3 top-3 rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
             >
@@ -1789,7 +1809,7 @@ export const ChatMessage = memo(function ChatMessage({
                 className="relative h-8 w-8 cursor-pointer overflow-hidden rounded-full"
                 onClick={() => {
                   const visible = mergedAvatars[cycleIndexRef.current];
-                  if (visible) setAvatarLightbox(visible.url);
+                  if (visible) openImageLightbox(visible.url);
                 }}
                 aria-label={`Open ${displayName} avatar`}
               >
@@ -1812,7 +1832,7 @@ export const ChatMessage = memo(function ChatMessage({
               <button
                 type="button"
                 className="h-8 w-8 cursor-pointer overflow-hidden rounded-full"
-                onClick={() => setAvatarLightbox(avatarUrl)}
+                onClick={() => openImageLightbox(avatarUrl)}
                 aria-label={`Open ${displayName} avatar`}
               >
                 <img
@@ -1932,7 +1952,7 @@ export const ChatMessage = memo(function ChatMessage({
                   <div key={i} className="group/att relative inline-block">
                     <button
                       type="button"
-                      onClick={() => setAvatarLightbox(att.url || att.data)}
+                      onClick={() => openImageLightbox(att.url || att.data, att.prompt)}
                       className="block"
                       title="Open image"
                       aria-label={`Open ${att.filename || att.name || "image"}`}
@@ -2107,17 +2127,27 @@ export const ChatMessage = memo(function ChatMessage({
       {avatarLightbox && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80"
-          onClick={() => setAvatarLightbox(null)}
+          onClick={closeImageLightbox}
         >
-          <img
-            src={avatarLightbox}
-            alt={displayName}
-            decoding="async"
-            className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
-          />
+          <div
+            className="flex max-h-[90vh] w-[min(90vw,64rem)] max-w-[90vw] flex-col items-center gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={avatarLightbox}
+              alt={displayName}
+              decoding="async"
+              className={
+                avatarLightboxPrompt?.trim()
+                  ? "max-h-[calc(90vh-9rem)] max-w-full rounded-lg object-contain shadow-2xl"
+                  : "max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl"
+              }
+            />
+            <ImagePromptPanel prompt={avatarLightboxPrompt} className="w-full max-w-3xl" />
+          </div>
           <button
             type="button"
-            onClick={() => setAvatarLightbox(null)}
+            onClick={closeImageLightbox}
             aria-label="Close image"
             className="absolute right-3 top-3 rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
           >

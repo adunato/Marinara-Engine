@@ -1100,7 +1100,13 @@ async function applyRetryResultEffects(args: {
               // Attach to message
               if (retryMessageId) {
                 const chatsDb = createChatsStorage(app.db);
-                const attachment = { type: "image", url: imageUrl, filename: `illustration.${imageResult.ext}` };
+                const attachment = {
+                  type: "image",
+                  url: imageUrl,
+                  filename: `illustration.${imageResult.ext}`,
+                  prompt: fullPrompt,
+                  galleryId: (galleryEntry as any)?.id,
+                };
                 const swipeRow = (await chatsDb.getSwipes(retryMessageId)).find(
                   (s: any) => s.index === retrySwipeIndex,
                 );
