@@ -747,6 +747,41 @@ export const ConversationMessage = memo(function ConversationMessage({
           <span className="ml-14 inline-block h-4 w-[0.125rem] animate-pulse rounded-full bg-[var(--foreground)]/50" />
         )}
 
+        {/* Image attachments (selfies, illustrations) */}
+        {extra.attachments && extra.attachments.length > 0 && !IMAGE_URL_RE.test(renderedContent.trim()) && (
+          <div className="ml-14 mt-1.5 flex flex-col items-start gap-2">
+            {extra.attachments.map((att: any, i: number) =>
+              att.type === "image" || att.type?.startsWith("image/") ? (
+                <div key={i} className="group/att relative inline-block">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setImageLightbox({ url: att.url || att.data, prompt: att.prompt });
+                    }}
+                    className="block cursor-zoom-in rounded-lg text-left"
+                    title="Open image"
+                  >
+                    <img
+                      src={att.url || att.data}
+                      alt={att.filename || att.name || "image"}
+                      className="max-h-80 max-w-full rounded-lg"
+                      loading="lazy"
+                    />
+                  </button>
+                  <button
+                    onClick={() => handleRemoveAttachment(i)}
+                    title="Remove from message"
+                    className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white/80 transition-opacity hover:bg-black/80 hover:text-white sm:opacity-0 sm:group-hover/att:opacity-100"
+                  >
+                    <X size="0.875rem" />
+                  </button>
+                </div>
+              ) : null,
+            )}
+          </div>
+        )}
+
         {!hideActions && hasSwipes && (
           <div className="ml-14 mt-2 flex items-center gap-1.5 px-1 text-[0.6875rem] text-[var(--muted-foreground)]">
             <button
