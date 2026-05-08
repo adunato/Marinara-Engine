@@ -646,6 +646,7 @@ export function createChatsStorage(db: DB) {
       const remaining = swipes.filter((s: any) => s.index !== index);
       const currentExtra = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
 
+      const activeSwipeRemoved = msg.activeSwipeIndex === index;
       let nextActiveSwipeIndex = msg.activeSwipeIndex;
       let nextContent = msg.content;
       let nextExtra = currentExtra;
@@ -681,7 +682,9 @@ export function createChatsStorage(db: DB) {
           extra: JSON.stringify(nextExtra),
         })
         .where(eq(messages.id, messageId));
-      await invalidateMemoryChunksFrom(db, msg.chatId, msg.createdAt);
+      if (activeSwipeRemoved) {
+        await invalidateMemoryChunksFrom(db, msg.chatId, msg.createdAt);
+      }
 
       return this.getMessage(messageId);
     },
