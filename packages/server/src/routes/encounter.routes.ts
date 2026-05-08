@@ -103,6 +103,18 @@ async function buildCharacterContext(chars: ReturnType<typeof createCharactersSt
     ctx += `<character="${data.name}">\n`;
     if (data.description) ctx += `${data.description}\n`;
     if (data.personality) ctx += `${data.personality}\n`;
+    // RPG stats from the character card (Marinara extension). Surface the
+    // configured max HP so the combat-init AI honors the user-defined value
+    // instead of inventing one for allies. Only `max` is exposed because
+    // combat should always start at full HP regardless of the card's stale
+    // `value` field — narrative damage applies after combat begins.
+    const rpg = data.extensions?.rpgStats;
+    if (rpg?.enabled && rpg.hp?.max) {
+      ctx += `Max HP: ${rpg.hp.max}\n`;
+      if (Array.isArray(rpg.attributes) && rpg.attributes.length > 0) {
+        ctx += `Attributes: ${rpg.attributes.map((a: { name: string; value: number }) => `${a.name} ${a.value}`).join(", ")}\n`;
+      }
+    }
     ctx += `</character>\n\n`;
   }
   return ctx;
@@ -130,6 +142,44 @@ async function buildPersonaContext(
   if (persona.personality) ctx += `${persona.personality}\n`;
   if (persona.backstory) ctx += `${persona.backstory}\n`;
   if (persona.appearance) ctx += `${persona.appearance}\n`;
+  // Surface configured persona stats (status bars + RPG attributes) so the
+  // combat-init AI uses the user-defined HP instead of inventing values.
+  // `personaStats` is stored as a JSON string of { enabled, bars, rpgStats? }.
+  let personaStats: Record<string, unknown> | null = null;
+  if (persona.personaStats) {
+    if (typeof persona.personaStats === "string") {
+      try {
+        personaStats = JSON.parse(persona.personaStats);
+      } catch {
+        personaStats = null;
+      }
+    } else {
+      personaStats = persona.personaStats as Record<string, unknown>;
+    }
+  }
+  // Only configured maxes are exposed — combat always starts at full HP.
+  // The bar/stat `value` field is the running gameplay value and is not
+  // authoritative for combat entry.
+  if (personaStats?.enabled && Array.isArray(personaStats.bars) && personaStats.bars.length > 0) {
+    ctx += `Persona Stat Bars (configured max for each):\n`;
+    for (const bar of personaStats.bars as Array<{ name: string; value: number; max: number }>) {
+      ctx += `- ${bar.name} max: ${bar.max}\n`;
+    }
+  }
+  const personaRpg = personaStats?.rpgStats as
+    | {
+        enabled?: boolean;
+        attributes?: Array<{ name: string; value: number }>;
+        hp?: { value: number; max: number };
+      }
+    | undefined;
+  if (personaRpg?.enabled && personaRpg.hp?.max) {
+    ctx += `Persona RPG Stats:\n`;
+    ctx += `- Max HP: ${personaRpg.hp.max}\n`;
+    if (Array.isArray(personaRpg.attributes) && personaRpg.attributes.length > 0) {
+      ctx += `- Attributes: ${personaRpg.attributes.map((a) => `${a.name} ${a.value}`).join(", ")}\n`;
+    }
+  }
   return { personaName: persona.name, personaCtx: ctx };
 }
 
@@ -279,8 +329,8 @@ function buildInitPrompt(
   inst += `- dialogueCues: optional, short, and only for named allies, named enemies, bosses, or important NPCs. Generic unnamed enemies should not get voiced lines.\n`;
   inst += `- visuals: set isBossFight true only for bosses/story-significant enemies. backgroundPrompt/illustrationPrompt are optional and only for important fights.\n`;
   inst += `- statuses: format {"name":"Status","emoji":"💀","duration":X,"modifier":-2,"stat":"attack|defense|speed|hp"}\n`;
-  inst += `- Use the player's stats/inventory from the context to populate their data.\n`;
-  inst += `- Ensure HP values are realistic for the setting. Return ONLY the JSON.\n`;
+  inst += `- HP values: if the persona section above lists a configured Max HP (from stat bars named HP/Health/etc, or from "Max HP" under Persona RPG Stats), use that EXACT number for the player's maxHp, and set hp = maxHp so combat starts at full health. If a character ally has a "Max HP: N" line in its block, do the same for that ally. Do NOT invent or "rebalance" a defined Max HP, and do NOT start any combatant below full HP at combat init. Only invent HP for combatants (enemies, unstatted allies) that have no defined HP in the context.\n`;
+  inst += `- Use the player's stats/inventory from the context to populate their data. Return ONLY the JSON.\n`;
   inst += `- Write ALL text values (environment, descriptions, attack names, item names, etc.) in the same language the chat history is written in.\n`;
 
   msgs.push({ role: "user", content: inst });
