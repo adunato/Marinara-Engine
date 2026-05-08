@@ -212,3 +212,82 @@ test("memory recall embedding connection does not inherit the active connection 
     client.close();
   }
 });
+
+test("rerolling a message invalidates stale memory chunks and refresh rebuilds from the active swipe", async () => {
+  const client = createClient({ url: "file::memory:" });
+  const db = drizzle(client) as unknown as DB;
+
+  try {
+    await runMigrations(db);
+
+    const now = "2026-05-08T00:00:00.000Z";
+    await db.insert(chats).values({
+      id: "chat-548",
+      name: "Bug 548 repro",
+      mode: "roleplay",
+      characterIds: "[]",
+      metadata: "{}",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    for (let i = 1; i <= 4; i++) {
+      await db.insert(messages).values({
+        id: `message-548-${i}`,
+        chatId: "chat-548",
+        role: i % 2 === 0 ? "assistant" : "user",
+        characterId: null,
+        content: `Setup message ${i}`,
+        activeSwipeIndex: 0,
+        extra: "{}",
+        createdAt: `2026-05-08T00:0${i}:00.000Z`,
+      });
+    }
+
+    await db.insert(messages).values({
+      id: "message-548-reroll",
+      chatId: "chat-548",
+      role: "assistant",
+      characterId: null,
+      content: "The discarded response says the vault code is onion.",
+      activeSwipeIndex: 0,
+      extra: "{}",
+      createdAt: "2026-05-08T00:05:00.000Z",
+    });
+
+    await db.insert(memoryChunks).values({
+      id: "chunk-548",
+      chatId: "chat-548",
+      content: "Assistant: The discarded response says the vault code is onion.",
+      embedding: null,
+      messageCount: 5,
+      firstMessageAt: "2026-05-08T00:01:00.000Z",
+      lastMessageAt: "2026-05-08T00:05:00.000Z",
+      createdAt: "2026-05-08T00:06:00.000Z",
+    });
+
+    const storage = createChatsStorage(db);
+    await storage.addSwipe("message-548-reroll", "The selected response says the vault code is basil.");
+
+    const chunksAfterReroll = await db.select().from(memoryChunks).where(eq(memoryChunks.chatId, "chat-548"));
+    assert.equal(chunksAfterReroll.length, 0);
+
+    const app = Fastify({ logger: false });
+    app.decorate("db", db);
+    await app.register(chatsRoutes, { prefix: "/api/chats" });
+    await app.ready();
+
+    const res = await app.inject({ method: "POST", url: "/api/chats/chat-548/memories/refresh" });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { rebuilt: 1 });
+    await app.close();
+
+    const rebuiltChunks = await db.select().from(memoryChunks).where(eq(memoryChunks.chatId, "chat-548"));
+
+    assert.equal(rebuiltChunks.length, 1);
+    assert.ok(!rebuiltChunks[0]!.content.includes("onion"));
+    assert.ok(rebuiltChunks[0]!.content.includes("basil"));
+  } finally {
+    client.close();
+  }
+});
