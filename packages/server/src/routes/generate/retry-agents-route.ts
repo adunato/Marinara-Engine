@@ -421,6 +421,15 @@ async function resolveRetryAgents(args: {
       localSidecarAvailable: localSidecarAvailableForTrackers,
     });
 
+    if (effectiveConnectionId === "skip-local-sidecar") {
+      skippedLocalSidecarAgents.push(cfg.name ?? cfg.type);
+      logger.warn(
+        "[retry-agents] Skipping agent %s because Local Model was requested but the sidecar is unavailable",
+        cfg.type,
+      );
+      continue;
+    }
+
     if (effectiveConnectionId) {
       if (isLocalSidecarConnectionId(effectiveConnectionId) && localSidecarAvailableForTrackers) {
         agentProvider = getLocalSidecarProvider();
@@ -429,13 +438,6 @@ async function resolveRetryAgents(args: {
         agentProvider = defaultAgentConnection.provider;
         agentModel = defaultAgentConnection.model;
         defaultAgentConnectionAgents.push(cfg.name ?? cfg.type);
-      } else if (effectiveConnectionId === "skip-local-sidecar") {
-        skippedLocalSidecarAgents.push(cfg.name ?? cfg.type);
-        logger.warn(
-          "[retry-agents] Skipping agent %s because Local Model was requested but the sidecar is unavailable",
-          cfg.type,
-        );
-        continue;
       } else {
         const agentConn = await conns.getWithKey(effectiveConnectionId);
         if (agentConn) {
