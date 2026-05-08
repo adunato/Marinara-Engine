@@ -13,6 +13,8 @@ This file is a thin maintainer note for contributors using Claude. Canonical wor
 
 - Keep edits non-destructive. Do not revert unrelated work in the tree.
 - Prefer focused patches that keep code, docs, and release metadata aligned in the same change.
+- Before starting issue work, check for an existing issue-linked branch, open PR, draft PR, or project board item so multiple agents do not duplicate effort.
+- When implementation effort starts for an issue, open a draft PR immediately so the project Kanban board shows the work in progress.
 - When preparing a PR, make the why explicit in the description so reviewers can see the user problem or rationale, not just the file changes.
 - Check `README.md`, `android/README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/CONFIGURATION.md`, `docs/TROUBLESHOOTING.md`, and `docs/FAQ.md` together when install, update, or release behavior changes.
 
