@@ -886,6 +886,7 @@ function SectionsTab({
               onClick={dismissLorebookWarning}
               className="ml-0.5 rounded-md p-0.5 text-amber-200/75 transition-colors hover:bg-amber-400/15 hover:text-amber-100"
               title="Dismiss warning"
+              aria-label="Dismiss warning"
             >
               <X size="0.6875rem" />
             </button>
