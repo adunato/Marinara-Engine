@@ -44,6 +44,8 @@ export interface MarkerContext {
   activeAgentIds: string[];
   /** Per-chat list of manually activated lorebook IDs from chat settings */
   activeLorebookIds: string[];
+  /** When true, lorebook markers expand to empty content without scanning global or scoped lorebooks. */
+  disableLorebooks?: boolean;
   /** Pre-computed embedding of the chat context for semantic lorebook matching. */
   chatEmbedding?: number[] | null;
   /** Per-chat ephemeral state overrides for lorebook entries (from chat metadata). */
@@ -241,6 +243,8 @@ async function expandPersona(_config: MarkerConfig, ctx: MarkerContext): Promise
 // ── Lorebook / World Info ──────────────────────
 
 async function expandLorebook(config: MarkerConfig, ctx: MarkerContext): Promise<ExpandedMarker> {
+  if (ctx.disableLorebooks === true) return { content: "" };
+
   const result = await processLorebooks(ctx.db, ctx.chatMessages, ctx.gameState ?? null, {
     chatId: ctx.chatId,
     characterIds: ctx.characterIds,

@@ -112,6 +112,7 @@ export async function promptReviewerRoutes(app: FastifyInstance) {
           { role: "assistant", content: "(Sample assistant response)" },
         ],
         activeLorebookIds: [],
+        disableLorebooks: true,
         previewOnly: true,
       };
 
