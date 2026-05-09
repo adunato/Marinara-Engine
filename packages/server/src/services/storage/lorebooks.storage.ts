@@ -215,27 +215,29 @@ export function createLorebooksStorage(db: DB) {
       const timestamp = resolveTimestamps(timestampOverrides);
       const characterIds = resolveLinkIds(input.characterIds, input.characterId);
       const personaIds = resolveLinkIds(input.personaIds, input.personaId);
-      await db.insert(lorebooks).values({
-        id,
-        name: input.name,
-        description: input.description ?? "",
-        category: input.category ?? "uncategorized",
-        scanDepth: input.scanDepth ?? 2,
-        tokenBudget: input.tokenBudget ?? 2048,
-        recursiveScanning: String(input.recursiveScanning ?? false),
-        maxRecursionDepth: input.maxRecursionDepth ?? 3,
-        characterId: characterIds[0] ?? null,
-        personaId: personaIds[0] ?? null,
-        chatId: input.chatId ?? null,
-        isGlobal: String(input.isGlobal ?? false),
-        enabled: String(input.enabled ?? true),
-        tags: input.tags ? JSON.stringify(input.tags) : "[]",
-        generatedBy: input.generatedBy ?? null,
-        sourceAgentId: input.sourceAgentId ?? null,
-        createdAt: timestamp.createdAt,
-        updatedAt: timestamp.updatedAt,
+      await db.transaction(async (tx) => {
+        await tx.insert(lorebooks).values({
+          id,
+          name: input.name,
+          description: input.description ?? "",
+          category: input.category ?? "uncategorized",
+          scanDepth: input.scanDepth ?? 2,
+          tokenBudget: input.tokenBudget ?? 2048,
+          recursiveScanning: String(input.recursiveScanning ?? false),
+          maxRecursionDepth: input.maxRecursionDepth ?? 3,
+          characterId: characterIds[0] ?? null,
+          personaId: personaIds[0] ?? null,
+          chatId: input.chatId ?? null,
+          isGlobal: String(input.isGlobal ?? false),
+          enabled: String(input.enabled ?? true),
+          tags: input.tags ? JSON.stringify(input.tags) : "[]",
+          generatedBy: input.generatedBy ?? null,
+          sourceAgentId: input.sourceAgentId ?? null,
+          createdAt: timestamp.createdAt,
+          updatedAt: timestamp.updatedAt,
+        });
+        await syncLorebookLinks(tx, id, characterIds, personaIds);
       });
-      await syncLorebookLinks(db, id, characterIds, personaIds);
       return this.getById(id);
     },
 
@@ -266,17 +268,21 @@ export function createLorebooksStorage(db: DB) {
       if (input.generatedBy !== undefined) updates.generatedBy = input.generatedBy;
       if (input.sourceAgentId !== undefined) updates.sourceAgentId = input.sourceAgentId;
 
-      await db.update(lorebooks).set(updates).where(eq(lorebooks.id, id));
-      if (shouldUpdateCharacterLinks || shouldUpdatePersonaLinks) {
-        await syncLorebookLinks(db, id, nextCharacterIds, nextPersonaIds);
-      }
+      await db.transaction(async (tx) => {
+        await tx.update(lorebooks).set(updates).where(eq(lorebooks.id, id));
+        if (shouldUpdateCharacterLinks || shouldUpdatePersonaLinks) {
+          await syncLorebookLinks(tx, id, nextCharacterIds, nextPersonaIds);
+        }
+      });
       return this.getById(id);
     },
 
     async remove(id: string) {
-      await db.delete(lorebookCharacterLinks).where(eq(lorebookCharacterLinks.lorebookId, id));
-      await db.delete(lorebookPersonaLinks).where(eq(lorebookPersonaLinks.lorebookId, id));
-      await db.delete(lorebooks).where(eq(lorebooks.id, id));
+      await db.transaction(async (tx) => {
+        await tx.delete(lorebookCharacterLinks).where(eq(lorebookCharacterLinks.lorebookId, id));
+        await tx.delete(lorebookPersonaLinks).where(eq(lorebookPersonaLinks.lorebookId, id));
+        await tx.delete(lorebooks).where(eq(lorebooks.id, id));
+      });
     },
 
     // ── Entries ──
