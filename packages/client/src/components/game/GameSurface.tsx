@@ -4877,14 +4877,19 @@ export function GameSurface({
                 npcsNeedingAvatars: npcsNeedingAvatars.slice(0, 10),
                 debugMode: useUIStore.getState().debugMode,
               });
+              // Match case-insensitively so the assignment stays consistent
+              // with the case-insensitive dedupe above — defends against
+              // casing drift between the request name and what the server
+              // echoes back.
               const avatarByName = new Map<string, string>();
               for (const generated of assetResult?.generatedNpcAvatars ?? []) {
                 if (generated.name && generated.avatarUrl) {
-                  avatarByName.set(generated.name, generated.avatarUrl);
+                  avatarByName.set(generated.name.trim().toLowerCase(), generated.avatarUrl);
                 }
               }
               for (const enemy of combatants.enemies) {
-                const url = avatarByName.get(enemy.name);
+                const key = enemy.name?.trim().toLowerCase();
+                const url = key ? avatarByName.get(key) : undefined;
                 if (url) enemy.sprite = url;
               }
             } catch (err) {
