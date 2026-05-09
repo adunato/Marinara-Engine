@@ -2,6 +2,7 @@
 // Importer: SillyTavern Character (JSON / V2 Card / CharX)
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
+import { logger } from "../../lib/logger.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { importSTLorebook } from "./st-lorebook.importer.js";
 import type { CharacterData } from "@marinara-engine/shared";
@@ -164,7 +165,8 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB, op
           skipVersionSnapshot: true,
         });
       }
-    } catch {
+    } catch (err) {
+      logger.warn(err, "Lorebook extraction failed for character import");
       // Non-fatal — character was imported, just lorebook extraction failed
     }
   }
