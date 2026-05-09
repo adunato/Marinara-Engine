@@ -155,68 +155,76 @@ export function GameInventory({
 
         {/* Item list */}
         <div className="flex-1 overflow-y-auto p-3">
-          {pageCount > 1 && (
-            <div className="mb-2 flex items-center justify-between gap-2 text-[0.625rem] text-white/45">
-              <button
-                onClick={() => setPageIndex((page) => Math.max(0, page - 1))}
-                disabled={pageIndex === 0}
-                className="flex h-6 w-6 items-center justify-center rounded border border-white/8 bg-white/[0.03] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
-                title="Previous inventory page"
-              >
-                <ChevronLeft size={12} />
-              </button>
-              <span className="tabular-nums">
-                Page {pageIndex + 1} / {pageCount}
-              </span>
-              <button
-                onClick={() => setPageIndex((page) => Math.min(pageCount - 1, page + 1))}
-                disabled={pageIndex >= pageCount - 1}
-                className="flex h-6 w-6 items-center justify-center rounded border border-white/8 bg-white/[0.03] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
-                title="Next inventory page"
-              >
-                <ChevronRight size={12} />
-              </button>
-            </div>
-          )}
-          <div className="grid grid-cols-5 gap-1.5">
-            {slots.map((item, i) => (
-              <button
-                key={`slot-${pageStart + i}`}
-                onClick={() => item && handleItemClick(item)}
-                disabled={!item}
-                title={item ? (item.quantity > 1 ? `${item.name} ×${item.quantity}` : item.name) : undefined}
-                aria-label={item ? (item.quantity > 1 ? `${item.name} x${item.quantity}` : item.name) : undefined}
-                className={cn(
-                  "group relative flex aspect-square flex-col items-center justify-center rounded border transition-all",
-                  item
-                    ? selectedItem === item.name
-                      ? "border-amber-500/50 bg-amber-500/10 shadow-[inset_0_0_12px_rgba(245,158,11,0.08)]"
-                      : "border-white/8 bg-white/[0.03] hover:border-white/15 hover:bg-white/[0.06]",
-                  )}
-                >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gradient-to-b from-white/8 to-white/[0.02] text-sm font-bold text-amber-400/80 ring-1 ring-white/8">
-                    {item.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-[0.75rem] font-medium leading-tight text-white/80">
-                        {item.name}
-                      </span>
-                      {item.quantity > 1 && (
-                        <span className="shrink-0 rounded bg-white/15 px-1.5 py-0.5 text-[0.55rem] font-semibold tabular-nums text-white/80">
-                          x{item.quantity}
-                        </span>
-                      )}
-                    </div>
-                    {item.description && (
-                      <p className="mt-0.5 line-clamp-2 text-[0.65rem] leading-snug text-white/45">
-                        {item.description}
-                      </p>
+          {items.length > 0 ? (
+            <>
+              {pageCount > 1 && (
+                <div className="mb-2 flex items-center justify-between gap-2 text-[0.625rem] text-white/45">
+                  <button
+                    onClick={() => setPageIndex((page) => Math.max(0, page - 1))}
+                    disabled={pageIndex === 0}
+                    className="flex h-6 w-6 items-center justify-center rounded border border-white/8 bg-white/[0.03] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
+                    title="Previous inventory page"
+                  >
+                    <ChevronLeft size={12} />
+                  </button>
+                  <span className="tabular-nums">
+                    Page {pageIndex + 1} / {pageCount}
+                  </span>
+                  <button
+                    onClick={() => setPageIndex((page) => Math.min(pageCount - 1, page + 1))}
+                    disabled={pageIndex >= pageCount - 1}
+                    className="flex h-6 w-6 items-center justify-center rounded border border-white/8 bg-white/[0.03] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
+                    title="Next inventory page"
+                  >
+                    <ChevronRight size={12} />
+                  </button>
+                </div>
+              )}
+              <div className="grid grid-cols-5 gap-1.5">
+                {slots.map((item, i) => (
+                  <button
+                    key={`slot-${pageStart + i}`}
+                    onClick={() => item && handleItemClick(item)}
+                    disabled={!item}
+                    title={item ? (item.quantity > 1 ? `${item.name} ×${item.quantity}` : item.name) : undefined}
+                    aria-label={item ? (item.quantity > 1 ? `${item.name} x${item.quantity}` : item.name) : undefined}
+                    className={cn(
+                      "group relative flex aspect-square flex-col items-center justify-center rounded border transition-all",
+                      item
+                        ? selectedItem === item.name
+                          ? "border-amber-500/50 bg-amber-500/10 shadow-[inset_0_0_12px_rgba(245,158,11,0.08)]"
+                          : "border-white/8 bg-white/[0.03] hover:border-white/15 hover:bg-white/[0.06]"
+                        : "cursor-default border-white/5 bg-white/[0.015]",
                     )}
-                  </div>
-                </button>
-              ))}
-            </div>
+                  >
+                    {item && (
+                      <>
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-gradient-to-b from-white/8 to-white/[0.02] text-sm font-bold text-amber-400/80 ring-1 ring-white/8">
+                          {item.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-[0.75rem] font-medium leading-tight text-white/80">
+                              {item.name}
+                            </span>
+                            {item.quantity > 1 && (
+                              <span className="shrink-0 rounded bg-white/15 px-1.5 py-0.5 text-[0.55rem] font-semibold tabular-nums text-white/80">
+                                x{item.quantity}
+                              </span>
+                            )}
+                          </div>
+                          {item.description && (
+                            <p className="mt-0.5 line-clamp-2 text-[0.65rem] leading-snug text-white/45">
+                              {item.description}
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
           ) : (
             <div className="flex min-h-40 flex-col items-center justify-center rounded border border-dashed border-white/10 bg-white/[0.02] px-4 text-center">
               <Package size={18} className="mb-2 text-white/25" />

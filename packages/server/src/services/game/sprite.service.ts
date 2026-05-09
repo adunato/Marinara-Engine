@@ -40,6 +40,51 @@ export interface FullBodySpriteReference {
   base64: string;
 }
 
+function getSpriteExpressionGroupKey(expression: string): string | null {
+  const underscoreIndex = expression.indexOf("_");
+  if (underscoreIndex <= 0) return null;
+  const key = expression.slice(0, underscoreIndex).trim();
+  return key || null;
+}
+
+/**
+ * Collapse variant filenames like joy_01 / joy_blush into the simple group key
+ * that the expression agent should see. The full concrete filenames stay in
+ * expressions so validation can randomly resolve the group at runtime.
+ */
+export function buildSpriteExpressionChoices(expressions: string[]): string[] {
+  const groupKeys = new Map<string, { key: string; count: number }>();
+
+  for (const expression of expressions) {
+    const groupKey = getSpriteExpressionGroupKey(expression);
+    if (!groupKey) continue;
+
+    const lookupKey = groupKey.toLowerCase();
+    const existing = groupKeys.get(lookupKey);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      groupKeys.set(lookupKey, { key: groupKey, count: 1 });
+    }
+  }
+
+  const choices: string[] = [];
+  const emitted = new Set<string>();
+
+  for (const expression of expressions) {
+    const groupKey = getSpriteExpressionGroupKey(expression);
+    const group = groupKey ? groupKeys.get(groupKey.toLowerCase()) : undefined;
+    const choice = group && group.count > 1 ? group.key : expression;
+    const choiceLookup = choice.toLowerCase();
+    if (emitted.has(choiceLookup)) continue;
+
+    choices.push(choice);
+    emitted.add(choiceLookup);
+  }
+
+  return choices;
+}
+
 /**
  * List available sprite expressions for a character by reading their sprites directory.
  * Returns expression names (without extension) split into portrait and full-body.
@@ -131,7 +176,11 @@ export function listPartySprites(characters: Array<{ id: string; name: string }>
   for (const char of characters) {
     const sprites = listCharacterSprites(char.id);
     if (sprites) {
-      result.push({ name: char.name, expressionChoices: buildSpriteExpressionChoices(sprites.expressions), ...sprites });
+      result.push({
+        name: char.name,
+        expressionChoices: buildSpriteExpressionChoices(sprites.expressions),
+        ...sprites,
+      });
     }
   }
   return result;
