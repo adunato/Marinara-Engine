@@ -852,10 +852,8 @@ export function LorebookEditor() {
         tokenBudget: formTokenBudget,
         recursiveScanning: formRecursive,
         maxRecursionDepth: formMaxRecursionDepth,
-        characterId: formCharacterIds[0] ?? null,
-        characterIds: formCharacterIds,
-        personaId: formPersonaIds[0] ?? null,
-        personaIds: formPersonaIds,
+        characterIds: formIsGlobal ? [] : formCharacterIds,
+        personaIds: formIsGlobal ? [] : formPersonaIds,
         tags: formTags,
       });
       setLorebookDirty(false);
