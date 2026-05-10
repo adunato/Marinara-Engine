@@ -2738,7 +2738,13 @@ export function GameSurface({
     return npcsNeedingAvatars;
   }, [npcAvatarLookup, sceneAssetNpcs]);
 
+  const gameImageGenerationEnabled =
+    chatMeta.enableSpriteGeneration === true &&
+    typeof chatMeta.gameImageConnectionId === "string" &&
+    chatMeta.gameImageConnectionId.trim().length > 0;
+
   const missingSceneAssetGeneration = useMemo(() => {
+    if (!gameImageGenerationEnabled) return null;
     if (!activeChatId) return null;
 
     const unresolvedBackground = getMissingBackgroundTag(
@@ -2753,7 +2759,14 @@ export function GameSurface({
       backgroundTag: unresolvedBackground ?? undefined,
       npcsNeedingAvatars: npcsNeedingAvatars.length > 0 ? npcsNeedingAvatars : undefined,
     };
-  }, [activeChatId, assetManifest, chatMeta.gameSceneBackground, currentBackground, npcsNeedingAvatars]);
+  }, [
+    activeChatId,
+    assetManifest,
+    chatMeta.gameSceneBackground,
+    currentBackground,
+    gameImageGenerationEnabled,
+    npcsNeedingAvatars,
+  ]);
 
   const retryableAssetGeneration = pendingAssetGeneration ?? missingSceneAssetGeneration;
 
@@ -3995,7 +4008,7 @@ export function GameSurface({
       // met yet — by the time the party encounters them their avatar is ready, and the
       // /generate-assets schema already caps this at 10 per turn so cost stays bounded.
       const pendingIllustration = result.generatedIllustration ? null : result.illustration;
-      if (unresolvedBg || pendingIllustration || npcsNeedingAvatars.length > 0) {
+      if (gameImageGenerationEnabled && (unresolvedBg || pendingIllustration || npcsNeedingAvatars.length > 0)) {
         const assetPayload = {
           chatId: activeChatId,
           backgroundTag: unresolvedBg || undefined,
@@ -4067,6 +4080,13 @@ export function GameSurface({
   /** Retry failed image/NPC avatar generation. */
   const requestAssetGeneration = useCallback(
     async (assetPayload: GameAssetGenerationPayload, options?: GameAssetGenerationOptions) => {
+      if (!gameImageGenerationEnabled) {
+        setPendingAssetGeneration(null);
+        setAssetGenerationBlocksScene(false);
+        setAssetGenerationFailed(false);
+        return null;
+      }
+
       setPendingAssetGeneration(assetPayload);
       setAssetGenerationBlocksScene(options?.blocksScene === true);
       setAssetGenerationFailed(false);
@@ -4092,7 +4112,7 @@ export function GameSurface({
         return null;
       }
     },
-    [applyGeneratedAssets, runGameAssetGeneration],
+    [applyGeneratedAssets, gameImageGenerationEnabled, runGameAssetGeneration],
   );
 
   const retryAssetGeneration = useCallback(
