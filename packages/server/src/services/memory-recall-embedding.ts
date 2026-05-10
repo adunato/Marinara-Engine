@@ -43,8 +43,12 @@ export async function resolveMemoryRecallEmbeddingSource(
   },
 ): Promise<MemoryRecallEmbeddingSource | null> {
   const connections = createConnectionsStorage(db);
-  const activeConnection =
+  let activeConnection =
     options.activeConnection ?? (options.connectionId ? await connections.getWithKey(options.connectionId) : null);
+  if (!activeConnection && !options.connectionId) {
+    const defaultConnection = await connections.getDefault();
+    activeConnection = defaultConnection ? await connections.getWithKey(defaultConnection.id) : null;
+  }
   if (!activeConnection) return null;
 
   const chatMeta = parseMetadata(options.chatMetadata);
@@ -62,8 +66,12 @@ export async function resolveMemoryRecallEmbeddingSource(
     }
   }
 
-  embeddingBaseUrl = nonEmptyString(embeddingConnection.embeddingBaseUrl) ?? embeddingBaseUrl ?? resolveBaseUrl(embeddingConnection);
-  const embeddingModel = nonEmptyString(embeddingConnection.embeddingModel);
+  embeddingBaseUrl =
+    nonEmptyString(embeddingConnection.embeddingBaseUrl) ?? embeddingBaseUrl ?? resolveBaseUrl(embeddingConnection);
+  // Dedicated embedding connections may provide credentials/base URL while the
+  // active chat connection remains the source of the selected embedding model.
+  const embeddingModel =
+    nonEmptyString(embeddingConnection.embeddingModel) ?? nonEmptyString(activeConnection.embeddingModel);
 
   if (!embeddingModel || !embeddingBaseUrl) return null;
 
@@ -74,6 +82,7 @@ export async function resolveMemoryRecallEmbeddingSource(
     embeddingConnection.maxContext,
     embeddingConnection.openrouterProvider,
     embeddingConnection.maxTokensOverride,
+    embeddingConnection.claudeFastMode === "true",
   );
   const label = `${embeddingConnection.name || embeddingConnection.provider} (${embeddingModel})`;
 

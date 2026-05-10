@@ -161,7 +161,7 @@ test("memory recall uses configured embedding source when local embeddings are u
   }
 });
 
-test("memory recall embedding connection does not inherit the active connection embedding model", async () => {
+test("memory recall embedding connection inherits the active connection embedding model", async () => {
   const client = createClient({ url: "file::memory:" });
   const db = drizzle(client) as unknown as DB;
 
@@ -210,7 +210,7 @@ test("memory recall embedding connection does not inherit the active connection 
 
     const source = await resolveMemoryRecallEmbeddingSource(db, { connectionId: "active-connection" });
 
-    assert.equal(source, null);
+    assert.ok(source);
   } finally {
     client.close();
   }
