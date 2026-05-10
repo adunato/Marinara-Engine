@@ -1577,6 +1577,11 @@ function VariableCard({
         <span className="shrink-0 rounded bg-amber-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-amber-400">
           {opts.length} options
         </span>
+        {opts.length === 1 && !isMultiSelect && (
+          <span className="shrink-0 rounded bg-purple-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-purple-400">
+            boolean
+          </span>
+        )}
         {isMultiSelect && (
           <span className="shrink-0 rounded bg-purple-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-purple-400">
             {isRandomPick ? "random" : "multi"}
@@ -1624,7 +1629,19 @@ function VariableCard({
             <VariableQuestionInput value={question} onCommit={(v) => update({ question: v })} />
           </div>
 
-          {/* Multi-Select & Random Pick */}
+          {/* Multi-Select & Random Pick (not shown for single-option/boolean variables) */}
+          {opts.length === 1 && !isMultiSelect ? (
+            <div className="space-y-1.5 rounded-lg bg-[var(--secondary)] p-2.5 ring-1 ring-[var(--border)]">
+              <div className="flex items-center gap-1.5">
+                <Shuffle size="0.75rem" className="text-purple-400" />
+                <span className="text-[0.625rem] font-medium text-purple-400">Boolean Toggle</span>
+              </div>
+              <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                This variable has only one option, so it behaves as a Boolean toggle. Users can switch it on or off in the
+                Configure Preset Variables wizard.
+              </p>
+            </div>
+          ) : (
           <div className="space-y-2 rounded-lg bg-[var(--secondary)] p-2.5 ring-1 ring-[var(--border)]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
@@ -1700,55 +1717,73 @@ function VariableCard({
               </div>
             )}
           </div>
+          )}
 
           {/* Options */}
           <div className="space-y-1.5">
             <label className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Options</label>
-            {opts.map((opt, oi) => (
-              <div
-                key={opt.id}
-                className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 ring-1 ring-[var(--border)]"
-              >
-                <span className="shrink-0 text-[0.625rem] font-medium text-amber-400">{oi + 1}.</span>
-                <OptionFieldInput
-                  value={opt.label}
-                  onCommit={(v) => {
-                    const next = [...opts];
-                    next[oi] = { ...next[oi], label: v };
-                    updateOpts(next);
-                  }}
-                  className="flex-1 rounded bg-[var(--background)] px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400/50"
-                  placeholder="Label…"
-                />
-                <OptionFieldInput
-                  value={opt.value}
-                  onCommit={(v) => {
-                    const next = [...opts];
-                    next[oi] = { ...next[oi], value: v };
-                    updateOpts(next);
-                  }}
-                  className="flex-1 rounded bg-[var(--background)] px-1.5 py-0.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-amber-400/50"
-                  placeholder="Value…"
-                />
-                <button
-                  onClick={() => setExpandedOptIdx(oi)}
-                  className="shrink-0 rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                  title="Expand value editor"
+            {opts.map((opt, oi) => {
+              const valueBlank = !opt.value || !opt.value.trim();
+              return (
+              <div key={opt.id}>
+                <div
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg px-2.5 py-1.5 ring-1",
+                    valueBlank
+                      ? "bg-[var(--destructive)]/5 ring-[var(--destructive)]/30"
+                      : "bg-[var(--secondary)] ring-[var(--border)]",
+                  )}
                 >
-                  <Maximize2 size="0.625rem" />
-                </button>
-                <button
-                  onClick={() => {
-                    if (opts.length <= 2) return toast.error("A variable needs at least 2 options.");
-                    updateOpts(opts.filter((_, i) => i !== oi));
-                  }}
-                  className="shrink-0 rounded p-0.5 hover:bg-[var(--destructive)]/15"
-                  title="Remove option"
-                >
-                  <X size="0.625rem" className="text-[var(--destructive)]" />
-                </button>
+                  <span className="shrink-0 text-[0.625rem] font-medium text-amber-400">{oi + 1}.</span>
+                  <OptionFieldInput
+                    value={opt.label}
+                    onCommit={(v) => {
+                      const next = [...opts];
+                      next[oi] = { ...next[oi], label: v };
+                      updateOpts(next);
+                    }}
+                    className="flex-1 rounded bg-[var(--background)] px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+                    placeholder="Label…"
+                  />
+                  <OptionFieldInput
+                    value={opt.value}
+                    onCommit={(v) => {
+                      const next = [...opts];
+                      next[oi] = { ...next[oi], value: v };
+                      updateOpts(next);
+                    }}
+                    className={cn(
+                      "flex-1 rounded px-1.5 py-0.5 font-mono text-xs focus:outline-none focus:ring-1",
+                      valueBlank
+                        ? "bg-[var(--destructive)]/10 ring-1 ring-[var(--destructive)]/30 placeholder:text-[var(--destructive)]/40"
+                        : "bg-[var(--background)] focus:ring-amber-400/50",
+                    )}
+                    placeholder="Value…"
+                  />
+                  <button
+                    onClick={() => setExpandedOptIdx(oi)}
+                    className="shrink-0 rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    title="Expand value editor"
+                  >
+                    <Maximize2 size="0.625rem" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (opts.length <= 1) return toast.error("A variable needs at least 1 option.");
+                      updateOpts(opts.filter((_, i) => i !== oi));
+                    }}
+                    className="shrink-0 rounded p-0.5 hover:bg-[var(--destructive)]/15"
+                    title="Remove option"
+                  >
+                    <X size="0.625rem" className="text-[var(--destructive)]" />
+                  </button>
+                </div>
+                {valueBlank && (
+                  <p className="mt-1 pl-6 text-[0.5625rem] text-[var(--destructive)]">Value cannot be empty.</p>
+                )}
               </div>
-            ))}
+            );
+            })}
             <button
               onClick={() => {
                 const newOpt = {

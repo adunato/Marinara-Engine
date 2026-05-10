@@ -78,7 +78,7 @@ export const createChoiceBlockSchema = z.object({
   presetId: z.string(),
   variableName: z.string().min(1).max(100).regex(/^\w+$/, "Variable name must be alphanumeric/underscores only"),
   question: z.string().min(1).max(500),
-  options: z.array(choiceOptionSchema).min(2),
+  options: z.array(choiceOptionSchema).min(1),
   multiSelect: z.boolean().default(false),
   separator: z.string().max(20).default(", "),
   randomPick: z.boolean().default(false),
@@ -92,7 +92,7 @@ export const updateChoiceBlockSchema = z.object({
     .regex(/^\w+$/, "Variable name must be alphanumeric/underscores only")
     .optional(),
   question: z.string().min(1).max(500).optional(),
-  options: z.array(choiceOptionSchema).min(2).optional(),
+  options: z.array(choiceOptionSchema).min(1).optional(),
   multiSelect: z.boolean().optional(),
   separator: z.string().max(20).optional(),
   randomPick: z.boolean().optional(),
