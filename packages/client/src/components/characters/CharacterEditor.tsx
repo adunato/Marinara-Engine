@@ -75,7 +75,7 @@ import {
   History,
   RotateCcw,
 } from "lucide-react";
-import { cn, generateClientId, getAvatarCropStyle } from "../../lib/utils";
+import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
@@ -539,9 +539,7 @@ export function CharacterEditor() {
                 src={avatarPreview}
                 alt={formData.name}
                 className="h-full w-full object-cover"
-                style={getAvatarCropStyle(
-                  formData.extensions.avatarCrop as { zoom: number; offsetX: number; offsetY: number } | undefined,
-                )}
+                style={getAvatarCropStyle(formData.extensions.avatarCrop as AvatarCrop | undefined)}
               />
             ) : (
               <User size="1.375rem" className="text-white" />
@@ -1009,15 +1007,24 @@ function MetadataTab({
   removeTag: (tag: string) => void;
   avatarPreview: string | null;
 }) {
-  const crop = (formData.extensions.avatarCrop as { zoom: number; offsetX: number; offsetY: number } | undefined) ?? {
+  const crop: AvatarCrop = (formData.extensions.avatarCrop as AvatarCrop | undefined) ?? {
     zoom: 1,
     offsetX: 0,
     offsetY: 0,
   };
 
-  const setCrop = (next: { zoom: number; offsetX: number; offsetY: number }) => {
+  const setCrop = (next: AvatarCrop) => {
     updateExtension("avatarCrop", next);
   };
+
+  // In fullImage mode the source is rendered with object-contain so zoom can go below 1
+  // (letterboxed view of the whole image) and pan is meaningful at any zoom. In legacy
+  // cover mode pan only makes sense when zoomed in past 1, since at 1 the image already
+  // fills the circle by way of object-cover.
+  const isFullImage = !!crop.fullImage;
+  const minZoom = isFullImage ? 0.3 : 1;
+  const maxZoom = 3;
+  const canDrag = isFullImage || crop.zoom > 1;
 
   // Drag-to-reposition state
   const dragRef = useRef<{ startX: number; startY: number; startOX: number; startOY: number } | null>(null);
@@ -1026,7 +1033,7 @@ function MetadataTab({
   const [showFullImage, setShowFullImage] = useState(false);
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (crop.zoom <= 1) return;
+    if (!canDrag) return;
     e.preventDefault();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = { startX: e.clientX, startY: e.clientY, startOX: crop.offsetX, startOY: crop.offsetY };
@@ -1039,14 +1046,44 @@ function MetadataTab({
     const rect = previewRef.current.getBoundingClientRect();
     const dx = ((e.clientX - dragRef.current.startX) / rect.width) * 100;
     const dy = ((e.clientY - dragRef.current.startY) / rect.height) * 100;
-    const maxOffset = ((crop.zoom - 1) / crop.zoom) * 50;
-    const ox = Math.max(-maxOffset, Math.min(maxOffset, dragRef.current.startOX + dx / crop.zoom));
-    const oy = Math.max(-maxOffset, Math.min(maxOffset, dragRef.current.startOY + dy / crop.zoom));
+    // Cover mode: bound the pan so the image edge can't pull off-circle. At zoom z the
+    //   visible region is 1/z of the image and the slack on each side is (z-1)/z * 50%.
+    // Full-image mode: no hard bound — the user is intentionally choosing a slice of the
+    //   source image and may want to pan a corner into view; CSS clipping handles the rest.
+    const ox = isFullImage
+      ? dragRef.current.startOX + dx / crop.zoom
+      : (() => {
+          const maxOffset = ((crop.zoom - 1) / crop.zoom) * 50;
+          return Math.max(-maxOffset, Math.min(maxOffset, dragRef.current.startOX + dx / crop.zoom));
+        })();
+    const oy = isFullImage
+      ? dragRef.current.startOY + dy / crop.zoom
+      : (() => {
+          const maxOffset = ((crop.zoom - 1) / crop.zoom) * 50;
+          return Math.max(-maxOffset, Math.min(maxOffset, dragRef.current.startOY + dy / crop.zoom));
+        })();
     setCrop({ ...crop, offsetX: Math.round(ox * 100) / 100, offsetY: Math.round(oy * 100) / 100 });
   };
 
   const onPointerUp = () => {
     dragRef.current = null;
+  };
+
+  const toggleFullImage = () => {
+    if (isFullImage) {
+      // Leaving full-image mode: clamp zoom back into the legacy [1, 3] range and
+      // re-bound offsets to the cover-mode envelope so the saved value is consistent.
+      const z = Math.max(1, Math.min(maxZoom, crop.zoom));
+      const maxOffset = ((z - 1) / z) * 50;
+      setCrop({
+        zoom: z,
+        offsetX: Math.max(-maxOffset, Math.min(maxOffset, crop.offsetX)),
+        offsetY: Math.max(-maxOffset, Math.min(maxOffset, crop.offsetY)),
+        fullImage: false,
+      });
+    } else {
+      setCrop({ ...crop, fullImage: true });
+    }
   };
 
   return (
@@ -1063,24 +1100,30 @@ function MetadataTab({
             {/* Preview */}
             <div
               ref={previewRef}
-              className="relative h-28 w-28 shrink-0 cursor-grab overflow-hidden rounded-full bg-black/20 ring-2 ring-[var(--border)] active:cursor-grabbing touch-none"
+              className={cn(
+                "relative h-28 w-28 shrink-0 overflow-hidden rounded-full bg-black/20 ring-2 ring-[var(--border)] touch-none",
+                canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+              )}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
               onClick={() => {
-                if (crop.zoom <= 1 || !didDragRef.current) setShowFullImage(true);
+                if (!canDrag || !didDragRef.current) setShowFullImage(true);
               }}
               title="Click to view full image"
             >
               <img
                 src={avatarPreview}
                 alt={formData.name}
-                className="h-full w-full object-cover"
+                className="h-full w-full"
                 draggable={false}
                 style={{
+                  objectFit: isFullImage ? "contain" : "cover",
                   transform:
-                    crop.zoom > 1 ? `scale(${crop.zoom}) translate(${crop.offsetX}%, ${crop.offsetY}%)` : undefined,
+                    crop.zoom !== 1 || isFullImage
+                      ? `scale(${crop.zoom}) translate(${crop.offsetX}%, ${crop.offsetY}%)`
+                      : undefined,
                 }}
               />
             </div>
@@ -1090,26 +1133,40 @@ function MetadataTab({
                 <span className="text-[0.625rem] text-[var(--muted-foreground)]">Zoom: {crop.zoom.toFixed(2)}x</span>
                 <input
                   type="range"
-                  min={1}
-                  max={3}
+                  min={minZoom}
+                  max={maxZoom}
                   step={0.05}
                   value={crop.zoom}
                   onChange={(e) => {
                     const z = parseFloat(e.target.value);
-                    const maxOffset = ((z - 1) / z) * 50;
-                    setCrop({
-                      zoom: z,
-                      offsetX: Math.max(-maxOffset, Math.min(maxOffset, crop.offsetX)),
-                      offsetY: Math.max(-maxOffset, Math.min(maxOffset, crop.offsetY)),
-                    });
+                    if (isFullImage) {
+                      setCrop({ ...crop, zoom: z });
+                    } else {
+                      const maxOffset = ((z - 1) / z) * 50;
+                      setCrop({
+                        ...crop,
+                        zoom: z,
+                        offsetX: Math.max(-maxOffset, Math.min(maxOffset, crop.offsetX)),
+                        offsetY: Math.max(-maxOffset, Math.min(maxOffset, crop.offsetY)),
+                      });
+                    }
                   }}
                   className="w-full accent-[var(--primary)]"
                 />
               </label>
+              <label className="flex cursor-pointer items-center gap-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                <input
+                  type="checkbox"
+                  checked={isFullImage}
+                  onChange={toggleFullImage}
+                  className="h-3 w-3 cursor-pointer accent-[var(--primary)]"
+                />
+                <span>Use full image (zoom out below 1x and pan freely)</span>
+              </label>
               <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                {crop.zoom > 1 ? "Drag the preview to reposition" : "Click preview to view full image"}
+                {canDrag ? "Drag the preview to reposition" : "Click preview to view full image"}
               </p>
-              {crop.zoom > 1 && (
+              {(crop.zoom !== 1 || crop.offsetX !== 0 || crop.offsetY !== 0 || isFullImage) && (
                 <button
                   type="button"
                   onClick={() => setCrop({ zoom: 1, offsetX: 0, offsetY: 0 })}

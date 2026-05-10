@@ -15,6 +15,8 @@ export interface Persona {
   appearance: string;
   /** Avatar image path */
   avatarPath: string | null;
+  /** Avatar zoom + position settings for the circle avatar (mirrors character `extensions.avatarCrop`). */
+  avatarCrop?: PersonaAvatarCrop | null;
   /** Whether this is the currently active persona */
   isActive: boolean;
   /** Name display color/gradient (CSS value) */
@@ -33,6 +35,16 @@ export interface Persona {
   savedStatusOptions?: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** Avatar zoom + pan settings for a persona's circle avatar. Same shape as the
+ *  client `AvatarCrop` used for characters (declared in `client/src/lib/utils.ts`)
+ *  but duplicated here so the shared package doesn't depend on client code. */
+export interface PersonaAvatarCrop {
+  zoom: number;
+  offsetX: number;
+  offsetY: number;
+  fullImage?: boolean;
 }
 
 /** A toggleable alternative/extended description block for a persona. */

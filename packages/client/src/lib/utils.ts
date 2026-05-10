@@ -41,17 +41,37 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-/** Avatar crop data stored in character extensions. */
+/** Avatar crop data stored in character extensions / on personas. */
 export interface AvatarCrop {
   zoom: number;
   offsetX: number;
   offsetY: number;
+  /** Opt-in: render with `object-fit: contain` so the full source image is reachable
+   *  via zoom/pan (zoom can go below 1, pan works at any zoom). When omitted the
+   *  legacy `object-fit: cover` behavior is preserved so already-shipped avatars
+   *  don't shift visually in any render site. */
+  fullImage?: boolean;
 }
 
 /** Returns inline styles for a cropped/zoomed avatar image.
- *  The parent container must have `overflow: hidden`. */
+ *  The parent container must have `overflow: hidden`.
+ *
+ *  Two render modes:
+ *  - Legacy "cover": no `objectFit` returned (CSS class `object-cover` applies).
+ *    The transform is only emitted at zoom > 1 — at zoom 1 the helper returns `{}`
+ *    so there's literally no inline style change vs. before this field existed.
+ *  - "fullImage": switches to `object-fit: contain` and always emits the transform,
+ *    so zoom < 1 letterboxes the full image inside the container and pan works at
+ *    any zoom level. */
 export function getAvatarCropStyle(crop?: AvatarCrop | null): CSSProperties {
-  if (!crop || crop.zoom <= 1) return {};
+  if (!crop) return {};
+  if (crop.fullImage) {
+    return {
+      objectFit: "contain",
+      transform: `scale(${crop.zoom}) translate(${crop.offsetX}%, ${crop.offsetY}%)`,
+    };
+  }
+  if (crop.zoom <= 1) return {};
   return {
     transform: `scale(${crop.zoom}) translate(${crop.offsetX}%, ${crop.offsetY}%)`,
   };
