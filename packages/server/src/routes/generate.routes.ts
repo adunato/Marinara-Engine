@@ -6087,6 +6087,14 @@ export async function generateRoutes(app: FastifyInstance) {
             logger.debug("[spotify] Omitted unavailable Spotify tools from main generation");
           }
         }
+        const agentMemoryToolNames = new Set([
+          "save_agent_memory",
+          "search_agent_memory",
+          "list_agent_memory",
+          "delete_agent_memory",
+        ]);
+        const mainGenerationToolDefs = toolDefs?.filter((td) => !agentMemoryToolNames.has(td.function.name));
+        const mainResolvedToolNames = new Set((mainGenerationToolDefs ?? []).map((td) => td.function.name));
         const searchLorebookForTools = async (query: string, category?: string | null) => {
           const entries = await lorebooksStore.listActiveEntries({
             chatId: input.chatId,
@@ -6130,6 +6138,9 @@ export async function generateRoutes(app: FastifyInstance) {
         };
         const baseToolExecutionContext = {
           gameState: gameState ? (gameState as unknown as Record<string, unknown>) : undefined,
+          chatId: input.chatId,
+          activeCharacters: charInfo.map((character) => ({ id: character.id, name: character.name })),
+          agentMemory: agentsStore,
           customTools: customToolDefs,
           spotify: spotifyCreds,
           spotifyRepeatAfterPlay: gameSpotifyMusicEnabled ? ("track" as const) : undefined,
@@ -6190,6 +6201,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
               const results = await executeToolCalls([call], {
                 ...baseToolExecutionContext,
+                agentConfigId: agent.id,
               });
               const result = results[0]?.result ?? "Tool execution failed";
               if (agent.type === "spotify" && call.function.name === "spotify_play") {
@@ -7286,7 +7298,7 @@ export async function generateRoutes(app: FastifyInstance) {
           const fitPromptForSend = (candidateMessages: ChatMessage[]): ChatMessage[] => {
             const fit = fitMessagesToContext(
               candidateMessages,
-              { maxContext: effectiveMaxContext, maxTokens, tools: toolDefs },
+              { maxContext: effectiveMaxContext, maxTokens, tools: mainGenerationToolDefs },
               connectionMaxContext,
             );
             finalPromptSent = fit.messages;
@@ -7443,7 +7455,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     topK: providerTopK,
                     frequencyPenalty: frequencyPenalty || undefined,
                     presencePenalty: presencePenalty || undefined,
-                    tools: toolDefs,
+                    tools: mainGenerationToolDefs,
                     enableCaching: conn.enableCaching === "true",
                     cachingAtDepth: conn.cachingAtDepth ?? 5,
                     enableThinking,
@@ -7512,16 +7524,16 @@ export async function generateRoutes(app: FastifyInstance) {
                 });
 
                 const permittedToolCalls = result.toolCalls.filter((call) =>
-                  chatResolvedToolNames.has(call.function.name),
+                  mainResolvedToolNames.has(call.function.name),
                 );
                 const deniedToolResults = result.toolCalls
-                  .filter((call) => !chatResolvedToolNames.has(call.function.name))
+                  .filter((call) => !mainResolvedToolNames.has(call.function.name))
                   .map((call) => ({
                     toolCallId: call.id,
                     name: call.function.name,
                     result: JSON.stringify({
                       error: `Tool not allowed in this context: ${call.function.name}`,
-                      allowed: Array.from(chatResolvedToolNames),
+                      allowed: Array.from(mainResolvedToolNames),
                     }),
                     success: false,
                   }));
