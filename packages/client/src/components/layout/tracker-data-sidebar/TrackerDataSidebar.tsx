@@ -65,7 +65,7 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
     activeChatId && s.current?.chatId === activeChatId ? s.current : null,
   );
   const setGameState = useGameStateStore((s) => s.setGameState);
-  const { patchField, patchPlayerStats } = useGameStatePatcher(activeChatId, "tracker-data-sidebar");
+  const { patchField, patchPlayerStats, flushPatch } = useGameStatePatcher(activeChatId, "tracker-data-sidebar");
   const trackerPanelSide = useUIStore((s) => s.trackerPanelSide);
   const trackerPanelCollapsedSections = useUIStore((s) => s.trackerPanelCollapsedSections);
   const trackerPanelSectionOrder = useUIStore((s) => s.trackerPanelSectionOrder);
@@ -291,14 +291,20 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
         const character = currentCharacters[index];
         const dataUrl = typeof reader.result === "string" ? reader.result : "";
         if (!character || !dataUrl) return;
+        const targetCharacterId = character.characterId;
 
         try {
           const response = await api.post<{ avatarPath: string }>(`/avatars/npc/${activeChatId}`, {
             name: character.name,
             avatar: dataUrl,
           });
-          const nextCharacters = [...currentCharacters];
-          nextCharacters[index] = { ...character, avatarPath: response.avatarPath };
+          const latestState = useGameStateStore.getState().current;
+          const latestCharacters = latestState?.chatId === activeChatId ? (latestState.presentCharacters ?? []) : [];
+          const targetIndex = latestCharacters.findIndex((candidate) => candidate.characterId === targetCharacterId);
+          if (targetIndex < 0) return;
+
+          const nextCharacters = [...latestCharacters];
+          nextCharacters[targetIndex] = { ...latestCharacters[targetIndex]!, avatarPath: response.avatarPath };
           patchField("presentCharacters", nextCharacters);
         } catch {
           // Match the original HUD widget behavior: failed avatar uploads leave tracker data unchanged.
@@ -387,9 +393,14 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
       ) {
         return;
       }
+      try {
+        await flushPatch();
+      } catch {
+        return;
+      }
       await retryAgents(activeChatId, [agentType]);
     },
-    [activeChatId, enabledAgentTypes, retryAgents, trackerRetryBusy],
+    [activeChatId, enabledAgentTypes, flushPatch, retryAgents, trackerRetryBusy],
   );
   const renderRerunAction = (section: TrackerPanelSection) => {
     const agentType = TRACKER_SECTION_AGENT_TYPES[section];
@@ -561,9 +572,9 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
         onClose={() => setTrackerPanelOpen(false)}
       />
 
-      {orderedTrackerSections.map((section) => renderTrackerSection(section))}
-
       <div className={cn("relative z-10", fillHeight && "min-h-0 flex-1 overflow-y-auto")}>
+        {orderedTrackerSections.map((section) => renderTrackerSection(section))}
+
         {!activeChatId ? (
           <EmptySection>Select a chat to view tracker data.</EmptySection>
         ) : loadingGameState ? (

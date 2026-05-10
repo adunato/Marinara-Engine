@@ -669,7 +669,7 @@ export function getLatestSpriteExpressionsFromMessages(messages: Array<{ role?: 
     if (message?.role !== "assistant") continue;
     const extra = parseMetadataRecord(message.extra);
     const expressions = normalizeSpriteExpressionMap(extra.spriteExpressions);
-    return Object.keys(expressions).length > 0 ? expressions : null;
+    if (Object.keys(expressions).length > 0) return expressions;
   }
   return null;
 }
@@ -723,5 +723,4 @@ export function resolveSpriteUrl(sprites: SpriteInfo[] | undefined, expression: 
   });
   return neutral?.url ?? spriteList[0]?.url ?? null;
 }
-
 

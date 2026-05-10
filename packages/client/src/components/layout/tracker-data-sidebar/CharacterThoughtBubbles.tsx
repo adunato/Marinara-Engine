@@ -162,7 +162,7 @@ export function ExternalThoughtBubble({
       if (!anchor) return;
       const rect = anchor.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
-        setPosition(null);
+        setPosition((current) => (current === null ? current : null));
         return;
       }
 
@@ -189,7 +189,14 @@ export function ExternalThoughtBubble({
       const maxTop = Math.max(viewportMargin, viewportHeight - 88);
       const left = Math.round(Math.max(viewportMargin, Math.min(maxLeft, desiredLeft)));
       const top = Math.round(Math.max(viewportMargin, Math.min(maxTop, desiredTop)));
-      setPosition({ left, top, width, outsideSide });
+      setPosition((current) =>
+        current?.left === left &&
+        current.top === top &&
+        current.width === width &&
+        current.outsideSide === outsideSide
+          ? current
+          : { left, top, width, outsideSide },
+      );
     };
 
     updatePosition();
@@ -217,5 +224,4 @@ export function ExternalThoughtBubble({
     document.body,
   );
 }
-
 

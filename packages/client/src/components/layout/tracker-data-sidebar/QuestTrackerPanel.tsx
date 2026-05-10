@@ -174,6 +174,7 @@ function QuestRow({
               quest.completed && "text-emerald-300",
             )}
             title={quest.completed ? "Mark incomplete" : "Mark complete"}
+            aria-label={quest.completed ? "Mark quest incomplete" : "Mark quest complete"}
           >
             {quest.completed ? <CheckCircle2 size="0.75rem" /> : <Target size="0.75rem" />}
           </button>
@@ -255,6 +256,7 @@ function QuestRow({
                     objective.completed && "text-emerald-300",
                   )}
                   title={objective.completed ? "Mark incomplete" : "Mark complete"}
+                  aria-label={objective.completed ? "Mark objective incomplete" : "Mark objective complete"}
                 >
                   {objective.completed ? <CheckCircle2 size="0.6875rem" /> : <Circle size="0.6875rem" />}
                 </button>
@@ -314,5 +316,4 @@ function QuestRow({
     </article>
   );
 }
-
 

@@ -25,8 +25,10 @@ function buildFlushPatch() {
   if (flushPatchCallbacks.size === 0) return null;
   return async () => {
     const callbacks = Array.from(flushPatchCallbacks.values());
-    for (const callback of callbacks) {
-      await callback();
+    const results = await Promise.allSettled(callbacks.map((callback) => callback()));
+    const failures = results.filter((result) => result.status === "rejected");
+    if (failures.length > 0) {
+      throw new Error(`Failed to flush ${failures.length} game-state patch callback${failures.length === 1 ? "" : "s"}.`);
     }
   };
 }

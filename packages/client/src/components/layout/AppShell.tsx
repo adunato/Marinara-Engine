@@ -73,6 +73,7 @@ function clampWidth(width: number, min: number, max: number) {
 
 const PANEL_RESIZE_STEP = 16;
 const PANEL_RESIZE_LARGE_STEP = 48;
+const RESIZER_HITBOX = 10;
 const TRACKER_PANEL_EDGE_OFFSET = 8;
 const TRACKER_PANEL_HUD_GAP = 6;
 const TRACKER_PANEL_DESKTOP_MOTION_MS = 260;
@@ -416,7 +417,7 @@ export function AppShell() {
   const adjustTrackerPanelWidth = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       const step = event.shiftKey ? PANEL_RESIZE_LARGE_STEP : PANEL_RESIZE_STEP;
-      let nextWidth = trackerPanelWidth;
+      let nextWidth: number;
 
       if (event.key === "ArrowLeft") nextWidth = trackerPanelWidth + (trackerPanelSide === "right" ? step : -step);
       else if (event.key === "ArrowRight")
@@ -685,8 +686,8 @@ export function AppShell() {
             Math.min(56, (trackerPanelToggleAnchorY ?? trackerPanelTop) - trackerPanelTop),
           )}px`,
           ...(side === "left"
-            ? { left: sidebarOpen ? liveSidebarWidth : 0 }
-            : { right: rightPanelOpen ? liveRightPanelWidth : 0 }),
+            ? { left: sidebarOpen ? liveSidebarWidth + RESIZER_HITBOX : 0 }
+            : { right: rightPanelOpen ? liveRightPanelWidth + RESIZER_HITBOX : 0 }),
         }}
       >
         <div

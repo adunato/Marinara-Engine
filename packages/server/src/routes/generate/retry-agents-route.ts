@@ -1266,11 +1266,18 @@ async function applyRetryResultEffects(args: {
         const ctData = result.data as Record<string, unknown>;
         const presentCharacters = (ctData.presentCharacters as any[]) ?? [];
         const previousSnapshot = await gameStateStore.getByMessage(retryMessageId, retrySwipeIndex);
-        const previousCharacters: any[] = previousSnapshot?.presentCharacters
-          ? typeof previousSnapshot.presentCharacters === "string"
-            ? JSON.parse(previousSnapshot.presentCharacters)
-            : previousSnapshot.presentCharacters
-          : [];
+        let previousCharacters: any[] = [];
+        if (previousSnapshot?.presentCharacters) {
+          try {
+            const parsed =
+              typeof previousSnapshot.presentCharacters === "string"
+                ? JSON.parse(previousSnapshot.presentCharacters)
+                : previousSnapshot.presentCharacters;
+            previousCharacters = Array.isArray(parsed) ? parsed : [];
+          } catch {
+            previousCharacters = [];
+          }
+        }
         preserveTrackerCharacterUiFields(presentCharacters, previousCharacters);
         await gameStateStore.updateByMessage(retryMessageId, retrySwipeIndex, chatId, {
           presentCharacters,

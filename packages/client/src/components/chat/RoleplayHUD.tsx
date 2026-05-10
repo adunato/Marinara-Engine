@@ -214,6 +214,11 @@ export function RoleplayHUD({
   const inventory = playerStats?.inventory ?? [];
   const activeQuests = playerStats?.activeQuests ?? [];
   const customTrackerFields = playerStats?.customTrackerFields ?? [];
+  const hasPlayerTrackerSections =
+    enabledAgentTypes.has("persona-stats") ||
+    enabledAgentTypes.has("character-tracker") ||
+    enabledAgentTypes.has("quest") ||
+    enabledAgentTypes.has("custom-tracker");
 
   const isVertical = layout === "left" || layout === "right";
   // If mobileCompact, widgets are even narrower and action buttons are not cut off
@@ -271,10 +276,7 @@ export function RoleplayHUD({
             />
           )}
 
-          {(enabledAgentTypes.has("persona-stats") ||
-            enabledAgentTypes.has("character-tracker") ||
-            enabledAgentTypes.has("quest") ||
-            enabledAgentTypes.has("custom-tracker")) && (
+          {hasPlayerTrackerSections && (
             <CombinedPlayerWidget
               layout={layout}
               showPersona={enabledAgentTypes.has("persona-stats")}
@@ -362,7 +364,7 @@ export function RoleplayHUD({
             />
           )}
 
-          {enabledAgentTypes.has("persona-stats") && (
+          {hasPlayerTrackerSections && (
             <InventoryWidget
               items={inventory}
               onUpdate={(items) => patchPlayerStats("inventory", items)}

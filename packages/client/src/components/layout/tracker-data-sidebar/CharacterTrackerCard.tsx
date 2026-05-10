@@ -159,8 +159,12 @@ export function CharacterTrackerCard({
   const updateCustomField = (oldName: string, nextName: string, nextValue: string) => {
     if (!onUpdate) return;
     const nextFields = { ...(character.customFields ?? {}) };
+    const trimmedName = nextName.trim();
+    if (trimmedName && trimmedName !== oldName && Object.prototype.hasOwnProperty.call(nextFields, trimmedName)) {
+      return;
+    }
     delete nextFields[oldName];
-    if (nextName.trim()) nextFields[nextName.trim()] = nextValue;
+    if (trimmedName) nextFields[trimmedName] = nextValue;
     onUpdate({ ...character, customFields: nextFields });
   };
   const addCharacterStat = () => {

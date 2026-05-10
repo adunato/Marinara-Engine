@@ -303,11 +303,21 @@ export function preserveTrackerCharacterUiFields(
   for (const character of nextCharacters) {
     const key = trackerCharacterKey(character);
     const previous = key ? previousByKey.get(key) : null;
-    if (typeof character.portraitFocusX !== "number" && typeof previous?.portraitFocusX === "number") {
-      character.portraitFocusX = previous.portraitFocusX;
+    const previousPortraitFocusX = previous?.portraitFocusX;
+    const previousPortraitFocusY = previous?.portraitFocusY;
+    if (
+      typeof character.portraitFocusX !== "number" &&
+      typeof previousPortraitFocusX === "number" &&
+      Number.isFinite(previousPortraitFocusX)
+    ) {
+      character.portraitFocusX = previousPortraitFocusX;
     }
-    if (typeof character.portraitFocusY !== "number" && typeof previous?.portraitFocusY === "number") {
-      character.portraitFocusY = previous.portraitFocusY;
+    if (
+      typeof character.portraitFocusY !== "number" &&
+      typeof previousPortraitFocusY === "number" &&
+      Number.isFinite(previousPortraitFocusY)
+    ) {
+      character.portraitFocusY = previousPortraitFocusY;
     }
   }
 }

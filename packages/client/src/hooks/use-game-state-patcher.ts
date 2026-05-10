@@ -77,13 +77,16 @@ function queuePatch(chatId: string, field: GameStatePatchField, value: unknown) 
   patchTimers.set(
     chatId,
     setTimeout(() => {
-      void flushGameStatePatch(chatId);
+      void flushGameStatePatch(chatId).catch((error) => {
+        console.warn("Failed to flush game-state patch", error);
+      });
     }, PATCH_DEBOUNCE_MS),
   );
 }
 
 export async function flushGameStatePatch(chatId?: string) {
   const chatIds = chatId ? [chatId] : Array.from(pendingPatches.keys());
+  const errors: unknown[] = [];
 
   for (const id of chatIds) {
     const timer = patchTimers.get(id);
@@ -92,10 +95,23 @@ export async function flushGameStatePatch(chatId?: string) {
 
     const queued = pendingPatches.get(id);
     if (!queued || Object.keys(queued).length === 0) continue;
+    const queuedSnapshot = { ...queued };
     pendingPatches.delete(id);
 
-    const payload = buildPayloadFromLatestState(id, queued);
-    await api.patch(`/chats/${id}/game-state`, { ...payload, manual: true }).catch(() => {});
+    const payload = buildPayloadFromLatestState(id, queuedSnapshot);
+    try {
+      await api.patch(`/chats/${id}/game-state`, { ...payload, manual: true });
+    } catch (error) {
+      pendingPatches.set(id, {
+        ...queuedSnapshot,
+        ...(pendingPatches.get(id) ?? {}),
+      });
+      errors.push(error);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Failed to flush ${errors.length} game-state patch${errors.length === 1 ? "" : "es"}.`);
   }
 }
 
@@ -119,12 +135,7 @@ function flushGameStatePatchOnUnload() {
 
     if (Object.keys(queued).length === 0) continue;
     const payload = buildPayloadFromLatestState(chatId, queued);
-    fetch(`/api/chats/${chatId}/game-state`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, manual: true }),
-      keepalive: true,
-    });
+    void api.patch(`/chats/${chatId}/game-state`, { ...payload, manual: true }, { keepalive: true }).catch(() => {});
   }
 }
 
@@ -185,7 +196,9 @@ export function useGameStatePatcher(chatId: string | null, registrationId?: stri
     const unregister = registerFlushPatch(registrationId, flushPatch);
     return () => {
       unregister();
-      void flushPatch();
+      void flushPatch().catch((error) => {
+        console.warn("Failed to flush game-state patch on cleanup", error);
+      });
     };
   }, [flushPatch, registerFlushPatch, registrationId]);
 
