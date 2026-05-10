@@ -16,6 +16,7 @@ import {
   Swords,
   Target,
   Thermometer,
+  Trash2,
   Users,
   X,
   RefreshCw,
@@ -466,6 +467,9 @@ export function PersonaStatsPanel({
     next[idx] = { ...next[idx]!, [field]: val };
     onUpdate(next);
   };
+  const removeBar = (idx: number) => {
+    onUpdate(bars.filter((_, index) => index !== idx));
+  };
 
   return (
     <>
@@ -491,6 +495,7 @@ export function PersonaStatsPanel({
             onUpdateName={(name) => updateBar(idx, "name", name)}
             onUpdateValue={(value) => updateBar(idx, "value", value)}
             onUpdateMax={(value) => updateBar(idx, "max", value)}
+            onRemove={() => removeBar(idx)}
           />
         ))}
       </div>
@@ -1181,16 +1186,18 @@ function StatBarEditable({
   onUpdateName,
   onUpdateValue,
   onUpdateMax,
+  onRemove,
 }: {
   stat: CharacterStat;
   onUpdateName?: (name: string) => void;
   onUpdateValue: (v: number) => void;
   onUpdateMax: (v: number) => void;
+  onRemove?: () => void;
 }) {
   const pct = stat.max > 0 ? Math.min(100, Math.max(0, (stat.value / stat.max) * 100)) : 0;
 
   return (
-    <div>
+    <div className="group/stat relative">
       <div className="flex items-center justify-between mb-0.5">
         {onUpdateName ? (
           <InlineEdit
@@ -1218,6 +1225,17 @@ function StatBarEditable({
           />
         </div>
       </div>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remove stat"
+          aria-label={`Remove ${stat.name || "stat"}`}
+          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded bg-[var(--popover)]/90 text-[var(--muted-foreground)]/45 opacity-0 shadow-sm ring-1 ring-[var(--border)]/70 transition-all hover:text-[var(--destructive)] hover:opacity-100 focus-visible:opacity-100 group-hover/stat:opacity-80 max-md:opacity-80"
+        >
+          <Trash2 size="0.5625rem" />
+        </button>
+      )}
       <div className="h-1.5 rounded-full bg-[var(--muted)]/30 overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-500"

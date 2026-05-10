@@ -40,10 +40,11 @@ export interface AgentRunRow {
   createdAt: string;
 }
 
-export function useAgentConfigs() {
+export function useAgentConfigs(enabled = true) {
   return useQuery({
     queryKey: agentKeys.all,
     queryFn: () => api.get<AgentConfigRow[]>("/agents"),
+    enabled,
     staleTime: 5 * 60_000,
   });
 }

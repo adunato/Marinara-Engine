@@ -284,6 +284,44 @@ export function wrapFields(
   return parts;
 }
 
+function trackerCharacterKey(character: Record<string, unknown>) {
+  const id = typeof character.characterId === "string" ? character.characterId.trim().toLowerCase() : "";
+  const name = typeof character.name === "string" ? character.name.trim().toLowerCase() : "";
+  return id || name || null;
+}
+
+export function preserveTrackerCharacterUiFields(
+  nextCharacters: Array<Record<string, unknown>>,
+  previousCharacters: Array<Record<string, unknown>>,
+): void {
+  const previousByKey = new Map<string, Record<string, unknown>>();
+  for (const character of previousCharacters) {
+    const key = trackerCharacterKey(character);
+    if (key) previousByKey.set(key, character);
+  }
+
+  for (const character of nextCharacters) {
+    const key = trackerCharacterKey(character);
+    const previous = key ? previousByKey.get(key) : null;
+    const previousPortraitFocusX = previous?.portraitFocusX;
+    const previousPortraitFocusY = previous?.portraitFocusY;
+    if (
+      typeof character.portraitFocusX !== "number" &&
+      typeof previousPortraitFocusX === "number" &&
+      Number.isFinite(previousPortraitFocusX)
+    ) {
+      character.portraitFocusX = previousPortraitFocusX;
+    }
+    if (
+      typeof character.portraitFocusY !== "number" &&
+      typeof previousPortraitFocusY === "number" &&
+      Number.isFinite(previousPortraitFocusY)
+    ) {
+      character.portraitFocusY = previousPortraitFocusY;
+    }
+  }
+}
+
 /** Parse game state JSON fields from a DB row. */
 export function parseGameStateRow(row: Record<string, unknown>): GameState {
   return {

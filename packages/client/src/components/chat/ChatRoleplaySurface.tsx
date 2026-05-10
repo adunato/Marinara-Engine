@@ -90,6 +90,8 @@ const AuthorNotesPanel = lazy(async () => {
 
 const PANEL_BACKDROP =
   "fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]";
+const TRACKER_FOREGROUND_AVOIDANCE_CLASS =
+  "md:pl-[var(--tracker-chat-avoid-left)] md:pr-[var(--tracker-chat-avoid-right)] md:transition-[padding] md:duration-200 md:ease-[cubic-bezier(0.16,1,0.3,1)]";
 const PANEL_CONTAINER =
   "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in";
 
@@ -793,10 +795,15 @@ export function ChatRoleplaySurface({
           <div className="flex flex-1 flex-col overflow-hidden">
             <>
               <div
+                data-tracker-panel-anchor="roleplay-hud"
                 className={cn(
-                  "pointer-events-none relative z-40 items-center px-4 py-2 max-md:hidden",
+                  "pointer-events-none relative z-40 items-center py-2 max-md:hidden",
                   centerCompact ? "hidden" : "flex",
                 )}
+                style={{
+                  paddingLeft: "calc(1rem + var(--tracker-panel-hud-clear-left, 0px))",
+                  paddingRight: "calc(1rem + var(--tracker-panel-hud-clear-right, 0px))",
+                }}
               >
                 {chat && chatMeta.enableAgents && (
                   <div className="pointer-events-auto flex-1 overflow-x-auto">
@@ -872,13 +879,20 @@ export function ChatRoleplaySurface({
                 </div>
               </div>
               <div
+                data-tracker-panel-anchor={centerCompact ? "roleplay-hud" : undefined}
                 className={cn(
                   "pointer-events-auto relative z-40 w-full flex-col",
                   centerCompact ? "flex" : "flex md:hidden",
                 )}
               >
                 {chat && chatMeta.enableAgents && (
-                  <div className="flex w-full items-center justify-between px-2 pb-1 pt-2">
+                  <div
+                    className="flex w-full items-center justify-between pb-1 pt-2"
+                    style={{
+                      paddingLeft: "calc(0.5rem + var(--tracker-panel-hud-clear-left, 0px))",
+                      paddingRight: "calc(0.5rem + var(--tracker-panel-hud-clear-right, 0px))",
+                    }}
+                  >
                     <Suspense fallback={null}>
                       <RoleplayHUD
                         chatId={chat.id}
@@ -999,7 +1013,7 @@ export function ChatRoleplaySurface({
               </Suspense>
             )}
 
-            <div className="relative z-10 flex-1 overflow-hidden">
+            <div className={cn("relative z-10 flex-1 overflow-hidden", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
               <div
                 ref={scrollRef}
                 data-chat-scroll
@@ -1121,7 +1135,7 @@ export function ChatRoleplaySurface({
               </div>
             </div>
 
-            <div className="relative z-20">
+            <div className={cn("relative z-20", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
               <div className={cn("relative", centerCompact ? "px-3" : "px-3 md:px-[12%]")}>
                 {chatMeta.sceneStatus === "active" && (
                   <EndSceneBar

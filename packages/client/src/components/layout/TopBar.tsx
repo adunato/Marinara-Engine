@@ -1,7 +1,18 @@
 // ──────────────────────────────────────────────
 // Layout: Top Bar (polished, with hover glow)
 // ──────────────────────────────────────────────
-import { PanelLeft, Home, Settings, Link, BookOpen, Users, Sparkles, FileText, UserCircle, Bot } from "lucide-react";
+import {
+  PanelLeft,
+  Home,
+  Settings,
+  Link,
+  BookOpen,
+  Users,
+  Sparkles,
+  FileText,
+  UserCircle,
+  Bot,
+} from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useAgentStore } from "../../stores/agent.store";

@@ -29,7 +29,13 @@ import { createGameStateStorage } from "../../services/storage/game-state.storag
 import { createLorebooksStorage } from "../../services/storage/lorebooks.storage.js";
 import { syncGameMapMetaPartyPosition } from "../../services/game/map-position.service.js";
 import { gameStateSnapshots as gameStateSnapshotsTable } from "../../db/schema/index.js";
-import { isMessageHiddenFromAI, parseExtra, parseGameStateRow, resolveBaseUrl } from "./generate-route-utils.js";
+import {
+  isMessageHiddenFromAI,
+  parseExtra,
+  parseGameStateRow,
+  preserveTrackerCharacterUiFields,
+  resolveBaseUrl,
+} from "./generate-route-utils.js";
 import {
   buildHistoricalLorebookKeeperContext,
   getLorebookKeeperBackfillTargets,
@@ -1259,6 +1265,20 @@ async function applyRetryResultEffects(args: {
       try {
         const ctData = result.data as Record<string, unknown>;
         const presentCharacters = (ctData.presentCharacters as any[]) ?? [];
+        const previousSnapshot = await gameStateStore.getByMessage(retryMessageId, retrySwipeIndex);
+        let previousCharacters: any[] = [];
+        if (previousSnapshot?.presentCharacters) {
+          try {
+            const parsed =
+              typeof previousSnapshot.presentCharacters === "string"
+                ? JSON.parse(previousSnapshot.presentCharacters)
+                : previousSnapshot.presentCharacters;
+            previousCharacters = Array.isArray(parsed) ? parsed : [];
+          } catch {
+            previousCharacters = [];
+          }
+        }
+        preserveTrackerCharacterUiFields(presentCharacters, previousCharacters);
         await gameStateStore.updateByMessage(retryMessageId, retrySwipeIndex, chatId, {
           presentCharacters,
         });

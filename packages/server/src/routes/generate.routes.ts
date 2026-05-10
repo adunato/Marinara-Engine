@@ -128,6 +128,7 @@ import {
   parseExtra,
   parseStoredGenerationParameters,
   parseGameStateRow,
+  preserveTrackerCharacterUiFields,
   resolveBaseUrl,
   shouldEnableAgentsForGeneration,
   wrapFields,
@@ -6813,6 +6814,13 @@ export async function generateRoutes(app: FastifyInstance) {
             try {
               const ctData = result.data as Record<string, unknown>;
               const chars = (ctData.presentCharacters as any[]) ?? [];
+              const snapBeforeUpdate = await gameStateStore.getByMessage(messageId, targetSwipeIndex);
+              const oldChars: any[] = snapBeforeUpdate?.presentCharacters
+                ? typeof snapBeforeUpdate.presentCharacters === "string"
+                  ? JSON.parse(snapBeforeUpdate.presentCharacters)
+                  : snapBeforeUpdate.presentCharacters
+                : [];
+              preserveTrackerCharacterUiFields(chars, oldChars);
 
               // ── Enrich with avatar paths ──
               // 1. Match against known character records in this chat
@@ -6933,14 +6941,6 @@ export async function generateRoutes(app: FastifyInstance) {
                   })();
                 }
               }
-
-              // Read old characters before updating so we can detect newly-appearing NPCs
-              const snapBeforeUpdate = await gameStateStore.getByMessage(messageId, targetSwipeIndex);
-              const oldChars: any[] = snapBeforeUpdate?.presentCharacters
-                ? typeof snapBeforeUpdate.presentCharacters === "string"
-                  ? JSON.parse(snapBeforeUpdate.presentCharacters)
-                  : snapBeforeUpdate.presentCharacters
-                : [];
 
               const updated = await gameStateStore.updateByMessage(messageId, targetSwipeIndex, input.chatId, {
                 presentCharacters: chars,

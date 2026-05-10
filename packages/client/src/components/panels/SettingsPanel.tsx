@@ -3,9 +3,11 @@
 // ──────────────────────────────────────────────
 import {
   APP_LANGUAGE_OPTIONS,
+  TRACKER_DATA_PANEL_SECTIONS,
   useUIStore,
   type GameDialogueDisplayMode,
   type RoleplayAvatarStyle,
+  type TrackerDataPanelSection,
   type VisualTheme,
 } from "../../stores/ui.store";
 import { cn } from "../../lib/utils";
@@ -25,6 +27,8 @@ import {
   useUpdateTheme,
 } from "../../hooks/use-themes";
 import {
+  ArrowDown,
+  ArrowUp,
   Upload,
   X,
   Image,
@@ -49,6 +53,7 @@ import {
   Download,
   FolderOpen,
   RefreshCw,
+  RotateCcw,
   ExternalLink,
   ScrollText,
 } from "lucide-react";
@@ -57,6 +62,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useGameAssetStore } from "../../stores/game-asset.store";
 import { chatKeys } from "../../hooks/use-chats";
 import { HelpTooltip } from "../ui/HelpTooltip";
+import { TrackerPanelIcon } from "../ui/TrackerPanelIcon";
 import { ConversationSoundSetting, ToggleSetting } from "./settings/SettingControls";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
@@ -155,6 +161,29 @@ const GAME_DIALOGUE_DISPLAY_OPTIONS: Array<{ id: GameDialogueDisplayMode; label:
   },
 ];
 
+const TRACKER_PANEL_CARD_OPTIONS: Record<TrackerDataPanelSection, { label: string; desc: string }> = {
+  world: {
+    label: "World State",
+    desc: "Date, time, location, weather, and temperature.",
+  },
+  persona: {
+    label: "Persona",
+    desc: "Persona status, stats, portrait, and inventory.",
+  },
+  characters: {
+    label: "Characters",
+    desc: "Present character cards, stats, portraits, and thoughts.",
+  },
+  quests: {
+    label: "Quests",
+    desc: "Active quest progress and objectives.",
+  },
+  custom: {
+    label: "Custom",
+    desc: "Extra tracker fields from custom tracker agents.",
+  },
+};
+
 const GAME_ASSET_CATEGORIES = [
   {
     id: "music",
@@ -232,6 +261,87 @@ function ImageDimensionRow({
           onCommit={(nextHeight) => onCommit(width, nextHeight)}
           className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
         />
+      </div>
+    </div>
+  );
+}
+
+function TrackerPanelCardOrderSetting() {
+  const trackerPanelSectionOrder = useUIStore((s) => s.trackerPanelSectionOrder);
+  const setTrackerPanelSectionOrder = useUIStore((s) => s.setTrackerPanelSectionOrder);
+  const orderedSections = [
+    ...trackerPanelSectionOrder.filter((section) => TRACKER_DATA_PANEL_SECTIONS.includes(section)),
+    ...TRACKER_DATA_PANEL_SECTIONS.filter((section) => !trackerPanelSectionOrder.includes(section)),
+  ];
+  const isDefaultOrder = orderedSections.every((section, index) => section === TRACKER_DATA_PANEL_SECTIONS[index]);
+
+  const moveCard = (section: TrackerDataPanelSection, direction: -1 | 1) => {
+    const index = orderedSections.indexOf(section);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= orderedSections.length) return;
+
+    const nextOrder = [...orderedSections];
+    [nextOrder[index], nextOrder[nextIndex]] = [nextOrder[nextIndex]!, nextOrder[index]!];
+    setTrackerPanelSectionOrder(nextOrder);
+  };
+
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5 rounded-lg bg-[var(--background)]/36 p-1.5 ring-1 ring-[var(--border)]">
+      <div className="flex min-h-5 items-center justify-between gap-2 px-0.5">
+        <span className="inline-flex min-w-0 items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
+          Card order
+          <HelpTooltip text="Controls the top-to-bottom order of tracker cards when their matching tracker agents are enabled for a chat." />
+        </span>
+        <button
+          type="button"
+          onClick={() => setTrackerPanelSectionOrder([...TRACKER_DATA_PANEL_SECTIONS])}
+          disabled={isDefaultOrder}
+          title="Reset tracker card order"
+          aria-label="Reset tracker card order"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--secondary)] hover:text-[var(--foreground)] active:scale-95 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
+        >
+          <RotateCcw size="0.6875rem" />
+        </button>
+      </div>
+      <div className="grid gap-0.5">
+        {orderedSections.map((section, index) => {
+          const option = TRACKER_PANEL_CARD_OPTIONS[section];
+          return (
+            <div
+              key={section}
+              className="grid min-h-7 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-sm bg-[var(--secondary)]/42 px-1.5 py-1 ring-1 ring-[var(--border)]/60"
+              title={option.desc}
+            >
+              <div className="min-w-0">
+                <div className="truncate text-[0.6875rem] font-medium leading-4 text-[var(--foreground)]">
+                  {option.label}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => moveCard(section, -1)}
+                  disabled={index === 0}
+                  title={`Move ${option.label} up`}
+                  aria-label={`Move ${option.label} up`}
+                  className="flex h-5 w-5 items-center justify-center rounded-sm text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--background)] hover:text-[var(--primary)] active:scale-95 disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
+                >
+                  <ArrowUp size="0.6875rem" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveCard(section, 1)}
+                  disabled={index === orderedSections.length - 1}
+                  title={`Move ${option.label} down`}
+                  aria-label={`Move ${option.label} down`}
+                  className="flex h-5 w-5 items-center justify-center rounded-sm text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--background)] hover:text-[var(--primary)] active:scale-95 disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
+                >
+                  <ArrowDown size="0.6875rem" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -816,6 +926,12 @@ function AppearanceSettings() {
   const setChatFontSize = useUIStore((s) => s.setChatFontSize);
   const weatherEffects = useUIStore((s) => s.weatherEffects);
   const setWeatherEffects = useUIStore((s) => s.setWeatherEffects);
+  const trackerPanelEnabled = useUIStore((s) => s.trackerPanelEnabled);
+  const setTrackerPanelEnabled = useUIStore((s) => s.setTrackerPanelEnabled);
+  const trackerPanelHideHudWidgets = useUIStore((s) => s.trackerPanelHideHudWidgets);
+  const setTrackerPanelHideHudWidgets = useUIStore((s) => s.setTrackerPanelHideHudWidgets);
+  const trackerPanelUseExpressionSprites = useUIStore((s) => s.trackerPanelUseExpressionSprites);
+  const setTrackerPanelUseExpressionSprites = useUIStore((s) => s.setTrackerPanelUseExpressionSprites);
 
   // Text appearance
   const chatFontColor = useUIStore((s) => s.chatFontColor);
@@ -1139,6 +1255,35 @@ function AppearanceSettings() {
           >
             Reset to default
           </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-1.5">
+          <TrackerPanelIcon size="0.875rem" strokeWidth={1.95} className="text-[var(--muted-foreground)]" />
+          <span className="text-xs font-medium">Tracker Panel</span>
+          <HelpTooltip text="Adds a compact side panel button to the Roleplay HUD for the fixed tracker board." />
+        </div>
+        <ToggleSetting
+          label="Show tracker panel button"
+          checked={trackerPanelEnabled}
+          onChange={setTrackerPanelEnabled}
+          help="When on, Roleplay HUD shows a side-panel button for the fixed Tracker panel."
+        />
+        <div className={cn("pl-5 transition-opacity", trackerPanelEnabled ? "" : "pointer-events-none opacity-45")}>
+          <ToggleSetting
+            label="Replace tracker HUD icons"
+            checked={trackerPanelHideHudWidgets}
+            onChange={setTrackerPanelHideHudWidgets}
+            help="Hides the old world/player tracker icon strip so the Tracker panel can dock to the edge. The Agents button stays visible."
+          />
+          <ToggleSetting
+            label="Use expression sprites for tracker portraits"
+            checked={trackerPanelUseExpressionSprites}
+            onChange={setTrackerPanelUseExpressionSprites}
+            help="When on, tracker portraits can switch to Expression Engine sprites if that agent is enabled for the chat and the character has matching sprite images."
+          />
+          <TrackerPanelCardOrderSetting />
         </div>
       </div>
 

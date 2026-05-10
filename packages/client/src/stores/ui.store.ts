@@ -17,6 +17,10 @@ type Panel =
 type FontSize = 12 | 14 | 16 | 17 | 19 | 22;
 export type VisualTheme = "default" | "sillytavern";
 export type HudPosition = "top" | "left" | "right";
+export type TrackerPanelSide = "left" | "right";
+export type TrackerDataPanelSection = "world" | "persona" | "characters" | "quests" | "custom";
+export type TrackerPanelCollapsedSections = Partial<Record<TrackerDataPanelSection, boolean>>;
+export type TrackerPanelSectionOrder = TrackerDataPanelSection[];
 export type EchoChamberSide = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type UserStatus = "active" | "idle" | "dnd";
 export type RoleplayAvatarStyle = "circles" | "rectangles" | "panel";
@@ -45,9 +49,19 @@ export const SIDEBAR_WIDTH_MIN = 240;
 export const SIDEBAR_WIDTH_MAX = 480;
 export const RIGHT_PANEL_WIDTH_MIN = 280;
 export const RIGHT_PANEL_WIDTH_MAX = 520;
+export const TRACKER_PANEL_WIDTH_DEFAULT = 288;
+export const TRACKER_PANEL_WIDTH_MIN = 220;
+export const TRACKER_PANEL_WIDTH_MAX = 440;
 const IMAGE_DIMENSION_MIN = 64;
 const IMAGE_DIMENSION_MAX = 4096;
 const GAME_SETUP_LEARNED_LIMIT = 60;
+export const TRACKER_DATA_PANEL_SECTIONS: TrackerDataPanelSection[] = [
+  "world",
+  "persona",
+  "characters",
+  "quests",
+  "custom",
+];
 
 const DEFAULT_GAME_SETUP_LEARNED_OPTIONS: GameSetupLearnedOptions = {
   genres: [],
@@ -65,6 +79,40 @@ const DEFAULT_GAME_SETUP_REMEMBERED_TEXT: GameSetupRememberedText = {
 function clampImageDimension(value: number) {
   const rounded = Number.isFinite(value) ? Math.round(value) : 0;
   return Math.max(IMAGE_DIMENSION_MIN, Math.min(IMAGE_DIMENSION_MAX, rounded));
+}
+
+function clampTrackerPanelWidth(value: unknown) {
+  const width = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : TRACKER_PANEL_WIDTH_DEFAULT;
+  return Math.max(TRACKER_PANEL_WIDTH_MIN, Math.min(TRACKER_PANEL_WIDTH_MAX, width));
+}
+
+function normalizeTrackerPanelCollapsedSections(value: unknown): TrackerPanelCollapsedSections {
+  const raw = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const collapsed: TrackerPanelCollapsedSections = {};
+  for (const section of TRACKER_DATA_PANEL_SECTIONS) {
+    if (raw[section] === true) collapsed[section] = true;
+  }
+  return collapsed;
+}
+
+function normalizeTrackerPanelSectionOrder(value: unknown): TrackerPanelSectionOrder {
+  const order: TrackerPanelSectionOrder = [];
+  const seen = new Set<TrackerDataPanelSection>();
+  const raw = Array.isArray(value) ? value : [];
+
+  for (const section of raw) {
+    if (!TRACKER_DATA_PANEL_SECTIONS.includes(section as TrackerDataPanelSection)) continue;
+    const validSection = section as TrackerDataPanelSection;
+    if (seen.has(validSection)) continue;
+    seen.add(validSection);
+    order.push(validSection);
+  }
+
+  for (const section of TRACKER_DATA_PANEL_SECTIONS) {
+    if (!seen.has(section)) order.push(section);
+  }
+
+  return order;
 }
 
 function normalizeLearnedGameSetupOption(value: unknown) {
@@ -129,6 +177,14 @@ interface UIState {
   rightPanelOpen: boolean;
   rightPanelWidth: number;
   rightPanel: Panel;
+  trackerPanelEnabled: boolean;
+  trackerPanelOpen: boolean;
+  trackerPanelSide: TrackerPanelSide;
+  trackerPanelHideHudWidgets: boolean;
+  trackerPanelUseExpressionSprites: boolean;
+  trackerPanelWidth: number;
+  trackerPanelCollapsedSections: TrackerPanelCollapsedSections;
+  trackerPanelSectionOrder: TrackerPanelSectionOrder;
   settingsTab: string;
   modal: { type: string; props?: Record<string, unknown> } | null;
   theme: "dark" | "light";
@@ -327,6 +383,16 @@ interface UIState {
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setRightPanelWidth: (width: number) => void;
+  toggleTrackerPanel: () => void;
+  setTrackerPanelEnabled: (enabled: boolean) => void;
+  setTrackerPanelOpen: (open: boolean) => void;
+  setTrackerPanelSide: (side: TrackerPanelSide) => void;
+  setTrackerPanelHideHudWidgets: (hidden: boolean) => void;
+  setTrackerPanelUseExpressionSprites: (enabled: boolean) => void;
+  setTrackerPanelWidth: (width: number) => void;
+  setTrackerPanelSectionOrder: (order: TrackerPanelSectionOrder) => void;
+  setTrackerPanelSectionCollapsed: (section: TrackerDataPanelSection, collapsed: boolean) => void;
+  toggleTrackerPanelSectionCollapsed: (section: TrackerDataPanelSection) => void;
   openRightPanel: (panel: Panel) => void;
   closeRightPanel: () => void;
   toggleRightPanel: (panel: Panel) => void;
@@ -461,6 +527,14 @@ export function pickSyncedSettings(state: UIState) {
   return {
     sidebarOpen: state.sidebarOpen,
     sidebarWidth: state.sidebarWidth,
+    trackerPanelEnabled: state.trackerPanelEnabled,
+    trackerPanelOpen: state.trackerPanelOpen,
+    trackerPanelSide: state.trackerPanelSide,
+    trackerPanelHideHudWidgets: state.trackerPanelHideHudWidgets,
+    trackerPanelUseExpressionSprites: state.trackerPanelUseExpressionSprites,
+    trackerPanelWidth: state.trackerPanelWidth,
+    trackerPanelCollapsedSections: state.trackerPanelCollapsedSections,
+    trackerPanelSectionOrder: state.trackerPanelSectionOrder,
     theme: state.theme,
     chatBackground: state.chatBackground,
     fontSize: state.fontSize,
@@ -544,6 +618,14 @@ export const useUIStore = create<UIState>()(
       rightPanelOpen: false,
       rightPanelWidth: 320,
       rightPanel: "chat" as Panel,
+      trackerPanelEnabled: true,
+      trackerPanelOpen: false,
+      trackerPanelSide: "right" as TrackerPanelSide,
+      trackerPanelHideHudWidgets: false,
+      trackerPanelUseExpressionSprites: false,
+      trackerPanelWidth: TRACKER_PANEL_WIDTH_DEFAULT,
+      trackerPanelCollapsedSections: {},
+      trackerPanelSectionOrder: [...TRACKER_DATA_PANEL_SECTIONS],
       settingsTab: "general",
       modal: null,
       theme: "dark" as const,
@@ -651,6 +733,45 @@ export const useUIStore = create<UIState>()(
         set({ sidebarWidth: Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, width)) }),
       setRightPanelWidth: (width) =>
         set({ rightPanelWidth: Math.max(RIGHT_PANEL_WIDTH_MIN, Math.min(RIGHT_PANEL_WIDTH_MAX, width)) }),
+      toggleTrackerPanel: () =>
+        set((s) => ({
+          trackerPanelOpen: s.trackerPanelEnabled ? !s.trackerPanelOpen : false,
+        })),
+      setTrackerPanelEnabled: (enabled) =>
+        set({
+          trackerPanelEnabled: enabled,
+          trackerPanelOpen: enabled ? get().trackerPanelOpen : false,
+        }),
+      setTrackerPanelOpen: (open) =>
+        set((s) => ({
+          trackerPanelOpen: s.trackerPanelEnabled ? open : false,
+        })),
+      setTrackerPanelSide: (side) => set({ trackerPanelSide: side }),
+      setTrackerPanelHideHudWidgets: (hidden) => set({ trackerPanelHideHudWidgets: hidden }),
+      setTrackerPanelUseExpressionSprites: (enabled) => set({ trackerPanelUseExpressionSprites: enabled }),
+      setTrackerPanelWidth: (width) => set({ trackerPanelWidth: clampTrackerPanelWidth(width) }),
+      setTrackerPanelSectionOrder: (order) =>
+        set({ trackerPanelSectionOrder: normalizeTrackerPanelSectionOrder(order) }),
+      setTrackerPanelSectionCollapsed: (section, collapsed) =>
+        set((s) => {
+          const next = { ...s.trackerPanelCollapsedSections };
+          if (collapsed) {
+            next[section] = true;
+          } else {
+            delete next[section];
+          }
+          return { trackerPanelCollapsedSections: next };
+        }),
+      toggleTrackerPanelSectionCollapsed: (section) =>
+        set((s) => {
+          const next = { ...s.trackerPanelCollapsedSections };
+          if (next[section]) {
+            delete next[section];
+          } else {
+            next[section] = true;
+          }
+          return { trackerPanelCollapsedSections: next };
+        }),
 
       openRightPanel: (panel) => set({ rightPanelOpen: true, rightPanel: panel }),
       closeRightPanel: () => set({ rightPanelOpen: false }),
@@ -971,7 +1092,7 @@ export const useUIStore = create<UIState>()(
       }),
     {
       name: "marinara-engine-ui",
-      version: 21,
+      version: 26,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1181,12 +1302,52 @@ export const useUIStore = create<UIState>()(
             };
           }
         }
+        // v21 -> v22: add the optional centralized tracker sidebar.
+        if (version <= 21) {
+          if (persisted.trackerPanelOpen === undefined) persisted.trackerPanelOpen = false;
+          if (persisted.trackerPanelSide === undefined) persisted.trackerPanelSide = "right";
+          if (persisted.trackerPanelEnabled === undefined) persisted.trackerPanelEnabled = true;
+          if (persisted.trackerPanelHideHudWidgets === undefined) persisted.trackerPanelHideHudWidgets = false;
+        }
+        // v22 -> v23: persist the desktop tracker sidebar width.
+        if (version <= 22) {
+          persisted.trackerPanelWidth = clampTrackerPanelWidth(persisted.trackerPanelWidth);
+        }
+        // v23 -> v24: remember collapsed tracker data panels.
+        if (version <= 23) {
+          persisted.trackerPanelCollapsedSections = normalizeTrackerPanelCollapsedSections(
+            persisted.trackerPanelCollapsedSections,
+          );
+        }
+        persisted.trackerPanelCollapsedSections = normalizeTrackerPanelCollapsedSections(
+          persisted.trackerPanelCollapsedSections,
+        );
+        // v24 -> v25: require an explicit tracker-panel opt-in before expression sprites replace portraits.
+        if (version <= 24 && persisted.trackerPanelUseExpressionSprites === undefined) {
+          persisted.trackerPanelUseExpressionSprites = false;
+        }
+        if (persisted.trackerPanelUseExpressionSprites === undefined) {
+          persisted.trackerPanelUseExpressionSprites = false;
+        }
+        // v25 -> v26: allow users to reorder tracker panel cards.
+        if (version <= 25) {
+          persisted.trackerPanelSectionOrder = normalizeTrackerPanelSectionOrder(persisted.trackerPanelSectionOrder);
+        }
+        persisted.trackerPanelSectionOrder = normalizeTrackerPanelSectionOrder(persisted.trackerPanelSectionOrder);
         return persisted;
       },
       partialize: (state) => ({
         sidebarOpen: state.sidebarOpen,
         sidebarWidth: state.sidebarWidth,
         rightPanelWidth: state.rightPanelWidth,
+        trackerPanelEnabled: state.trackerPanelEnabled,
+        trackerPanelOpen: state.trackerPanelOpen,
+        trackerPanelSide: state.trackerPanelSide,
+        trackerPanelHideHudWidgets: state.trackerPanelHideHudWidgets,
+        trackerPanelUseExpressionSprites: state.trackerPanelUseExpressionSprites,
+        trackerPanelWidth: state.trackerPanelWidth,
+        trackerPanelCollapsedSections: state.trackerPanelCollapsedSections,
+        trackerPanelSectionOrder: state.trackerPanelSectionOrder,
         theme: state.theme,
         chatBackground: state.chatBackground,
         fontSize: state.fontSize,

@@ -20,10 +20,11 @@ export const characterKeys = {
 
 // ── Characters ──
 
-export function useCharacters() {
+export function useCharacters(enabled = true) {
   return useQuery({
     queryKey: characterKeys.list(),
     queryFn: () => api.get<unknown[]>("/characters"),
+    enabled,
     staleTime: 5 * 60_000,
   });
 }
@@ -312,10 +313,11 @@ export function useDeleteCharacterGalleryImage(characterId: string) {
 
 // ── Personas ──
 
-export function usePersonas() {
+export function usePersonas(enabled = true) {
   return useQuery({
     queryKey: characterKeys.personas,
     queryFn: () => api.get<unknown[]>("/characters/personas/list"),
+    enabled,
     staleTime: 5 * 60_000,
   });
 }
