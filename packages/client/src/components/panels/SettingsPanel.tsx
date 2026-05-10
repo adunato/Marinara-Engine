@@ -618,7 +618,7 @@ function GeneralSettings() {
         label="Intuitive swipe navigation"
         checked={intuitiveSwipeNavigation}
         onChange={setIntuitiveSwipeNavigation}
-        help="In Conversation and Roleplay modes, use Left/Right Arrow on desktop or horizontal touch swipes on mobile to move between alternate generations on the latest assistant message."
+        help="In Conversation and Roleplay modes, use Left/Right Arrow on desktop or horizontal touch swipes on mobile to move between alternate generations on the latest assistant message. Up Arrow edits your last sent message (only when the chat input is empty)."
       />
 
       <div className={cn("pl-5 transition-opacity", intuitiveSwipeNavigation ? "" : "pointer-events-none opacity-45")}>

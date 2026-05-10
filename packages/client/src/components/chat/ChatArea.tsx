@@ -862,6 +862,15 @@ export function ChatArea() {
     return null;
   }, [messages]);
 
+  const latestUserMessageForEdit = useMemo(() => {
+    if (!messages) return null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const candidate = messages[i]!;
+      if (candidate.role === "user") return candidate;
+    }
+    return null;
+  }, [messages]);
+
   const intuitiveSwipeBlocked =
     settingsOpen ||
     filesOpen ||
@@ -915,8 +924,38 @@ export function ChatArea() {
   useEffect(() => {
     if (!intuitiveSwipeNavigation || intuitiveSwipeBlocked) return;
 
+    const supportsMode = chatMode === "conversation" || isRoleplay;
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+
+      if (event.key === "ArrowUp") {
+        if (!supportsMode || !latestUserMessageForEdit) return;
+        if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const target = event.target;
+        if (target instanceof Element) {
+          // Don't hijack up-arrow when the user is typing or already editing.
+          // Allow it from the chat input only when it's empty (shell-style recall).
+          if (target.tagName === "TEXTAREA") {
+            const ta = target as HTMLTextAreaElement;
+            if (ta.value.length > 0) return;
+          } else if (
+            target.tagName === "INPUT" ||
+            target.tagName === "SELECT" ||
+            target.getAttribute("contenteditable") === "true"
+          ) {
+            return;
+          }
+        }
+        event.preventDefault();
+        window.dispatchEvent(
+          new CustomEvent("marinara:start-edit-message", {
+            detail: { messageId: latestUserMessageForEdit.id },
+          }),
+        );
+        return;
+      }
+
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       if (shouldIgnoreIntuitiveSwipeTarget(event.target)) return;
 
@@ -932,7 +971,15 @@ export function ChatArea() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [intuitiveSwipeBlocked, intuitiveSwipeNavigation, latestAssistantMessageForSwipes, navigateLatestSwipe]);
+  }, [
+    chatMode,
+    intuitiveSwipeBlocked,
+    intuitiveSwipeNavigation,
+    isRoleplay,
+    latestAssistantMessageForSwipes,
+    latestUserMessageForEdit,
+    navigateLatestSwipe,
+  ]);
 
   useEffect(() => {
     if (!intuitiveSwipeNavigation || intuitiveSwipeBlocked) return;

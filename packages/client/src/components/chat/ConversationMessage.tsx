@@ -530,6 +530,18 @@ export const ConversationMessage = memo(function ConversationMessage({
     });
   }, [message.content]);
 
+  useEffect(() => {
+    if (message.role !== "user" || !onEdit) return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ messageId?: string }>).detail;
+      if (detail?.messageId !== message.id) return;
+      if (onEditClick) onEditClick();
+      else startEditing();
+    };
+    window.addEventListener("marinara:start-edit-message", handler);
+    return () => window.removeEventListener("marinara:start-edit-message", handler);
+  }, [message.id, message.role, onEdit, onEditClick, startEditing]);
+
   const editValueRef = useRef(editValue);
   editValueRef.current = editValue;
 
