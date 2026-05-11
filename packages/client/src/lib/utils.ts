@@ -49,9 +49,12 @@ export interface AvatarCrop {
 }
 
 /** Returns inline styles for a cropped/zoomed avatar image.
- *  The parent container must have `overflow: hidden`. */
+ *  The parent container must have `overflow: hidden`. Defensively treats any
+ *  non-legacy-shaped crop as "no crop" so foreign data (e.g. {srcX, srcY,
+ *  srcWidth, srcHeight} written by a later editor that was rolled back) renders
+ *  uncropped instead of producing invalid CSS. */
 export function getAvatarCropStyle(crop?: AvatarCrop | null): CSSProperties {
-  if (!crop || crop.zoom <= 1) return {};
+  if (!crop || typeof crop.zoom !== "number" || crop.zoom <= 1) return {};
   return {
     transform: `scale(${crop.zoom}) translate(${crop.offsetX}%, ${crop.offsetY}%)`,
   };

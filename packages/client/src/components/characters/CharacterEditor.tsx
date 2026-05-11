@@ -1009,11 +1009,23 @@ function MetadataTab({
   removeTag: (tag: string) => void;
   avatarPreview: string | null;
 }) {
-  const crop = (formData.extensions.avatarCrop as { zoom: number; offsetX: number; offsetY: number } | undefined) ?? {
-    zoom: 1,
-    offsetX: 0,
-    offsetY: 0,
-  };
+  // Defensive read: a previously saved `avatarCrop` may be either the legacy
+  // zoom/offset shape this editor produces, or a future/foreign shape (e.g.
+  // {srcX, srcY, srcWidth, srcHeight}) written by a different version of the
+  // editor that was later rolled back. Anything that doesn't look like the
+  // legacy shape gets treated as "no crop" so the slider starts fresh and the
+  // editor doesn't crash on undefined `.zoom`.
+  const rawCrop = formData.extensions.avatarCrop as
+    | { zoom?: unknown; offsetX?: unknown; offsetY?: unknown }
+    | undefined
+    | null;
+  const crop =
+    rawCrop &&
+    typeof rawCrop.zoom === "number" &&
+    typeof rawCrop.offsetX === "number" &&
+    typeof rawCrop.offsetY === "number"
+      ? { zoom: rawCrop.zoom, offsetX: rawCrop.offsetX, offsetY: rawCrop.offsetY }
+      : { zoom: 1, offsetX: 0, offsetY: 0 };
 
   const setCrop = (next: { zoom: number; offsetX: number; offsetY: number }) => {
     updateExtension("avatarCrop", next);
