@@ -444,6 +444,32 @@ function applyGameMapUpdate(qc: QueryClient, chatId: string, map: GameMap) {
   }
 }
 
+function applyGameStatePatchToStore(chatId: string, patch: Record<string, unknown>) {
+  const current = useGameStateStore.getState().current;
+
+  if (current?.chatId === chatId) {
+    const merged = { ...current, ...patch, chatId };
+    if (patch.playerStats && typeof patch.playerStats === "object" && current.playerStats) {
+      const mergedPS = { ...current.playerStats, ...(patch.playerStats as object) };
+      const patchPS = patch.playerStats as Record<string, unknown>;
+      if (
+        Array.isArray(patchPS.activeQuests) &&
+        patchPS.activeQuests.length === 0 &&
+        current.playerStats.activeQuests?.length > 0
+      ) {
+        mergedPS.activeQuests = current.playerStats.activeQuests;
+      }
+      (merged as any).playerStats = mergedPS;
+    }
+    useGameStateStore.getState().setGameState(merged as any);
+    return;
+  }
+
+  // Agent data may arrive before the base game state is loaded. Seed a minimal
+  // state with chatId so mounted tracker/HUD views recognise it as current.
+  useGameStateStore.getState().setGameState({ ...patch, chatId } as any);
+}
+
 /**
  * Hook that handles streaming generation.
  * Returns a function to trigger generation which streams tokens
@@ -1123,31 +1149,7 @@ export function useGenerate() {
               const patch = event.data as Record<string, unknown>;
               console.warn(`[Generate] ${event.type} received:`, patch);
               if (!isActiveChat()) break;
-              const current = useGameStateStore.getState().current;
-              if (current) {
-                const merged = { ...current, ...patch };
-                // Deep-merge playerStats so partial updates don't clobber sibling fields
-                if (patch.playerStats && typeof patch.playerStats === "object" && current.playerStats) {
-                  const mergedPS = { ...current.playerStats, ...(patch.playerStats as object) };
-                  // Don't let an empty activeQuests overwrite existing quests
-                  const patchPS = patch.playerStats as Record<string, unknown>;
-                  if (
-                    Array.isArray(patchPS.activeQuests) &&
-                    patchPS.activeQuests.length === 0 &&
-                    current.playerStats.activeQuests?.length > 0
-                  ) {
-                    mergedPS.activeQuests = current.playerStats.activeQuests;
-                  }
-                  (merged as any).playerStats = mergedPS;
-                }
-                setGameState(merged as any);
-              } else {
-                // Agent data may arrive before the base game state is loaded —
-                // seed a minimal state so data isn't lost. Include chatId so the
-                // RoleplayHUD mount-guard (`existing?.chatId === chatId`) recognises
-                // this state belongs to the active chat and skips a redundant fetch.
-                setGameState({ chatId: params.chatId, ...patch } as any);
-              }
+              applyGameStatePatchToStore(params.chatId, patch);
               break;
             }
 
@@ -1869,26 +1871,7 @@ export function useGenerate() {
               const patch = event.data as Record<string, unknown>;
               console.warn(`[Retry] ${event.type} received:`, patch);
               if (!isActiveChat()) break;
-              const current = useGameStateStore.getState().current;
-              if (current) {
-                const merged = { ...current, ...patch };
-                if (patch.playerStats && typeof patch.playerStats === "object" && current.playerStats) {
-                  const mergedPS = { ...current.playerStats, ...(patch.playerStats as object) };
-                  // Don't let an empty activeQuests overwrite existing quests
-                  const patchPS = patch.playerStats as Record<string, unknown>;
-                  if (
-                    Array.isArray(patchPS.activeQuests) &&
-                    patchPS.activeQuests.length === 0 &&
-                    current.playerStats.activeQuests?.length > 0
-                  ) {
-                    mergedPS.activeQuests = current.playerStats.activeQuests;
-                  }
-                  (merged as any).playerStats = mergedPS;
-                }
-                setGameState(merged as any);
-              } else {
-                setGameState(patch as any);
-              }
+              applyGameStatePatchToStore(chatId, patch);
               break;
             }
             case "game_map_update": {
