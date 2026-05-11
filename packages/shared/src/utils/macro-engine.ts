@@ -87,6 +87,11 @@ export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
   { category: "Random", syntax: "{{random}}", description: "Random number from 0 to 100" },
   { category: "Random", syntax: "{{random:X:Y}}", description: "Random number between X and Y" },
   { category: "Random", syntax: "{{random::A::B::C}}", description: "Randomly choose one of the provided options" },
+  {
+    category: "Random",
+    syntax: "{{random::A@2::B@0.5}}",
+    description: "Weighted random choice; weights are relative and may be decimals",
+  },
   { category: "Random", syntax: "{{roll:XdY}}", description: "Dice roll total such as 2d6" },
   { category: "Variables", syntax: "{{getvar::name}}", description: "Read a dynamic variable" },
   { category: "Variables", syntax: "{{setvar::name::value}}", description: "Set a dynamic variable" },
@@ -276,6 +281,63 @@ function splitTopLevelDoubleColon(input: string): string[] {
   return parts;
 }
 
+function findTopLevelWeightMarker(input: string): number {
+  let depth = 0;
+  let markerIndex = -1;
+
+  for (let index = 0; index < input.length; index++) {
+    if (input[index] === "{" && input[index + 1] === "{") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+
+    if (input[index] === "}" && input[index + 1] === "}" && depth > 0) {
+      depth -= 1;
+      index += 1;
+      continue;
+    }
+
+    if (depth === 0 && input[index] === "@") {
+      markerIndex = index;
+    }
+  }
+
+  return markerIndex;
+}
+
+function parseWeightedRandomChoice(choice: string): { text: string; weight: number } {
+  const markerIndex = findTopLevelWeightMarker(choice);
+  if (markerIndex === -1) return { text: choice, weight: 1 };
+
+  const weightText = choice.slice(markerIndex + 1).trim();
+  if (!/^(?:\d+|\d*\.\d+)$/.test(weightText)) {
+    return { text: choice, weight: 1 };
+  }
+
+  const weight = Number(weightText);
+  if (!Number.isFinite(weight) || weight < 0) {
+    return { text: choice, weight: 1 };
+  }
+
+  return { text: choice.slice(0, markerIndex).trim(), weight };
+}
+
+function pickWeightedRandomChoice(choices: string[]): string {
+  const weightedChoices = choices.map(parseWeightedRandomChoice).filter((choice) => choice.text.length > 0);
+  const totalWeight = weightedChoices.reduce((total, choice) => total + choice.weight, 0);
+
+  if (totalWeight <= 0) return "";
+
+  let roll = Math.random() * totalWeight;
+  for (const choice of weightedChoices) {
+    roll -= choice.weight;
+    if (roll < 0) return choice.text;
+  }
+
+  return weightedChoices.at(-1)?.text ?? "";
+}
+
 /**
  * Replace macros in a prompt string with their values.
  *
@@ -293,6 +355,7 @@ function splitTopLevelDoubleColon(input: string): string[] {
  *  - {{random}} — random number 0-100
  *  - {{random:X:Y}} — random number X-Y
  *  - {{random::A::B::C}} — random choice from A, B, C
+ *  - {{random::A@2::B@0.5}} — weighted random choice; weights are relative
  *  - {{roll:XdY}} — dice roll (e.g. {{roll:2d6}})
  *  - {{getvar::name}} — read a dynamic variable
  *  - {{setvar::name::value}} — set a variable
@@ -371,7 +434,7 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
       .map((choice) => choice.trim())
       .filter(Boolean);
     if (choices.length === 0) return "";
-    const choice = choices[Math.floor(Math.random() * choices.length)] ?? "";
+    const choice = pickWeightedRandomChoice(choices);
     return resolveMacros(choice, ctx, { ...options, trimResult: false });
   });
   result = result.replace(/\{\{random:(\d+):(\d+)\}\}/gi, (_, min, max) => {

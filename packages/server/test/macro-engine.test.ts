@@ -58,3 +58,45 @@ test("setvar values can resolve nested random choices", () => {
   assert.equal(output, "Bob");
   assert.equal(ctx.variables.actor, "Bob");
 });
+
+test("unweighted random choices keep equal selection behavior", () => {
+  const first = withMockedRandom([0], () => resolveMacros("{{random::A::B::C}}", macroContext()));
+  const middle = withMockedRandom([0.4], () => resolveMacros("{{random::A::B::C}}", macroContext()));
+  const last = withMockedRandom([0.9], () => resolveMacros("{{random::A::B::C}}", macroContext()));
+
+  assert.equal(first, "A");
+  assert.equal(middle, "B");
+  assert.equal(last, "C");
+});
+
+test("random choices support relative decimal weights", () => {
+  const common = withMockedRandom([0.5], () => resolveMacros("{{random::Common@1::Rare@0.25}}", macroContext()));
+  const rare = withMockedRandom([0.9], () => resolveMacros("{{random::Common@1::Rare@0.25}}", macroContext()));
+
+  assert.equal(common, "Common");
+  assert.equal(rare, "Rare");
+});
+
+test("random choices do not select zero-weight options", () => {
+  const output = withMockedRandom([0], () => resolveMacros("{{random::Never@0::Always@1}}", macroContext()));
+
+  assert.equal(output, "Always");
+});
+
+test("random choices with all zero weights resolve to empty text", () => {
+  assert.equal(resolveMacros("Before {{random::Never@0::Also never@0}} after", macroContext()), "Before  after");
+});
+
+test("weighted random choices can resolve nested macros", () => {
+  const output = withMockedRandom([0.1], () =>
+    resolveMacros("{{random::{{getvar::actor}} leaves.@0.5::The world ends.@0.5}}", macroContext({ actor: "Doug" })),
+  );
+
+  assert.equal(output, "Doug leaves.");
+});
+
+test("invalid weight suffixes stay literal", () => {
+  const output = withMockedRandom([0], () => resolveMacros("{{random::literal@nope::weighted@2}}", macroContext()));
+
+  assert.equal(output, "literal@nope");
+});
