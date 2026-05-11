@@ -325,9 +325,15 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const spotifyPlaylistsQuery = useQuery({
     queryKey: ["spotify", "playlists", 50],
     queryFn: () =>
-      api.get<{ playlists: Array<{ id: string; name: string; uri: string; trackCount: number }> }>(
-        "/spotify/playlists?limit=50",
-      ),
+      api.get<{
+        playlists: Array<{
+          id: string;
+          name: string;
+          uri: string;
+          trackCount: number | null;
+          owned: boolean | null;
+        }>;
+      }>("/spotify/playlists?limit=50"),
     enabled: enableSpotifyDj && gameSpotifySourceType === "playlist",
     staleTime: 60_000,
     retry: false,
@@ -1293,11 +1299,20 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                               className="w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)]"
                             >
                               <option value="">Choose playlist...</option>
-                              {spotifyPlaylistsQuery.data.playlists.map((playlist) => (
-                                <option key={playlist.id} value={playlist.id}>
-                                  {playlist.name} ({playlist.trackCount})
-                                </option>
-                              ))}
+                              {spotifyPlaylistsQuery.data.playlists.map((playlist) => {
+                                const suffix =
+                                  typeof playlist.trackCount === "number"
+                                    ? ` (${playlist.trackCount})`
+                                    : playlist.owned === false
+                                      ? " (followed — unavailable)"
+                                      : "";
+                                return (
+                                  <option key={playlist.id} value={playlist.id}>
+                                    {playlist.name}
+                                    {suffix}
+                                  </option>
+                                );
+                              })}
                             </select>
                           ) : (
                             <input

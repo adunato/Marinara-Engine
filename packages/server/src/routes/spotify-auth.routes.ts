@@ -506,16 +506,57 @@ export async function spotifyAuthRoutes(app: FastifyInstance) {
       return reply.status(res.status).send({ error: await readSpotifyError(res, "Spotify playlists failed") });
     }
     const data = (await res.json()) as {
-      items?: Array<{ id?: string; name?: string; uri?: string; tracks?: { total?: number } }>;
+      items?: Array<{
+        id?: string;
+        name?: string;
+        uri?: string;
+        tracks?: { total?: number };
+        owner?: { id?: string };
+      }>;
     };
-    return {
-      playlists: (data.items ?? []).map((playlist) => ({
-        id: playlist.id ?? "",
-        name: playlist.name ?? "Untitled playlist",
-        uri: playlist.uri ?? "",
-        trackCount: playlist.tracks?.total ?? 0,
-      })),
-    };
+
+    // Spotify strips `tracks.total` from /me/playlists for Development Mode
+    // apps. Look up real counts by hitting /playlists/{id}/items?limit=1 in
+    // parallel for playlists owned by the connected user (followed playlists
+    // 403 and stay unknown). Falls back gracefully if Spotify changes its mind.
+    const meRes = await fetchSpotifyApi(credentials, "/me").catch((err) => {
+      logger.warn(err, "Spotify /me lookup failed while resolving playlist ownership");
+      return null;
+    });
+    const myId = meRes && meRes.ok ? ((await meRes.json()) as { id?: string }).id : null;
+    if (!myId) {
+      logger.warn("Could not resolve Spotify user id; playlist ownership will be unknown");
+    }
+
+    const playlists = await Promise.all(
+      (data.items ?? []).map(async (playlist) => {
+        const reported = playlist.tracks?.total;
+        // Tri-state: true (owned), false (followed), null (unknown — e.g. /me lookup failed).
+        // Null prevents the client from mislabeling owned playlists as "followed — unavailable"
+        // when /me transiently fails.
+        const owned: boolean | null = myId ? playlist.owner?.id === myId : null;
+        let trackCount: number | null = typeof reported === "number" ? reported : null;
+        if (trackCount === null && owned === true && playlist.id) {
+          const itemsRes = await fetchSpotifyApi(
+            credentials,
+            `/playlists/${encodeURIComponent(playlist.id)}/items?limit=1`,
+          ).catch(() => null);
+          if (itemsRes && itemsRes.ok) {
+            const itemsData = (await itemsRes.json().catch(() => null)) as { total?: number } | null;
+            if (typeof itemsData?.total === "number") trackCount = itemsData.total;
+          }
+        }
+        return {
+          id: playlist.id ?? "",
+          name: playlist.name ?? "Untitled playlist",
+          uri: playlist.uri ?? "",
+          trackCount,
+          owned,
+        };
+      }),
+    );
+
+    return { playlists };
   });
 
   app.post<{ Body: { agentId?: string; deviceId?: string | null } }>("/dj-mari-playlist", async (req, reply) => {

@@ -290,15 +290,23 @@ function pruneSpotifyTrackCache() {
   }
 }
 
+// /me/tracks wraps each track under `.track`, while /playlists/{id}/items wraps
+// it under `.item` (the singular field, because an item may also be a podcast
+// episode). Accept either shape so the same mapper covers both endpoints.
+type SpotifyTrackInner = {
+  uri?: string;
+  name?: string;
+  artists?: Array<{ name?: string }>;
+  album?: { name?: string };
+};
+
 function mapSpotifyTrackItems(
-  items: Array<{
-    track?: { uri?: string; name?: string; artists?: Array<{ name?: string }>; album?: { name?: string } } | null;
-  }>,
+  items: Array<{ track?: SpotifyTrackInner | null; item?: SpotifyTrackInner | null }>,
   offset: number,
 ): SceneSpotifyTrackCandidate[] {
   return items
     .map((item, index): SceneSpotifyTrackCandidate | null => {
-      const track = item.track;
+      const track = item.track ?? item.item;
       if (!track?.uri?.startsWith("spotify:track:")) return null;
       return {
         uri: track.uri,
@@ -333,20 +341,29 @@ async function fetchSpotifyTrackIndex(
 
   while (offset < SPOTIFY_TRACK_INDEX_MAX_TRACKS) {
     const pageSize = Math.min(batchSize, SPOTIFY_TRACK_INDEX_MAX_TRACKS - offset);
+    // Use /playlists/{id}/items (the supported endpoint) rather than the deprecated
+    // /tracks variant. After Spotify's 2026-03 Web API migration, /tracks returns
+    // 403 for Development Mode apps and only the /items path works.
     const endpoint =
       sourceKey === "liked"
         ? `/me/tracks?${new URLSearchParams({ limit: String(pageSize), offset: String(offset) })}`
-        : `/playlists/${encodeURIComponent(sourceKey)}/tracks?${new URLSearchParams({ limit: String(pageSize), offset: String(offset) })}`;
+        : `/playlists/${encodeURIComponent(sourceKey)}/items?${new URLSearchParams({ limit: String(pageSize), offset: String(offset) })}`;
     const res = await fetchSpotifyApi(credentials, endpoint, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) {
+      // Development Mode apps without Extended Quota can only read playlists owned
+      // by the connected Spotify user; followed/editorial playlists 403.
+      if (res.status === 403 && sourceKey !== "liked") {
+        spotifyError(
+          403,
+          "Spotify denied access to this playlist's contents. Spotify only allows reading playlists owned by the connected account; followed or editorial playlists are blocked for Development Mode apps. Pick a playlist you own, switch to Liked Songs, or use Any Spotify.",
+        );
+      }
       const body = await res.text();
       spotifyError(res.status, `Spotify track index failed (${res.status}): ${body.slice(0, 200)}`);
     }
 
     const data = (await res.json()) as {
-      items?: Array<{
-        track?: { uri?: string; name?: string; artists?: Array<{ name?: string }>; album?: { name?: string } } | null;
-      }>;
+      items?: Array<{ track?: SpotifyTrackInner | null; item?: SpotifyTrackInner | null }>;
       total?: number;
       next?: string | null;
     };
