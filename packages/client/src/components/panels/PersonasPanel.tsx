@@ -40,7 +40,7 @@ import {
   Tag,
 } from "lucide-react";
 import { showConfirmDialog } from "../../lib/app-dialogs";
-import { cn } from "../../lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
@@ -55,10 +55,61 @@ type PersonaRow = {
   backstory: string;
   appearance: string;
   avatarPath: string | null;
+  /** JSON-encoded AvatarCrop, or empty string when unset. */
+  avatarCrop?: string;
   isActive: string | boolean;
   createdAt: string;
   tags?: string;
 };
+
+/** Parses the persona row's JSON-encoded avatarCrop field with defensive shape
+ *  validation. Accepts either the current source-relative shape (srcX/Y/W/H) or
+ *  the legacy zoom+offset shape, so a malformed cell never breaks rendering. */
+function parsePersonaAvatarCrop(raw: string | undefined): AvatarCrop | LegacyAvatarCrop | null {
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return null;
+    // Validate geometry — finite, positive, within normalized bounds. Anything
+    // malformed is dropped so the panel falls back to the uncropped render
+    // instead of producing NaN transforms or an off-canvas image.
+    if (
+      Number.isFinite(obj.srcX) &&
+      Number.isFinite(obj.srcY) &&
+      Number.isFinite(obj.srcWidth) &&
+      Number.isFinite(obj.srcHeight) &&
+      obj.srcWidth > 0 &&
+      obj.srcHeight > 0 &&
+      obj.srcX >= 0 &&
+      obj.srcY >= 0 &&
+      obj.srcX + obj.srcWidth <= 1.001 &&
+      obj.srcY + obj.srcHeight <= 1.001
+    ) {
+      return {
+        srcX: obj.srcX,
+        srcY: obj.srcY,
+        srcWidth: obj.srcWidth,
+        srcHeight: obj.srcHeight,
+      };
+    }
+    if (
+      Number.isFinite(obj.zoom) &&
+      Number.isFinite(obj.offsetX) &&
+      Number.isFinite(obj.offsetY) &&
+      obj.zoom > 0
+    ) {
+      return {
+        zoom: obj.zoom,
+        offsetX: obj.offsetX,
+        offsetY: obj.offsetY,
+        ...(obj.fullImage ? { fullImage: true } : {}),
+      };
+    }
+  } catch {
+    /* fall through to null */
+  }
+  return null;
+}
 
 type PersonaGroupRow = { id: string; name: string; description: string; personaIds: string };
 
@@ -683,9 +734,14 @@ export function PersonasPanel() {
                             if (!p) return null;
                             return (
                               <div key={pid} className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs">
-                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-teal-500 text-white">
+                                <div className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-emerald-400 to-teal-500 text-white">
                                   {p.avatarPath ? (
-                                    <img src={p.avatarPath} alt="" className="h-full w-full rounded-lg object-cover" />
+                                    <img
+                                      src={p.avatarPath}
+                                      alt=""
+                                      className="h-full w-full rounded-lg object-cover"
+                                      style={getAvatarCropStyle(parsePersonaAvatarCrop(p.avatarCrop))}
+                                    />
                                   ) : (
                                     <User size="0.625rem" />
                                   )}
@@ -798,16 +854,26 @@ export function PersonasPanel() {
                 className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-sm group/avatar"
                 title="Change avatar"
               >
-                {persona.avatarPath ? (
-                  <img
-                    src={persona.avatarPath}
-                    alt=""
-                    loading="lazy"
-                    className="h-full w-full rounded-xl object-cover"
-                  />
-                ) : (
-                  <User size="1rem" />
-                )}
+                {/* Inner clip wrapper — needed because new-format avatarCrop renders the
+                    <img> with position:absolute and dimensions larger than the container.
+                    The wrapper provides both `position:relative` (so the absolute img
+                    resolves here) and `overflow:hidden` (so the oversized img is clipped
+                    to the rounded-xl shape). The wrapper can't be the button itself
+                    because the active-indicator star and the camera-hover overlay live
+                    outside the avatar bounds via negative offsets / absolute inset-0. */}
+                <div className="relative h-full w-full overflow-hidden rounded-xl">
+                  {persona.avatarPath ? (
+                    <img
+                      src={persona.avatarPath}
+                      alt=""
+                      loading="lazy"
+                      className="h-full w-full rounded-xl object-cover"
+                      style={getAvatarCropStyle(parsePersonaAvatarCrop(persona.avatarCrop))}
+                    />
+                  ) : (
+                    <User size="1rem" />
+                  )}
+                </div>
                 <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 opacity-0 transition-opacity group-hover/avatar:opacity-100">
                   <Camera size="0.75rem" className="text-white" />
                 </div>

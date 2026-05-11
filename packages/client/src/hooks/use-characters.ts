@@ -341,6 +341,7 @@ export function useCreatePersona() {
       altDescriptions?: string;
       tags?: string;
       savedStatusOptions?: string;
+      avatarCrop?: string;
     }) => api.post("/characters/personas", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personas }),
   });
@@ -368,6 +369,7 @@ export function useUpdatePersona() {
       altDescriptions?: string;
       tags?: string;
       savedStatusOptions?: string;
+      avatarCrop?: string;
     }) => api.patch(`/characters/personas/${id}`, data),
     onSuccess: (updatedPersona, variables) => {
       qc.setQueryData<unknown[] | undefined>(characterKeys.personas, (old) => {

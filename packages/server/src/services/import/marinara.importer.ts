@@ -161,6 +161,14 @@ async function importPersona(data: unknown, db: DB) {
       nameColor: String(d.nameColor ?? ""),
       dialogueColor: String(d.dialogueColor ?? ""),
       boxColor: String(d.boxColor ?? ""),
+      // avatarCrop is stored as a JSON string in the DB; the export round-trips it
+      // as either an object or the empty string. Re-stringify objects on import.
+      avatarCrop:
+        typeof d.avatarCrop === "string"
+          ? d.avatarCrop
+          : d.avatarCrop && typeof d.avatarCrop === "object"
+            ? JSON.stringify(d.avatarCrop)
+            : "",
     },
     readTimestampOverrides(d),
   );

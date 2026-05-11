@@ -37,7 +37,7 @@ import {
   RotateCcw,
   Crop,
 } from "lucide-react";
-import { cn, generateClientId } from "../../lib/utils";
+import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
 import { showAlertDialog, showConfirmDialog } from "../../lib/app-dialogs";
 import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
 import { HelpTooltip } from "../ui/HelpTooltip";
@@ -57,6 +57,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { SpriteGenerationModal } from "../ui/SpriteGenerationModal";
 import { AvatarGenerationModal } from "../ui/AvatarGenerationModal";
+import { AvatarCropWidget } from "../ui/AvatarCropWidget";
 import { SpriteFrameEditor } from "../ui/SpriteFrameEditor";
 import { SpriteWandCleanupEditor } from "../ui/SpriteWandCleanupEditor";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
@@ -97,6 +98,10 @@ interface PersonaFormData {
   personaStats: string;
   altDescriptions: AltDescriptionEntry[];
   tags: string[];
+  /** Avatar crop region (parsed from the persona row's JSON-encoded `avatarCrop`).
+   *  May be the current source-relative shape, the legacy zoom+offset shape (held
+   *  through until the user re-edits via the cropper), or null when unset. */
+  avatarCrop: AvatarCrop | LegacyAvatarCrop | null;
 }
 
 interface PersonaRow {
@@ -109,6 +114,8 @@ interface PersonaRow {
   backstory: string;
   appearance: string;
   avatarPath: string | null;
+  /** JSON-encoded AvatarCrop, or empty string when unset. */
+  avatarCrop?: string;
   isActive: string | boolean;
   nameColor?: string;
   dialogueColor?: string;
@@ -167,6 +174,55 @@ export function PersonaEditor() {
       /* ignore */
     }
 
+    let parsedAvatarCrop: AvatarCrop | LegacyAvatarCrop | null = null;
+    try {
+      const raw = rawPersona.avatarCrop;
+      if (raw) {
+        const obj = JSON.parse(raw);
+        // Defensive: accept either the current source-relative shape or the
+        // legacy zoom+offset shape. Anything else is silently dropped so a
+        // malformed cell can't break the editor with NaN transforms.
+        if (obj && typeof obj === "object") {
+          // Validate geometry — finite, positive, within normalized bounds.
+          // Anything malformed is dropped so the editor falls back to defaults
+          // instead of producing NaN transforms or an off-screen overlay.
+          if (
+            Number.isFinite(obj.srcX) &&
+            Number.isFinite(obj.srcY) &&
+            Number.isFinite(obj.srcWidth) &&
+            Number.isFinite(obj.srcHeight) &&
+            obj.srcWidth > 0 &&
+            obj.srcHeight > 0 &&
+            obj.srcX >= 0 &&
+            obj.srcY >= 0 &&
+            obj.srcX + obj.srcWidth <= 1.001 &&
+            obj.srcY + obj.srcHeight <= 1.001
+          ) {
+            parsedAvatarCrop = {
+              srcX: obj.srcX,
+              srcY: obj.srcY,
+              srcWidth: obj.srcWidth,
+              srcHeight: obj.srcHeight,
+            };
+          } else if (
+            Number.isFinite(obj.zoom) &&
+            Number.isFinite(obj.offsetX) &&
+            Number.isFinite(obj.offsetY) &&
+            obj.zoom > 0
+          ) {
+            parsedAvatarCrop = {
+              zoom: obj.zoom,
+              offsetX: obj.offsetX,
+              offsetY: obj.offsetY,
+              ...(obj.fullImage ? { fullImage: true } : {}),
+            };
+          }
+        }
+      }
+    } catch {
+      /* ignore — empty / malformed crop just stays null */
+    }
+
     setFormData({
       name: rawPersona.name,
       comment: rawPersona.comment ?? "",
@@ -187,6 +243,7 @@ export function PersonaEditor() {
           return [];
         }
       })(),
+      avatarCrop: parsedAvatarCrop,
     });
     setAvatarPreview(rawPersona.avatarPath);
     setDirty(false);
@@ -201,12 +258,15 @@ export function PersonaEditor() {
     if (!personaId || !formData) return;
     setSaving(true);
     try {
-      const { altDescriptions, tags, ...rest } = formData;
+      const { altDescriptions, tags, avatarCrop, ...rest } = formData;
       await updatePersona.mutateAsync({
         id: personaId,
         ...rest,
         altDescriptions: JSON.stringify(altDescriptions),
         tags: JSON.stringify(tags),
+        // Persist as JSON string; empty string means "no crop" so the row keeps
+        // the legacy default in render sites.
+        avatarCrop: avatarCrop ? JSON.stringify(avatarCrop) : "",
       });
       setDirty(false);
     } finally {
@@ -221,12 +281,18 @@ export function PersonaEditor() {
     const uploadToken = generateClientId();
     latestAvatarUploadTokenRef.current = uploadToken;
     const fallbackAvatarPath = rawPersona?.avatarPath ?? null;
+    // Capture the saved crop so we can revert if the upload fails. The new image
+    // almost certainly has different framing/dimensions, so the old normalized
+    // crop coords are meaningless for it — clear immediately on upload start
+    // and let the cropper re-init from default centered max-square.
+    const fallbackAvatarCrop = formData?.avatarCrop ?? null;
 
     const reader = new FileReader();
     reader.onload = async () => {
       if (latestAvatarUploadTokenRef.current !== uploadToken) return;
       const dataUrl = reader.result as string;
       setAvatarPreview(dataUrl);
+      updateField("avatarCrop", null);
       try {
         await uploadAvatar.mutateAsync({
           id: personaId,
@@ -236,6 +302,7 @@ export function PersonaEditor() {
       } catch {
         if (latestAvatarUploadTokenRef.current !== uploadToken) return;
         setAvatarPreview(fallbackAvatarPath);
+        updateField("avatarCrop", fallbackAvatarCrop);
       }
     };
     reader.readAsDataURL(file);
@@ -248,6 +315,9 @@ export function PersonaEditor() {
       const uploadToken = generateClientId();
       latestAvatarUploadTokenRef.current = uploadToken;
       setAvatarPreview(avatarDataUrl);
+      // Same rationale as handleAvatarUpload — a freshly generated avatar
+      // shouldn't inherit the prior image's crop coords.
+      updateField("avatarCrop", null);
       await uploadAvatar.mutateAsync({
         id: personaId,
         avatar: avatarDataUrl,
@@ -255,7 +325,7 @@ export function PersonaEditor() {
       });
       toast.success("Persona avatar generated.");
     },
-    [personaId, uploadAvatar],
+    [personaId, updateField, uploadAvatar],
   );
 
   const handleDelete = async () => {
@@ -339,7 +409,12 @@ export function PersonaEditor() {
           onClick={() => fileInputRef.current?.click()}
         >
           {avatarPreview ? (
-            <img src={avatarPreview} alt={formData.name} className="h-full w-full object-cover" />
+            <img
+              src={avatarPreview}
+              alt={formData.name}
+              className="h-full w-full object-cover"
+              style={getAvatarCropStyle(formData.avatarCrop)}
+            />
           ) : (
             <User size="1.375rem" className="text-white" />
           )}
@@ -481,7 +556,12 @@ export function PersonaEditor() {
         <div className="flex-1 overflow-y-auto p-6 @max-5xl:p-4">
           <div className="mx-auto max-w-2xl">
             {activeTab === "description" && (
-              <DescriptionTab formData={formData} updateField={updateField} setDirty={setDirty} />
+              <DescriptionTab
+                formData={formData}
+                updateField={updateField}
+                setDirty={setDirty}
+                avatarPreview={avatarPreview}
+              />
             )}
             {activeTab === "personality" && (
               <TextareaTab
@@ -1743,10 +1823,12 @@ function DescriptionTab({
   formData,
   updateField,
   setDirty: _setDirty,
+  avatarPreview,
 }: {
   formData: PersonaFormData;
   updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
   setDirty: (v: boolean) => void;
+  avatarPreview: string | null;
 }) {
   const altDescs = formData.altDescriptions;
   const [expandedField, setExpandedField] = useState<"description" | string | null>(null);
@@ -1787,8 +1869,21 @@ function DescriptionTab({
     updateAltDescs(altDescs.filter((d) => d.id !== id));
   };
 
+  // Pass through whichever shape is saved (or null when unset). The widget
+  // initializes the cropper from the saved value or a centered max-square.
+  const avatarCrop: AvatarCrop | LegacyAvatarCrop | null = formData.avatarCrop;
+
   return (
     <div className="space-y-6">
+      {/* Avatar Crop / Zoom */}
+      {avatarPreview && (
+        <AvatarCropWidget
+          src={avatarPreview}
+          alt={formData.name}
+          crop={avatarCrop}
+          onChange={(next) => updateField("avatarCrop", next)}
+        />
+      )}
       {/* Main description */}
       <div>
         <div className="flex items-center justify-between mb-4">

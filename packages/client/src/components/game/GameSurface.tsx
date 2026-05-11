@@ -45,7 +45,7 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { spriteKeys, type SpriteInfo } from "../../hooks/use-characters";
 import { api, getJsonRepairRequest, type JsonRepairRequest } from "../../lib/api-client";
 import { showConfirmDialog } from "../../lib/app-dialogs";
-import { cn } from "../../lib/utils";
+import { cn, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
 import { audioManager } from "../../lib/game-audio";
 import {
   parseGmTags,
@@ -2532,7 +2532,7 @@ export function GameSurface({
       string,
       {
         url: string;
-        crop?: { zoom: number; offsetX: number; offsetY: number } | null;
+        crop?: AvatarCrop | LegacyAvatarCrop | null;
         nameColor?: string;
         dialogueColor?: string;
       }
