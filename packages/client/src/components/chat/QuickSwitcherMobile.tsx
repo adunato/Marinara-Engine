@@ -9,12 +9,14 @@ import { useConnections, useUpdateConnection } from "../../hooks/use-connections
 import { usePersonas, usePersonaGroups } from "../../hooks/use-characters";
 import { useUpdateChat, useChat } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
-import { cn } from "../../lib/utils";
+import { cn, getAvatarCropStyle, parseAvatarCropJson } from "../../lib/utils";
 
 interface Persona {
   id: string;
   name: string;
   avatarPath?: string | null;
+  /** JSON-encoded AvatarCrop from the persona row. */
+  avatarCrop?: string;
   comment?: string | null;
 }
 
@@ -195,11 +197,14 @@ export function QuickSwitcherMobile() {
         )}
       >
         {persona.avatarPath ? (
-          <img
-            src={persona.avatarPath}
-            alt={persona.name}
-            className="h-9 w-9 shrink-0 rounded-full border border-[var(--border)] object-cover"
-          />
+          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[var(--border)]">
+            <img
+              src={persona.avatarPath}
+              alt={persona.name}
+              className="h-full w-full object-cover"
+              style={getAvatarCropStyle(parseAvatarCropJson(persona.avatarCrop))}
+            />
+          </div>
         ) : (
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--secondary)] text-xs font-semibold text-[var(--muted-foreground)]">
             {(persona.name || "?")[0].toUpperCase()}
@@ -363,11 +368,14 @@ export function QuickSwitcherMobile() {
                         )}
                       >
                         {firstMember?.avatarPath ? (
-                          <img
-                            src={firstMember.avatarPath}
-                            alt={group.name}
-                            className="h-9 w-9 shrink-0 rounded-full border border-[var(--border)] object-cover"
-                          />
+                          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[var(--border)]">
+                            <img
+                              src={firstMember.avatarPath}
+                              alt={group.name}
+                              className="h-full w-full object-cover"
+                              style={getAvatarCropStyle(parseAvatarCropJson(firstMember.avatarCrop))}
+                            />
+                          </div>
                         ) : (
                           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--secondary)] text-xs font-semibold text-[var(--muted-foreground)]">
                             {group.name[0].toUpperCase()}

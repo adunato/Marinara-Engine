@@ -44,7 +44,7 @@ import { BookOpen, Check, HelpCircle, MessageSquare, Theater, X } from "lucide-r
 import type { SpritePlacement, SpriteSide } from "@marinara-engine/shared";
 import { useUIStore } from "../../stores/ui.store";
 import { useAgentStore } from "../../stores/agent.store";
-import { cn } from "../../lib/utils";
+import { cn, parseAvatarCropJson } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import { useEncounter } from "../../hooks/use-encounter";
 import { useScene } from "../../hooks/use-scene";
@@ -331,6 +331,7 @@ export function ChatArea() {
       appearance?: string;
       altDescriptions?: string;
       avatarPath?: string | null;
+      avatarCrop?: string;
       nameColor?: string;
       dialogueColor?: string;
       boxColor?: string;
@@ -364,6 +365,7 @@ export function ChatArea() {
       backstory: persona.backstory || undefined,
       appearance: persona.appearance || undefined,
       avatarUrl: persona.avatarPath || undefined,
+      avatarCrop: parseAvatarCropJson(persona.avatarCrop),
       nameColor: persona.nameColor || undefined,
       dialogueColor: persona.dialogueColor || undefined,
       boxColor: persona.boxColor || undefined,

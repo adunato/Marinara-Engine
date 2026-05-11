@@ -2,6 +2,7 @@
 // Zustand Store: Chat Slice
 // ──────────────────────────────────────────────
 import { create } from "zustand";
+import type { AvatarCropValue } from "../lib/utils";
 import { subscribeWithSelector } from "zustand/middleware";
 import type { Chat, ChatMode, Message } from "@marinara-engine/shared";
 import { useAgentStore } from "./agent.store";
@@ -10,7 +11,7 @@ import { useGameStateStore } from "./game-state.store";
 const STORAGE_KEY = "marinara-active-chat-id";
 const DRAFTS_KEY = "marinara-input-drafts";
 
-type NotificationAvatarCrop = { zoom: number; offsetX: number; offsetY: number } | null;
+type NotificationAvatarCrop = AvatarCropValue | null;
 
 /** Read drafts from localStorage so typed input survives reloads, tab closes, and app restarts. */
 function loadDrafts(): Map<string, string> {

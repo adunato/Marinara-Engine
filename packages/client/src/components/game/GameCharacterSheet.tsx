@@ -18,7 +18,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { cn, getAvatarCropStyle } from "../../lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 
 export interface GameCharacterSheetGameCard {
   shortDescription: string;
@@ -40,7 +40,7 @@ export interface CharacterSheetCard {
   status?: string;
   level?: number;
   avatarUrl?: string | null;
-  avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+  avatarCrop?: AvatarCropValue | null;
   stats?: Array<{ name: string; value: number; max?: number; color?: string }>;
   inventory?: Array<{ name: string; quantity?: number; location?: string }>;
   customFields?: Record<string, string>;
@@ -446,7 +446,7 @@ export function GameCharacterSheet({
         <div className="relative border-b border-[var(--border)] bg-[var(--secondary)]/50 px-5 py-4">
           <div className="flex items-center gap-4">
             {card.avatarUrl ? (
-              <span className="block h-20 w-20 overflow-hidden rounded-xl border-2 border-[var(--border)] shadow-xl">
+              <span className="relative block h-20 w-20 overflow-hidden rounded-xl border-2 border-[var(--border)] shadow-xl">
                 <img
                   src={card.avatarUrl}
                   alt={card.title}

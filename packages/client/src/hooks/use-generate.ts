@@ -2,6 +2,7 @@
 // React Query: Generation (streaming + agent pipeline)
 // ──────────────────────────────────────────────
 import { useCallback } from "react";
+import type { AvatarCropValue } from "../lib/utils";
 import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../lib/api-client";
@@ -82,7 +83,7 @@ function resolveCachedCharacterIdentity(
 ): {
   name: string | null;
   avatarUrl: string | null;
-  avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+  avatarCrop?: AvatarCropValue | null;
 } {
   if (!characterId) return { name: fallbackName, avatarUrl: null };
 
@@ -97,7 +98,7 @@ function resolveCachedCharacterIdentity(
     "Character";
   const avatarCrop =
     parsed && typeof parsed.extensions === "object" && parsed.extensions && "avatarCrop" in parsed.extensions
-      ? ((parsed.extensions as { avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null }).avatarCrop ??
+      ? ((parsed.extensions as { avatarCrop?: AvatarCropValue | null }).avatarCrop ??
         null)
       : null;
 
@@ -519,6 +520,7 @@ export function useGenerate() {
             backstory?: string;
             appearance?: string;
             avatarPath?: string | null;
+            avatarCrop?: string;
             nameColor?: string;
             dialogueColor?: string;
             boxColor?: string;
@@ -542,6 +544,7 @@ export function useGenerate() {
               backstory: snapshotPersona.backstory || "",
               appearance: snapshotPersona.appearance || "",
               avatarUrl: snapshotPersona.avatarPath || null,
+              avatarCrop: snapshotPersona.avatarCrop || null,
               nameColor: snapshotPersona.nameColor || null,
               dialogueColor: snapshotPersona.dialogueColor || null,
               boxColor: snapshotPersona.boxColor || null,

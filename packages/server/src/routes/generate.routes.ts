@@ -732,6 +732,7 @@ export async function generateRoutes(app: FastifyInstance) {
               backstory: snapshotPersona.backstory ?? "",
               appearance: snapshotPersona.appearance ?? "",
               avatarUrl: snapshotPersona.avatarPath || null,
+              avatarCrop: snapshotPersona.avatarCrop || null,
               nameColor: snapshotPersona.nameColor || null,
               dialogueColor: snapshotPersona.dialogueColor || null,
               boxColor: snapshotPersona.boxColor || null,

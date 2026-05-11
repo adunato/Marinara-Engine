@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Chat: Message — mode-aware rendering
 // ──────────────────────────────────────────────
-import { cn, copyToClipboard, getAvatarCropStyle } from "../../lib/utils";
+import { cn, copyToClipboard, getAvatarCropStyle, parseAvatarCropJson, type AvatarCropValue } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks, applyInlineMarkdownHTML } from "../../lib/markdown";
 import {
   User,
@@ -965,7 +965,10 @@ export const ChatMessage = memo(function ChatMessage({
 
   const displayName = isUser ? userName : charName;
   const avatarUrl = isUser ? (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null) : (charInfo?.avatarUrl ?? null);
-  const avatarCropStyle = isUser ? {} : getAvatarCropStyle(charInfo?.avatarCrop);
+  const personaAvatarCrop = isUser
+    ? (parseAvatarCropJson(msgPersona?.avatarCrop) ?? personaInfo?.avatarCrop ?? null)
+    : null;
+  const avatarCropStyle = isUser ? getAvatarCropStyle(personaAvatarCrop) : getAvatarCropStyle(charInfo?.avatarCrop);
 
   // Resolve colors: character colors for assistant, persona colors for user
   // Prefer per-message persona snapshot colors over current persona
@@ -1008,7 +1011,7 @@ export const ChatMessage = memo(function ChatMessage({
         if (!info?.avatarUrl) return null;
         return { url: info.avatarUrl, crop: info.avatarCrop };
       })
-      .filter(Boolean) as { url: string; crop?: { zoom: number; offsetX: number; offsetY: number } | null }[];
+      .filter(Boolean) as { url: string; crop?: AvatarCropValue | null }[];
   }, [isMergedGroup, characterMap, chatCharacterIds]);
   const mergedNameColors = useMemo(() => {
     if (!isMergedGroup || !characterMap || !chatCharacterIds) return [];
@@ -1382,7 +1385,7 @@ export const ChatMessage = memo(function ChatMessage({
                 <div className={cn(!isUser && "rpg-avatar-glow")}>
                   <button
                     type="button"
-                    className={cn("cursor-pointer overflow-hidden ring-2 ring-white/10", compactAvatarFrameClass)}
+                    className={cn("relative cursor-pointer overflow-hidden ring-2 ring-white/10", compactAvatarFrameClass)}
                     onClick={() => openImageLightbox(avatarUrl)}
                     aria-label={`Open ${displayName} avatar`}
                   >
@@ -1855,7 +1858,7 @@ export const ChatMessage = memo(function ChatMessage({
             ) : avatarUrl ? (
               <button
                 type="button"
-                className="h-8 w-8 cursor-pointer overflow-hidden rounded-full"
+                className="relative h-8 w-8 cursor-pointer overflow-hidden rounded-full"
                 onClick={() => openImageLightbox(avatarUrl)}
                 aria-label={`Open ${displayName} avatar`}
               >

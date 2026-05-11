@@ -145,7 +145,7 @@ function CharacterAvatarImage({
   className: string;
 }) {
   return (
-    <span className={cn("block shrink-0 overflow-hidden", className)}>
+    <span className={cn("relative block shrink-0 overflow-hidden", className)}>
       <img
         src={src}
         alt={alt}

@@ -41,7 +41,7 @@ import { useCharacters } from "../../hooks/use-characters";
 import { useChatStore } from "../../stores/chat.store";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useUIStore, type UserStatus } from "../../stores/ui.store";
-import { cn, getAvatarCropStyle } from "../../lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type { Chat, ChatFolder, ChatMode } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
@@ -142,7 +142,7 @@ export function ChatSidebar() {
       {
         name: string;
         avatarUrl: string | null;
-        avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+        avatarCrop?: AvatarCropValue | null;
         conversationStatus?: string;
       }
     >();
@@ -161,7 +161,7 @@ export function ChatSidebar() {
         map.set(char.id, {
           name,
           avatarUrl: char.avatarPath ?? null,
-          avatarCrop: (extensions.avatarCrop as { zoom: number; offsetX: number; offsetY: number } | undefined) ?? null,
+          avatarCrop: (extensions.avatarCrop as AvatarCropValue | undefined) ?? null,
           conversationStatus,
         });
       } catch {
@@ -624,7 +624,7 @@ export function ChatSidebar() {
               .filter(Boolean) as {
               name: string;
               avatarUrl: string | null;
-              avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+              avatarCrop?: AvatarCropValue | null;
               conversationStatus?: string;
             }[];
 
@@ -665,7 +665,7 @@ export function ChatSidebar() {
               const a = avatars[0]!;
               return a.avatarUrl ? (
                 <div className="relative h-7 w-7 flex-shrink-0 transition-transform group-active:scale-90">
-                  <span className="block h-7 w-7 overflow-hidden rounded-full">
+                  <span className="relative block h-7 w-7 overflow-hidden rounded-full">
                     <img
                       src={a.avatarUrl}
                       alt={a.name}

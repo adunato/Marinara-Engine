@@ -6,6 +6,7 @@
 // The active chat's autonomous messaging is handled by ConversationView.
 
 import { useEffect, useRef } from "react";
+import type { AvatarCropValue } from "../lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../lib/api-client";
@@ -159,7 +160,7 @@ export function useBackgroundAutonomousPolling() {
                 // Resolve character name for the notification
                 let charName = "Someone";
                 let charAvatar: string | null = null;
-                let charAvatarCrop: { zoom: number; offsetX: number; offsetY: number } | null = null;
+                let charAvatarCrop: AvatarCropValue | null = null;
                 try {
                   // Find the triggering character's name
                   const charRow = await api.get<RawCharacter>(`/characters/${characterId}`);

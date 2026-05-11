@@ -23,7 +23,7 @@ import {
 import type { GameSetupConfig, GameGmMode } from "@marinara-engine/shared";
 import { getCharacterTitle } from "../../lib/character-display";
 import { api } from "../../lib/api-client";
-import { cn, getAvatarCropStyle } from "../../lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import {
   GenerationParametersFields,
@@ -52,7 +52,7 @@ interface GameSetupWizardProps {
     name: string;
     comment?: string | null;
     avatarUrl?: string | null;
-    avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+    avatarCrop?: AvatarCropValue | null;
   }>;
 }
 
@@ -68,7 +68,7 @@ function CharacterAvatar({
   character: {
     name: string;
     avatarUrl?: string | null;
-    avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+    avatarCrop?: AvatarCropValue | null;
   };
   className?: string;
 }) {
@@ -80,7 +80,7 @@ function CharacterAvatar({
     );
   }
   return (
-    <span className={cn("block shrink-0 overflow-hidden", className)}>
+    <span className={cn("relative block shrink-0 overflow-hidden", className)}>
       <img
         src={character.avatarUrl}
         alt={character.name}

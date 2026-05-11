@@ -38,6 +38,7 @@ import { useConnections } from "../../hooks/use-connections";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { SpriteGenerationModal } from "../ui/SpriteGenerationModal";
 import { AvatarGenerationModal } from "../ui/AvatarGenerationModal";
+import { AvatarCropWidget } from "../ui/AvatarCropWidget";
 import {
   ArrowLeft,
   Save,
@@ -75,7 +76,7 @@ import {
   History,
   RotateCcw,
 } from "lucide-react";
-import { cn, generateClientId, getAvatarCropStyle } from "../../lib/utils";
+import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
 import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
@@ -229,6 +230,10 @@ export function CharacterEditor() {
     reader.onload = async () => {
       const dataUrl = reader.result as string;
       setAvatarPreview(dataUrl);
+      // Clear any saved avatarCrop — the new image almost certainly has different
+      // framing, so the prior normalized crop coords are meaningless and would
+      // produce a stale framing on the new file.
+      updateExtension("avatarCrop", undefined);
       try {
         await uploadAvatar.mutateAsync({ id: characterId, avatar: dataUrl });
       } catch {
@@ -242,10 +247,11 @@ export function CharacterEditor() {
     async (avatarDataUrl: string) => {
       if (!characterId) return;
       setAvatarPreview(avatarDataUrl);
+      updateExtension("avatarCrop", undefined);
       await uploadAvatar.mutateAsync({ id: characterId, avatar: avatarDataUrl });
       toast.success("Character avatar generated.");
     },
-    [characterId, uploadAvatar],
+    [characterId, updateExtension, uploadAvatar],
   );
 
   const handleDelete = async () => {
@@ -539,9 +545,7 @@ export function CharacterEditor() {
                 src={avatarPreview}
                 alt={formData.name}
                 className="h-full w-full object-cover"
-                style={getAvatarCropStyle(
-                  formData.extensions.avatarCrop as { zoom: number; offsetX: number; offsetY: number } | undefined,
-                )}
+                style={getAvatarCropStyle(formData.extensions.avatarCrop as AvatarCrop | LegacyAvatarCrop | undefined)}
               />
             ) : (
               <User size="1.375rem" className="text-white" />
@@ -1009,148 +1013,22 @@ function MetadataTab({
   removeTag: (tag: string) => void;
   avatarPreview: string | null;
 }) {
-  // Defensive read: a previously saved `avatarCrop` may be either the legacy
-  // zoom/offset shape this editor produces, or a future/foreign shape (e.g.
-  // {srcX, srcY, srcWidth, srcHeight}) written by a different version of the
-  // editor that was later rolled back. Anything that doesn't look like the
-  // legacy shape gets treated as "no crop" so the slider starts fresh and the
-  // editor doesn't crash on undefined `.zoom`.
-  const rawCrop = formData.extensions.avatarCrop as
-    | { zoom?: unknown; offsetX?: unknown; offsetY?: unknown }
-    | undefined
-    | null;
-  const crop =
-    rawCrop &&
-    typeof rawCrop.zoom === "number" &&
-    typeof rawCrop.offsetX === "number" &&
-    typeof rawCrop.offsetY === "number"
-      ? { zoom: rawCrop.zoom, offsetX: rawCrop.offsetX, offsetY: rawCrop.offsetY }
-      : { zoom: 1, offsetX: 0, offsetY: 0 };
-
-  const setCrop = (next: { zoom: number; offsetX: number; offsetY: number }) => {
-    updateExtension("avatarCrop", next);
-  };
-
-  // Drag-to-reposition state
-  const dragRef = useRef<{ startX: number; startY: number; startOX: number; startOY: number } | null>(null);
-  const didDragRef = useRef(false);
-  const previewRef = useRef<HTMLDivElement>(null);
-  const [showFullImage, setShowFullImage] = useState(false);
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (crop.zoom <= 1) return;
-    e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    dragRef.current = { startX: e.clientX, startY: e.clientY, startOX: crop.offsetX, startOY: crop.offsetY };
-    didDragRef.current = false;
-  };
-
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (!dragRef.current || !previewRef.current) return;
-    didDragRef.current = true;
-    const rect = previewRef.current.getBoundingClientRect();
-    const dx = ((e.clientX - dragRef.current.startX) / rect.width) * 100;
-    const dy = ((e.clientY - dragRef.current.startY) / rect.height) * 100;
-    const maxOffset = ((crop.zoom - 1) / crop.zoom) * 50;
-    const ox = Math.max(-maxOffset, Math.min(maxOffset, dragRef.current.startOX + dx / crop.zoom));
-    const oy = Math.max(-maxOffset, Math.min(maxOffset, dragRef.current.startOY + dy / crop.zoom));
-    setCrop({ ...crop, offsetX: Math.round(ox * 100) / 100, offsetY: Math.round(oy * 100) / 100 });
-  };
-
-  const onPointerUp = () => {
-    dragRef.current = null;
-  };
+  // Read existing crop in either current or legacy shape; the widget handles both
+  // and writes back the current shape on first interaction.
+  const savedCrop = (formData.extensions.avatarCrop as AvatarCrop | LegacyAvatarCrop | undefined) ?? null;
 
   return (
     <div className="space-y-5">
       <SectionHeader title="Metadata" subtitle="Basic character info — name, creator, version, tags." />
 
-      {/* Avatar Crop / Zoom */}
+      {/* Avatar Crop */}
       {avatarPreview && (
-        <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            <Crop size="0.75rem" /> Avatar Zoom & Position
-          </span>
-          <div className="flex items-start gap-4 max-sm:flex-col max-sm:items-center">
-            {/* Preview */}
-            <div
-              ref={previewRef}
-              className="relative h-28 w-28 shrink-0 cursor-grab overflow-hidden rounded-full bg-black/20 ring-2 ring-[var(--border)] active:cursor-grabbing touch-none"
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-              onClick={() => {
-                if (crop.zoom <= 1 || !didDragRef.current) setShowFullImage(true);
-              }}
-              title="Click to view full image"
-            >
-              <img
-                src={avatarPreview}
-                alt={formData.name}
-                className="h-full w-full object-cover"
-                draggable={false}
-                style={{
-                  transform:
-                    crop.zoom > 1 ? `scale(${crop.zoom}) translate(${crop.offsetX}%, ${crop.offsetY}%)` : undefined,
-                }}
-              />
-            </div>
-            {/* Controls */}
-            <div className="flex flex-1 flex-col gap-2">
-              <label className="space-y-1">
-                <span className="text-[0.625rem] text-[var(--muted-foreground)]">Zoom: {crop.zoom.toFixed(2)}x</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={3}
-                  step={0.05}
-                  value={crop.zoom}
-                  onChange={(e) => {
-                    const z = parseFloat(e.target.value);
-                    const maxOffset = ((z - 1) / z) * 50;
-                    setCrop({
-                      zoom: z,
-                      offsetX: Math.max(-maxOffset, Math.min(maxOffset, crop.offsetX)),
-                      offsetY: Math.max(-maxOffset, Math.min(maxOffset, crop.offsetY)),
-                    });
-                  }}
-                  className="w-full accent-[var(--primary)]"
-                />
-              </label>
-              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                {crop.zoom > 1 ? "Drag the preview to reposition" : "Click preview to view full image"}
-              </p>
-              {crop.zoom > 1 && (
-                <button
-                  type="button"
-                  onClick={() => setCrop({ zoom: 1, offsetX: 0, offsetY: 0 })}
-                  className="self-start rounded-lg bg-[var(--accent)] px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-all hover:text-[var(--foreground)]"
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-          </div>
-          {showFullImage && (
-            <div
-              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80"
-              onClick={() => setShowFullImage(false)}
-            >
-              <img
-                src={avatarPreview}
-                alt={formData.name}
-                className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
-              />
-              <button
-                onClick={() => setShowFullImage(false)}
-                className="absolute right-3 top-3 rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
-              >
-                <X size="1rem" />
-              </button>
-            </div>
-          )}
-        </div>
+        <AvatarCropWidget
+          src={avatarPreview}
+          alt={formData.name}
+          crop={savedCrop}
+          onChange={(next) => updateExtension("avatarCrop", next)}
+        />
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">

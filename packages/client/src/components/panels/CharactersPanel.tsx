@@ -46,7 +46,7 @@ import {
 } from "lucide-react";
 import { getCharacterTitle } from "../../lib/character-display";
 import { useUIStore } from "../../stores/ui.store";
-import { cn, getAvatarCropStyle } from "../../lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
 
 type CharacterRow = {
@@ -1032,7 +1032,7 @@ export function CharactersPanel() {
                       className="h-full w-full object-cover"
                       style={getAvatarCropStyle(
                         char.parsed.extensions?.avatarCrop as
-                          | { zoom: number; offsetX: number; offsetY: number }
+                          | AvatarCropValue
                           | undefined,
                       )}
                     />

@@ -32,7 +32,7 @@ import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "./ActiveWorldInfoBu
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playNotificationPing } from "../../lib/notification-sound";
-import { getAvatarCropStyle } from "../../lib/utils";
+import { getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { characterKeys } from "../../hooks/use-characters";
 import { api } from "../../lib/api-client";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
@@ -706,7 +706,7 @@ export function ConversationView({
             const chars = chatCharIds.map((id) => characterMap.get(id)).filter(Boolean) as Array<{
               name: string;
               avatarUrl: string | null;
-              avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+              avatarCrop?: AvatarCropValue | null;
               conversationStatus?: "online" | "idle" | "dnd" | "offline";
               conversationActivity?: string;
             }>;
@@ -729,7 +729,7 @@ export function ConversationView({
                 <div className="flex items-center gap-2 rounded-lg bg-[var(--card)]/80 px-2.5 py-1.5 backdrop-blur-sm dark:bg-black/30">
                   <div className="relative flex-shrink-0">
                     {c.avatarUrl ? (
-                      <span className="block h-5 w-5 overflow-hidden rounded-full">
+                      <span className="relative block h-5 w-5 overflow-hidden rounded-full">
                         <img
                           src={c.avatarUrl}
                           alt={c.name}
@@ -767,7 +767,7 @@ export function ConversationView({
                     <div key={i} className="absolute top-0" style={{ left: i * 12 }}>
                       <div className="relative">
                         {c.avatarUrl ? (
-                          <span className="block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]">
+                          <span className="relative block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]">
                             <img
                               src={c.avatarUrl}
                               alt={c.name}

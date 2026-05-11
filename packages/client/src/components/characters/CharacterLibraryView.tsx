@@ -14,7 +14,7 @@ import {
 import { useCharacters } from "../../hooks/use-characters";
 import { useStartChatFromCharacter } from "../../hooks/use-start-chat-from-character";
 import { getCharacterTitle } from "../../lib/character-display";
-import { cn, getAvatarCropStyle } from "../../lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
 import type { CharacterData } from "@marinara-engine/shared";
 
@@ -111,7 +111,7 @@ function CharacterLibraryDetailCard({
               className="h-full w-full object-cover"
               style={getAvatarCropStyle(
                 character.parsed.extensions?.avatarCrop as
-                  | { zoom: number; offsetX: number; offsetY: number }
+                  | AvatarCropValue
                   | undefined,
               )}
             />
@@ -435,7 +435,7 @@ export function CharacterLibraryView() {
                             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                             style={getAvatarCropStyle(
                               char.parsed.extensions?.avatarCrop as
-                                | { zoom: number; offsetX: number; offsetY: number }
+                                | AvatarCropValue
                                 | undefined,
                             )}
                           />

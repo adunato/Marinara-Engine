@@ -2039,7 +2039,7 @@ export function ChatSettingsDrawer({
                             title="Open character card"
                           >
                             {c.avatarPath ? (
-                              <span className="block h-7 w-7 shrink-0 overflow-hidden rounded-full">
+                              <span className="relative block h-7 w-7 shrink-0 overflow-hidden rounded-full">
                                 <img
                                   src={c.avatarPath}
                                   alt={name}
@@ -2330,7 +2330,7 @@ export function ChatSettingsDrawer({
                             title="Open character card"
                           >
                             {c.avatarPath ? (
-                              <span className="block h-7 w-7 shrink-0 overflow-hidden rounded-full">
+                              <span className="relative block h-7 w-7 shrink-0 overflow-hidden rounded-full">
                                 <img
                                   src={c.avatarPath}
                                   alt={name}
@@ -2408,7 +2408,7 @@ export function ChatSettingsDrawer({
                           className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
                         >
                           {c.avatarPath ? (
-                            <span className="block h-6 w-6 shrink-0 overflow-hidden rounded-full">
+                            <span className="relative block h-6 w-6 shrink-0 overflow-hidden rounded-full">
                               <img
                                 src={c.avatarPath}
                                 alt={name}
@@ -3856,7 +3856,7 @@ export function ChatSettingsDrawer({
                                 title="Open character card"
                               >
                                 {character.avatarPath ? (
-                                  <span className="block h-8 w-8 shrink-0 overflow-hidden rounded-full">
+                                  <span className="relative block h-8 w-8 shrink-0 overflow-hidden rounded-full">
                                     <img
                                       src={character.avatarPath}
                                       alt={name}

@@ -20,7 +20,7 @@ import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import type { Message } from "@marinara-engine/shared";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
-import { cn, copyToClipboard, getAvatarCropStyle } from "../../lib/utils";
+import { cn, copyToClipboard, getAvatarCropStyle, parseAvatarCropJson } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 import { chatKeys } from "../../hooks/use-chats";
 import { resolveMessageMacros } from "../../lib/chat-macros";
@@ -338,7 +338,10 @@ export const ConversationMessage = memo(function ConversationMessage({
   // Fall back to the current personaInfo prop for older messages without snapshots.
   const msgPersona = isUser && extra.personaSnapshot ? extra.personaSnapshot : null;
   const avatarUrl = isUser ? (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null) : (charInfo?.avatarUrl ?? null);
-  const avatarCropStyle = isUser ? undefined : getAvatarCropStyle(charInfo?.avatarCrop);
+  const personaAvatarCrop = isUser
+    ? (parseAvatarCropJson(msgPersona?.avatarCrop) ?? personaInfo?.avatarCrop ?? null)
+    : null;
+  const avatarCropStyle = isUser ? getAvatarCropStyle(personaAvatarCrop) : getAvatarCropStyle(charInfo?.avatarCrop);
   const displayName = isUser
     ? (msgPersona?.name ?? personaInfo?.name ?? "You")
     : (primaryCharInfo?.name ?? "Assistant");
@@ -682,7 +685,7 @@ export const ConversationMessage = memo(function ConversationMessage({
                     <div className="flex gap-4">
                       {/* Avatar */}
                       <div className="w-10 flex-shrink-0">
-                        <div className="h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
+                        <div className="relative h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
                           {segAvatar ? (
                             <img
                               src={segAvatar}
@@ -937,7 +940,7 @@ export const ConversationMessage = memo(function ConversationMessage({
       <div className="mari-message-avatar w-10 flex-shrink-0">
         {!isGrouped && (
           <>
-            <div className="h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
+            <div className="relative h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
               {avatarUrl ? (
                 <img
                   src={avatarUrl}

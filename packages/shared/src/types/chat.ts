@@ -306,6 +306,8 @@ export interface MessageExtra {
     personaId: string;
     name: string;
     avatarUrl?: string | null;
+    /** JSON-encoded AvatarCrop captured at send time so re-edits don't restyle past messages. */
+    avatarCrop?: string | null;
     nameColor?: string | null;
     dialogueColor?: string | null;
     boxColor?: string | null;

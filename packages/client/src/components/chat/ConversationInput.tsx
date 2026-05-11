@@ -35,7 +35,7 @@ import {
   type SlashCommandContext,
 } from "../../lib/slash-commands";
 import { isPromptPreviewMacro, resolveInputMacrosForChat } from "../../lib/chat-macros";
-import { cn, getAvatarCropStyle } from "../../lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { translateDraftText } from "../../lib/draft-translation";
 import { QuickConnectionSwitcher } from "./QuickConnectionSwitcher";
 import { QuickPersonaSwitcher } from "./QuickPersonaSwitcher";
@@ -205,7 +205,7 @@ interface ConversationInputProps {
     id: string;
     name: string;
     avatarUrl: string | null;
-    avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+    avatarCrop?: AvatarCropValue | null;
     conversationStatus?: "online" | "idle" | "dnd" | "offline";
     conversationActivity?: string;
   }>;
@@ -1500,7 +1500,7 @@ export function ConversationInput({
                 >
                   <div className="relative shrink-0">
                     {char.avatarUrl ? (
-                      <span className="block h-7 w-7 overflow-hidden rounded-full">
+                      <span className="relative block h-7 w-7 overflow-hidden rounded-full">
                         <img
                           src={char.avatarUrl}
                           alt={char.name}

@@ -45,7 +45,7 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { spriteKeys, type SpriteInfo } from "../../hooks/use-characters";
 import { api, getJsonRepairRequest, type JsonRepairRequest } from "../../lib/api-client";
 import { showConfirmDialog } from "../../lib/app-dialogs";
-import { cn } from "../../lib/utils";
+import { cn, type AvatarCrop, type LegacyAvatarCrop, type AvatarCropValue } from "../../lib/utils";
 import { audioManager } from "../../lib/game-audio";
 import {
   parseGmTags,
@@ -291,7 +291,7 @@ type GamePartyMemberInfo = {
   id: string;
   name: string;
   avatarUrl: string | null;
-  avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+  avatarCrop?: AvatarCropValue | null;
   nameColor?: string;
   dialogueColor?: string;
   canRemove?: boolean;
@@ -1644,7 +1644,7 @@ interface GameSurfaceProps {
     backstory?: string;
     appearance?: string;
     tags?: string[];
-    avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+    avatarCrop?: AvatarCropValue | null;
     nameColor?: string;
     dialogueColor?: string;
   }>;
@@ -2532,7 +2532,7 @@ export function GameSurface({
       string,
       {
         url: string;
-        crop?: { zoom: number; offsetX: number; offsetY: number } | null;
+        crop?: AvatarCrop | LegacyAvatarCrop | null;
         nameColor?: string;
         dialogueColor?: string;
       }
@@ -5867,7 +5867,7 @@ export function GameSurface({
         status?: string;
         level?: number;
         avatarUrl?: string | null;
-        avatarCrop?: { zoom: number; offsetX: number; offsetY: number } | null;
+        avatarCrop?: AvatarCropValue | null;
         stats?: Array<{ name: string; value: number; max?: number; color?: string }>;
         inventory?: Array<{ name: string; quantity?: number; location?: string }>;
         customFields?: Record<string, string>;
