@@ -70,7 +70,6 @@ const CREATE_TABLES: string[] = [
     backstory TEXT NOT NULL DEFAULT '',
     appearance TEXT NOT NULL DEFAULT '',
     avatar_path TEXT,
-    avatar_crop TEXT NOT NULL DEFAULT '',
     is_active TEXT NOT NULL DEFAULT 'false',
     name_color TEXT NOT NULL DEFAULT '',
     dialogue_color TEXT NOT NULL DEFAULT '',
@@ -687,11 +686,6 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "api_connections",
     column: "claude_fast_mode",
     definition: "TEXT NOT NULL DEFAULT 'false'",
-  },
-  {
-    table: "personas",
-    column: "avatar_crop",
-    definition: "TEXT NOT NULL DEFAULT ''",
   },
 ];
 

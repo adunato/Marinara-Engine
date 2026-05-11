@@ -32,7 +32,7 @@ import {
   Loader2,
   Wand2,
 } from "lucide-react";
-import { cn, copyToClipboard, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
+import { cn, copyToClipboard, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { findNamedMapValue } from "../../lib/game-character-name-match";
 import type { GameSegmentEdit } from "../../lib/game-segment-edits";
 import { parseGmTags, stripGmTagsKeepReadables } from "../../lib/game-tag-parser";
@@ -234,7 +234,7 @@ interface NarrationSegment {
 
 type SpeakerAvatarInfo = {
   url: string;
-  crop?: AvatarCrop | LegacyAvatarCrop | null;
+  crop?: AvatarCrop | null;
   nameColor?: string;
   dialogueColor?: string;
 };
@@ -4201,11 +4201,11 @@ function CroppedAvatar({
 }: {
   src: string;
   alt: string;
-  crop?: AvatarCrop | LegacyAvatarCrop | null;
+  crop?: AvatarCrop | null;
   className?: string;
 }) {
   return (
-    <div className={cn("relative overflow-hidden", className)}>
+    <div className={cn("overflow-hidden", className)}>
       <img src={src} alt={alt} className="h-full w-full object-cover" style={getAvatarCropStyle(crop)} />
     </div>
   );

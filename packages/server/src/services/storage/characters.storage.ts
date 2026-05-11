@@ -240,7 +240,6 @@ export function createCharactersStorage(db: DB) {
         altDescriptions?: string;
         tags?: string;
         savedStatusOptions?: string;
-        avatarCrop?: string;
       },
       timestampOverrides?: TimestampOverrides | null,
     ) {
@@ -256,7 +255,6 @@ export function createCharactersStorage(db: DB) {
         backstory: extra?.backstory ?? "",
         appearance: extra?.appearance ?? "",
         avatarPath: avatarPath ?? null,
-        avatarCrop: extra?.avatarCrop ?? "",
         isActive: "false",
         nameColor: extra?.nameColor ?? "",
         dialogueColor: extra?.dialogueColor ?? "",
@@ -297,7 +295,6 @@ export function createCharactersStorage(db: DB) {
         backstory: source.backstory ?? "",
         appearance: source.appearance ?? "",
         avatarPath: source.avatarPath,
-        avatarCrop: source.avatarCrop ?? "",
         isActive: "false",
         nameColor: source.nameColor ?? "",
         dialogueColor: source.dialogueColor ?? "",
@@ -323,7 +320,6 @@ export function createCharactersStorage(db: DB) {
         backstory?: string;
         appearance?: string;
         avatarPath?: string;
-        avatarCrop?: string;
         nameColor?: string;
         dialogueColor?: string;
         boxColor?: string;
@@ -342,7 +338,6 @@ export function createCharactersStorage(db: DB) {
       if (updates.backstory !== undefined) sets.backstory = updates.backstory;
       if (updates.appearance !== undefined) sets.appearance = updates.appearance;
       if (updates.avatarPath !== undefined) sets.avatarPath = updates.avatarPath;
-      if (updates.avatarCrop !== undefined) sets.avatarCrop = updates.avatarCrop;
       if (updates.nameColor !== undefined) sets.nameColor = updates.nameColor;
       if (updates.dialogueColor !== undefined) sets.dialogueColor = updates.dialogueColor;
       if (updates.boxColor !== undefined) sets.boxColor = updates.boxColor;

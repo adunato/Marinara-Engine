@@ -44,8 +44,6 @@ export const personas = sqliteTable("personas", {
   backstory: text("backstory").notNull().default(""),
   appearance: text("appearance").notNull().default(""),
   avatarPath: text("avatar_path"),
-  /** Avatar zoom/position settings (JSON of { zoom, offsetX, offsetY, fullImage? }). Empty string = unset. */
-  avatarCrop: text("avatar_crop").notNull().default(""),
   isActive: text("is_active").notNull().default("false"),
   /** Name display color/gradient (CSS value) */
   nameColor: text("name_color").notNull().default(""),
