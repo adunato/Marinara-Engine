@@ -1145,9 +1145,12 @@ export const ChatMessage = memo(function ChatMessage({
   // panel) can't apply the new source-rectangle crop format directly — that
   // format renders the <img> with position: absolute and non-aspect-preserving
   // width/height, which stretches when forced into a rectangle whose aspect
-  // ratio differs from the (square) crop. Instead, convert the new-format
-  // crop into an `object-position` focal point so `object-cover` still fills
-  // the rectangle without distortion, but centered on the user's chosen face.
+  // ratio differs from the (square) crop. Bypass the crop entirely for new
+  // format so the <img>'s className (object-cover [object-top]) governs.
+  // A previous attempt mapped the crop center to `object-position`, but on a
+  // short message the glued panel becomes a wide rectangle — `object-cover`
+  // against a tall source then crops the top off and 50%/50% (or any centered
+  // focal point on a top-of-source face) lands on chin/chest instead of face.
   // Legacy {zoom, offsetX, offsetY} crops compose fine with object-cover
   // (they're a CSS transform) so they pass through unchanged.
   const rectangleSafeCropStyle = (
@@ -1156,11 +1159,7 @@ export const ChatMessage = memo(function ChatMessage({
   ): React.CSSProperties => {
     if (!crop) return fallback;
     if (isLegacyAvatarCrop(crop)) return fallback;
-    const centerX = crop.srcX + crop.srcWidth / 2;
-    const centerY = crop.srcY + crop.srcHeight / 2;
-    return {
-      objectPosition: `${(centerX * 100).toFixed(2)}% ${(centerY * 100).toFixed(2)}%`,
-    };
+    return {};
   };
   const compactAvatarCrop: AvatarCropValue | null = isUser
     ? (personaAvatarCrop ?? null)
