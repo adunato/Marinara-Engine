@@ -2535,22 +2535,44 @@ function ImportSettings() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const text = await file.text();
-      const envelope = JSON.parse(text);
-      const res = await fetch("/api/import/marinara", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(envelope),
-      });
-      const data = await res.json();
-      if (data.success) {
+      const head = file.size >= 4 ? new Uint8Array(await file.slice(0, 4).arrayBuffer()) : new Uint8Array();
+      const isZip = head.length >= 2 && head[0] === 0x50 && head[1] === 0x4b;
+      let res: Response;
+      if (isZip) {
+        const form = new FormData();
+        form.append("file", file, file.name);
+        res = await fetch("/api/import/marinara-package", { method: "POST", body: form });
+      } else {
+        let envelope: unknown;
+        try {
+          envelope = JSON.parse(await file.text());
+        } catch {
+          throw new Error("parse");
+        }
+        res = await fetch("/api/import/marinara", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(envelope),
+        });
+      }
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        name?: string;
+        type?: string;
+        error?: string;
+      };
+      if (res.ok && data.success) {
         qc.invalidateQueries();
         toast.success(`Imported ${data.name ?? data.type} successfully!`);
       } else {
-        toast.error(`Import failed: ${data.error ?? "Unknown error"}`);
+        toast.error(`Import failed: ${data.error ?? res.statusText ?? "Unknown error"}`);
       }
-    } catch {
-      toast.error("Import failed. Make sure this is a valid .marinara.json file.");
+    } catch (err) {
+      if (err instanceof Error && err.message === "parse") {
+        toast.error("Import failed. Make sure this is a valid .marinara or .json file.");
+      } else {
+        toast.error(`Import failed: ${err instanceof Error ? err.message : "network/server error"}`);
+      }
     }
     e.target.value = "";
   };
@@ -2606,8 +2628,8 @@ function ImportSettings() {
       {/* Marinara import */}
       <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-pink-500/20 to-orange-500/20 px-3 py-3 text-xs font-semibold ring-1 ring-pink-500/30 transition-all hover:ring-pink-500/50 active:scale-[0.98]">
         <Download size="1rem" />
-        Import Marinara File (.marinara.json)
-        <input type="file" accept=".json" onChange={handleMarinaraImport} className="hidden" />
+        Import Marinara File (.marinara / .json)
+        <input type="file" accept=".json,.marinara" onChange={handleMarinaraImport} className="hidden" />
       </label>
 
       <div className="retro-divider" />

@@ -440,6 +440,78 @@ export async function importRoutes(app: FastifyInstance) {
     return importMarinara(payload as any, app.db);
   });
 
+  /**
+   * Import a Marinara Engine native package (.marinara file — a zip with
+   * data.json plus the avatar binary). Single-file multipart upload.
+   */
+  app.post("/marinara-package", async (req, reply) => {
+    const file = await req.file();
+    if (!file) return reply.status(400).send({ success: false, error: "No file uploaded" });
+    const buffer = await file.toBuffer();
+    if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
+      return reply.status(400).send({ success: false, error: "Not a .marinara package (zip signature missing)" });
+    }
+    const AdmZip = (await import("adm-zip")).default;
+    let zip: InstanceType<typeof AdmZip>;
+    try {
+      zip = new AdmZip(buffer);
+    } catch {
+      return reply.status(400).send({ success: false, error: "Could not read .marinara package" });
+    }
+    // Bounds checks before any getData() call — a legitimate .marinara package
+    // ships data.json plus at most one avatar.* entry, so anything way past
+    // that is either accidental cruft or a zip-bomb-style decompression
+    // attempt. Sizes are read off the entry headers, not the decompressed
+    // stream, so we reject before paying the memory cost.
+    const MAX_PACKAGE_ENTRIES = 8;
+    const MAX_DATA_JSON_BYTES = 5 * 1024 * 1024;
+    const MAX_AVATAR_BYTES = 20 * 1024 * 1024;
+    const entries = zip.getEntries();
+    if (entries.length > MAX_PACKAGE_ENTRIES) {
+      return reply.status(400).send({ success: false, error: ".marinara package has too many entries" });
+    }
+    const dataEntry = zip.getEntry("data.json");
+    if (!dataEntry) {
+      return reply.status(400).send({ success: false, error: ".marinara package is missing data.json" });
+    }
+    if ((dataEntry.header.size ?? 0) > MAX_DATA_JSON_BYTES) {
+      return reply.status(400).send({ success: false, error: "data.json in package is too large" });
+    }
+    let envelope: Record<string, unknown>;
+    try {
+      envelope = JSON.parse(dataEntry.getData().toString("utf-8")) as Record<string, unknown>;
+    } catch {
+      return reply.status(400).send({ success: false, error: "data.json is not valid JSON" });
+    }
+    const avatarEntry = entries.find((e) => /^avatar\.(png|jpe?g|webp|gif|avif)$/i.test(e.entryName));
+    if (avatarEntry && (avatarEntry.header.size ?? 0) > MAX_AVATAR_BYTES) {
+      return reply.status(400).send({ success: false, error: "Avatar image in package is too large" });
+    }
+    if (avatarEntry && envelope.data && typeof envelope.data === "object") {
+      const ext = avatarEntry.entryName.split(".").pop()!.toLowerCase();
+      const mime =
+        ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "webp"
+            ? "image/webp"
+            : ext === "gif"
+              ? "image/gif"
+              : ext === "avif"
+                ? "image/avif"
+                : "image/png";
+      const dataUrl = `data:${mime};base64,${avatarEntry.getData().toString("base64")}`;
+      (envelope.data as Record<string, unknown>).avatar = dataUrl;
+    }
+    const timestampOverrides = readTimestampOverridesFromMultipart(file as any);
+    if (timestampOverrides && envelope.data && typeof envelope.data === "object") {
+      const data = envelope.data as Record<string, unknown>;
+      const existingMeta =
+        data.metadata && typeof data.metadata === "object" ? (data.metadata as Record<string, unknown>) : {};
+      data.metadata = { ...existingMeta, timestamps: timestampOverrides };
+    }
+    return importMarinara(envelope as any, app.db);
+  });
+
   /** Import a SillyTavern character (JSON body or PNG file upload). */
   app.post("/st-character", async (req) => {
     const contentType = req.headers["content-type"] ?? "";
