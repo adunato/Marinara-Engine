@@ -58,6 +58,21 @@ export interface APIConnection {
   maxTokensOverride: number | null;
   /** Maximum number of agent LLM jobs Marinara may run at once for this connection. */
   maxParallelJobs: number;
+  /** Folder this connection belongs to (null = root/unfiled). */
+  folderId: string | null;
+  /** Manual sort order within a folder (lower = higher). 0 = use default sort. */
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A folder for organising API connections in the Connections panel. */
+export interface ConnectionFolder {
+  id: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+  collapsed: boolean;
   createdAt: string;
   updatedAt: string;
 }
