@@ -170,6 +170,9 @@ importers:
       png-chunks-extract:
         specifier: ^1.0.0
         version: 1.0.0
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
       undici:
         specifier: ^7.25.0
         version: 7.25.0
@@ -199,9 +202,6 @@ importers:
       onnxruntime-web:
         specifier: 1.24.3
         version: 1.24.3
-      sharp:
-        specifier: ^0.34.5
-        version: 0.34.5
 
   packages/shared:
     dependencies:
@@ -3463,6 +3463,7 @@ packages:
 
   sliced@1.0.1:
     resolution: {integrity: sha512-VZBmZP8WU3sMOZm1bdgTadsQbcscK0UM8oKxKVBs4XAhUo2Xxzm/OFMGBkPusxw9xL3Uy8LrzEqGqJhclsr0yA==}
+    deprecated: Unsupported
 
   smob@1.6.1:
     resolution: {integrity: sha512-KAkBqZl3c2GvNgNhcoyJae1aKldDW0LO279wF9bk1PnluRTETKBq0WyzRXxEhoQLk56yHaOY4JCBEKDuJIET5g==}

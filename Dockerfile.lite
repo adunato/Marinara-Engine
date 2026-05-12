@@ -67,9 +67,19 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 
-# Install production deps only without optional local-model packages.
+# Install production deps. We can't pass --no-optional here because sharp's
+# native binary ships through transitive optional packages (@img/sharp-*),
+# which --no-optional would drop alongside the truly-optional onnxruntime
+# packages. Instead, install everything, rebuild sharp so its native binding
+# is registered (--ignore-scripts skipped it at install time), and then
+# explicitly prune onnxruntime to keep the lite image small.
 RUN --mount=type=cache,target=/app/.pnpm-store \
-    pnpm install --frozen-lockfile --prod --no-optional --ignore-scripts
+    pnpm install --frozen-lockfile --prod --ignore-scripts && \
+    pnpm rebuild sharp && \
+    rm -rf node_modules/.pnpm/onnxruntime-node@* \
+           node_modules/.pnpm/onnxruntime-web@* \
+           packages/server/node_modules/onnxruntime-node \
+           packages/server/node_modules/onnxruntime-web
 
 # Archive node_modules preserving pnpm symlinks — Docker COPY
 # dereferences them which would break module resolution.
