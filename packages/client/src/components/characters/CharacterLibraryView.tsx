@@ -384,7 +384,7 @@ export function CharacterLibraryView() {
           {isLoading && (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {[1, 2, 3, 4, 5, 6].map((item) => (
-                <div key={item} className="shimmer aspect-[4/5] rounded-[1.75rem]" />
+                <div key={item} className="shimmer aspect-square rounded-[1.75rem]" />
               ))}
             </div>
           )}
