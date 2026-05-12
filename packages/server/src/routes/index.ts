@@ -38,6 +38,7 @@ import { botBrowserPygmalionRoutes } from "./bot-browser-pygmalion.routes.js";
 import { botBrowserWyvernRoutes } from "./bot-browser-wyvern.routes.js";
 import { botBrowserDatacatRoutes } from "./bot-browser-datacat.routes.js";
 import { chatFoldersRoutes } from "./chat-folders.routes.js";
+import { connectionFoldersRoutes } from "./connection-folders.routes.js";
 import { chatPresetsRoutes } from "./chat-presets.routes.js";
 import { updatesRoutes } from "./updates.routes.js";
 import { themesRoutes } from "./themes.routes.js";
@@ -58,6 +59,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(lorebooksRoutes, { prefix: "/api/lorebooks" });
   await app.register(promptsRoutes, { prefix: "/api/prompts" });
   await app.register(connectionsRoutes, { prefix: "/api/connections" });
+  await app.register(connectionFoldersRoutes, { prefix: "/api/connection-folders" });
   await app.register(agentsRoutes, { prefix: "/api/agents" });
   await app.register(customToolsRoutes, { prefix: "/api/custom-tools" });
   await app.register(generateRoutes, { prefix: "/api/generate" });

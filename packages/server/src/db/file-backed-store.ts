@@ -182,6 +182,7 @@ export const FILE_BACKED_TABLES = [
   "conversation_notes",
   "memory_chunks",
   "chat_folders",
+  "api_connection_folders",
   "custom_themes",
   "app_settings",
   "chat_presets",

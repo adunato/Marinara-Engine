@@ -66,6 +66,10 @@ export const apiConnections = sqliteTable("api_connections", {
    * exact model chosen on the connection is what runs.
    */
   claudeFastMode: text("claude_fast_mode").notNull().default("false"),
+  /** Folder this connection belongs to (null = root/unfiled). */
+  folderId: text("folder_id"),
+  /** Manual sort order within a folder (lower = higher). 0 = use default sort. */
+  sortOrder: integer("sort_order").notNull().default(0),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

@@ -423,6 +423,15 @@ const CREATE_TABLES: string[] = [
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS api_connection_folders (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    collapsed TEXT NOT NULL DEFAULT 'false',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS custom_themes (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
@@ -698,6 +707,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "personas",
     column: "avatar_crop",
     definition: "TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: "api_connections",
+    column: "folder_id",
+    definition: "TEXT",
+  },
+  {
+    table: "api_connections",
+    column: "sort_order",
+    definition: "INTEGER NOT NULL DEFAULT 0",
   },
 ];
 
