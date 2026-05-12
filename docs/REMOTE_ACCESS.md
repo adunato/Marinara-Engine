@@ -137,7 +137,7 @@ BYPASS_AUTH_DOCKER=true      # trusts 172.16.0.0/12 (Docker bridge)
 - **Your non-Docker LAN uses `172.16.x.x` / `172.20.x.x` addresses.** `BYPASS_AUTH_DOCKER=true` trusts the entire `172.16.0.0/12` block; non-Docker callers in that range would also bypass auth. Set `BYPASS_AUTH_DOCKER=false` and add the specific containers to `IP_ALLOWLIST` instead.
 - **You genuinely want a password from your Tailnet / containers too** — set the corresponding flag to `false`.
 
-If Marinara is behind a Docker reverse proxy or tunnel container and you expect Marinara's own Basic Auth/IP allowlist to protect forwarded clients, set `REQUIRE_AUTH_FOR_DOCKER_PROXY=true`. That setup can be valid; just choose one auth boundary: the proxy enforces access, or Marinara does.
+If Marinara is behind a Docker reverse proxy or tunnel container on the default Docker bridge (`172.16.0.0/12`) and you expect Marinara's own Basic Auth/IP allowlist to protect forwarded clients, set `REQUIRE_AUTH_FOR_DOCKER_PROXY=true`. That setup can be valid; just choose one auth boundary: the proxy enforces access, or Marinara does. **Scope:** this flag only matches the same CIDR `BYPASS_AUTH_DOCKER` trusts. Proxies on Docker Swarm overlays, Kubernetes pod networks, or docker-compose user-defined networks with non-`172.16/12` IPAM present a different source IP and won't be affected — gate those by setting `BASIC_AUTH_USER`/`BASIC_AUTH_PASS` with `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=false`, or by adding the specific proxy IP to `IP_ALLOWLIST`.
 
 The server logs an `[auth-bypass]` warning the first time a request actually exercises one of these flags, so you can confirm in the log when the bypass goes live.
 
