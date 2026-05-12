@@ -333,10 +333,13 @@ function atomicWriteFile(path: string, content: string, options: { refreshBackup
     // Refresh the .bak via tmp + fsync + rename so a hard crash mid-write
     // can't leave both main and backup zero-filled (NTFS allocates blocks
     // and updates metadata before the cache manager flushes data).
-    // Callers can also skip refresh when this write is repairing a file that
-    // was just recovered from backup; the corrupt primary is not backup input.
-    // Skip the refresh if the existing main is NUL-corrupted — copying garbage
-    // over a valid .bak would destroy the recovery source we just used.
+    //
+    // Skip the refresh when either:
+    //   1. Caller opted out (refreshBackup=false): this write is repairing a
+    //      file just recovered from .bak, so the still-corrupt primary is not
+    //      valid backup input.
+    //   2. The existing main is NUL-corrupted: copying garbage over a valid
+    //      .bak would destroy the recovery source.
     if (refreshBackup && existsSync(path) && !looksNulFilled(path)) {
       const bakPath = `${path}.bak`;
       const bakTmpPath = `${bakPath}.tmp-${process.pid}-${Date.now()}`;
@@ -1058,7 +1061,9 @@ class FileTableStore {
       if (recoveredFromBackup) {
         this.backupRecoveredPaths.add(path);
         // Same self-heal: rewrite the corrupt main file from in-memory data
-        // (which now matches the recovered backup) on the next flush.
+        // (which now matches the recovered backup) on the next flush, while
+        // suppressing .bak refresh for that write so the recovery source is
+        // preserved until the primary is repaired.
         this.dirtyTables.add(table);
         this.dirty = true;
       }

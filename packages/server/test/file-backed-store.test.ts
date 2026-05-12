@@ -192,6 +192,53 @@ test("file-native self-heal preserves a valid backup when manifest primary has n
   }
 });
 
+test("file-native subsequent save after self-heal refreshes .bak from the healed primary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "marinara-file-post-heal-refresh-"));
+  try {
+    const storageDir = join(root, "storage");
+    const tablesDir = join(storageDir, "tables");
+    const tablePath = join(tablesDir, "chats.json");
+    const backupPath = `${tablePath}.bak`;
+    const rows = validChatRows();
+    mkdirSync(tablesDir, { recursive: true });
+    writeFileStorageManifest(storageDir, { chats: rows.length });
+    writeFileSync(tablePath, '{"id":');
+    writeFileSync(backupPath, JSON.stringify(rows));
+
+    // First pass: self-heal recovers from .bak and preserves it.
+    assertRecoveredChatIds(await loadChatIds(storageDir));
+
+    // Wreck .bak with a sentinel to prove the next save actually refreshes it.
+    writeFileSync(backupPath, "[]");
+
+    // Second pass: ordinary mutation + close should refresh .bak from the
+    // healed primary because the path is no longer flagged as recovered.
+    await withFileStorageDir(storageDir, async () => {
+      const db = await createFileNativeDB([]);
+      try {
+        await db.insert(chats).values(validChatRows("post-heal-chat")[0]!);
+      } finally {
+        await db._fileStore.close();
+      }
+    });
+
+    const refreshedBackupRows = readJsonFile<Array<{ id: string }>>(backupPath);
+    assert.deepEqual(
+      refreshedBackupRows.map((row) => row.id),
+      ["recovered-chat"],
+      ".bak should be refreshed from the pre-save healed primary, not left at the sentinel",
+    );
+
+    const refreshedPrimaryRows = readJsonFile<Array<{ id: string }>>(tablePath);
+    assert.deepEqual(
+      refreshedPrimaryRows.map((row) => row.id).sort(),
+      ["post-heal-chat", "recovered-chat"],
+    );
+  } finally {
+    await removeTempDir(root);
+  }
+});
+
 test("file-native self-heal keeps a valid backup when table primary is NUL-filled", async () => {
   const root = mkdtempSync(join(tmpdir(), "marinara-file-nul-backup-heal-"));
   try {
