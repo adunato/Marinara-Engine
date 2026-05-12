@@ -90,13 +90,20 @@ export async function chatFoldersRoutes(app: FastifyInstance) {
   }>("/reorder-chats", async (req, reply) => {
     const { orderedChatIds, folderId } = req.body;
     if (!Array.isArray(orderedChatIds)) return reply.status(400).send({ error: "orderedChatIds must be an array" });
-    for (let i = 0; i < orderedChatIds.length; i++) {
-      const id = orderedChatIds[i]!;
-      // Update sortOrder on the visible representative chat, then propagate
-      // the folder assignment to its sibling branches.
-      await chatsStorage.update(id, { sortOrder: i + 1 });
-      await chatsStorage.setFolderForChat(id, folderId);
-    }
+    // Atomic: a partial failure mid-loop would leave chats with a mix of
+    // old and new sort_order / folder_id values across siblings of the
+    // same group. Chats-per-folder counts are O(dozens), well under the
+    // libSQL Windows transaction use-after-free threshold noted in
+    // chats.storage.ts:449.
+    await app.db.transaction(async (tx) => {
+      for (let i = 0; i < orderedChatIds.length; i++) {
+        const id = orderedChatIds[i]!;
+        // Update sortOrder on the visible representative chat, then propagate
+        // the folder assignment to its sibling branches.
+        await chatsStorage.update(id, { sortOrder: i + 1 }, { tx });
+        await chatsStorage.setFolderForChat(id, folderId, { tx });
+      }
+    });
     return reply.send({ ok: true });
   });
 }

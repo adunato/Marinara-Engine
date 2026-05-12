@@ -146,8 +146,13 @@ export function createChatsStorage(db: DB) {
       return this.getById(id);
     },
 
-    async update(id: string, data: Partial<CreateChatInput> & { folderId?: string | null; sortOrder?: number }) {
-      await db
+    async update(
+      id: string,
+      data: Partial<CreateChatInput> & { folderId?: string | null; sortOrder?: number },
+      opts?: { tx?: Pick<DB, "select" | "update"> },
+    ) {
+      const conn = opts?.tx ?? db;
+      await conn
         .update(chats)
         .set({
           ...(data.name !== undefined && { name: data.name }),
@@ -162,7 +167,10 @@ export function createChatsStorage(db: DB) {
           updatedAt: now(),
         })
         .where(eq(chats.id, id));
-      return this.getById(id);
+      // Caller-level read; uses outer db so it reads committed state when no
+      // tx is in flight, or the in-flight tx state when one is provided.
+      const rows = await conn.select().from(chats).where(eq(chats.id, id));
+      return rows[0] ?? null;
     },
 
     /**
@@ -176,16 +184,19 @@ export function createChatsStorage(db: DB) {
      * Sibling branches are updated without bumping updatedAt so categorizing
      * a chat doesn't silently reorder its branch history.
      */
-    async setFolderForChat(chatId: string, folderId: string | null) {
-      const chat = await this.getById(chatId);
+    async setFolderForChat(chatId: string, folderId: string | null, opts?: { tx?: Pick<DB, "select" | "update"> }) {
+      const conn = opts?.tx ?? db;
+      const rows = await conn.select().from(chats).where(eq(chats.id, chatId));
+      const chat = rows[0];
       if (!chat) return null;
       if (chat.groupId) {
-        await db.update(chats).set({ folderId }).where(eq(chats.groupId, chat.groupId));
-        await db.update(chats).set({ updatedAt: now() }).where(eq(chats.id, chatId));
+        await conn.update(chats).set({ folderId }).where(eq(chats.groupId, chat.groupId));
+        await conn.update(chats).set({ updatedAt: now() }).where(eq(chats.id, chatId));
       } else {
-        await db.update(chats).set({ folderId, updatedAt: now() }).where(eq(chats.id, chatId));
+        await conn.update(chats).set({ folderId, updatedAt: now() }).where(eq(chats.id, chatId));
       }
-      return this.getById(chatId);
+      const updated = await conn.select().from(chats).where(eq(chats.id, chatId));
+      return updated[0] ?? null;
     },
 
     /** List all chats belonging to a group. */
