@@ -175,6 +175,7 @@ import {
   resolveAgentConnectionId,
   type AgentConnectionWarning,
 } from "./generate/agent-connection-guards.js";
+import { persistSecretPlotMemory } from "./generate/secret-plot-memory.js";
 import {
   normalizeContextInjections,
   normalizeSecretPlotSceneDirections,
@@ -4559,7 +4560,24 @@ export async function generateRoutes(app: FastifyInstance) {
       // navigated away), a write error must NOT crash the agent pipeline —
       // otherwise Promise.allSettled in executePhase silently drops the
       // entire group's results, causing agents to appear as "not triggered".
+      const secretPlotMemoryWrites: Promise<void>[] = [];
       const sendAgentEvent = (result: AgentResult) => {
+        if (result.success && result.type === "secret_plot" && result.data && typeof result.data === "object") {
+          const agentConfigId =
+            resolvedAgents.find((agent) => agent.type === "secret-plot-driver")?.id ?? result.agentId ?? null;
+          secretPlotMemoryWrites.push(
+            persistSecretPlotMemory({
+              agentsStore,
+              agentConfigId,
+              chatId: input.chatId,
+              plotData: result.data as Record<string, unknown>,
+              clearMissingSceneDirections: true,
+              source: "generation",
+            }).catch((err) => {
+              logger.error(err, "[secret-plot-driver] Failed to persist state from generation");
+            }),
+          );
+        }
         trySendSseEvent(reply, {
           type: "agent_result",
           data: {
@@ -5152,44 +5170,22 @@ export async function generateRoutes(app: FastifyInstance) {
           return;
         }
 
-        // ── Secret Plot Driver: persist fresh state + build injection ──
+        // ── Secret Plot Driver: ensure fresh state is persisted before prompt injection ──
         const plotResult = preGenResults.find((r) => r.type === "secret_plot");
-        if (plotResult?.success && plotResult.data && typeof plotResult.data === "object") {
-          const plotData = plotResult.data as Record<string, unknown>;
-          const agentConfigId = secretPlotAgent?.id ?? plotResult.agentId;
-
-          // Persist to agent memory so swipes/regens read from it
+        if (secretPlotMemoryWrites.length > 0) {
+          await Promise.all(secretPlotMemoryWrites);
+        } else if (plotResult?.success && plotResult.data && typeof plotResult.data === "object") {
           try {
-            if (plotData.overarchingArc) {
-              await agentsStore.setMemory(agentConfigId, input.chatId, "overarchingArc", plotData.overarchingArc);
-            }
-            if (plotData.sceneDirections) {
-              const allDirections = normalizeSecretPlotSceneDirections(plotData.sceneDirections);
-              const active = allDirections.filter((d) => !d.fulfilled);
-              const justFulfilled = allDirections.filter((d) => d.fulfilled).map((d) => d.direction);
-              await agentsStore.setMemory(agentConfigId, input.chatId, "sceneDirections", active);
-
-              // Keep a rolling window of recently fulfilled directions so the agent doesn't repeat them
-              if (justFulfilled.length > 0) {
-                const mem = await agentsStore.getMemory(agentConfigId, input.chatId);
-                const prev = normalizeStringArray(mem.recentlyFulfilled);
-                const merged = [...prev, ...justFulfilled].slice(-10); // keep last 10
-                await agentsStore.setMemory(agentConfigId, input.chatId, "recentlyFulfilled", merged);
-              }
-            } else {
-              // Agent didn't return new directions — clear stale ones so fulfilled
-              // directions from the previous turn aren't re-injected into the prompt
-              await agentsStore.setMemory(agentConfigId, input.chatId, "sceneDirections", []);
-            }
-            if (plotData.pacing) {
-              await agentsStore.setMemory(agentConfigId, input.chatId, "pacing", plotData.pacing);
-            }
-            await agentsStore.setMemory(agentConfigId, input.chatId, "staleDetected", plotData.staleDetected ?? false);
-            logger.debug(
-              `[secret-plot-driver] Persisted pre-gen state — arc: ${plotData.overarchingArc ? "updated" : "unchanged"}, directions: ${Array.isArray(plotData.sceneDirections) ? (plotData.sceneDirections as any[]).filter((d: any) => !d.fulfilled).length : 0} active, pacing: ${plotData.pacing ?? "unknown"}`,
-            );
+            await persistSecretPlotMemory({
+              agentsStore,
+              agentConfigId: secretPlotAgent?.id ?? plotResult.agentId,
+              chatId: input.chatId,
+              plotData: plotResult.data as Record<string, unknown>,
+              clearMissingSceneDirections: true,
+              source: "generation-fallback",
+            });
           } catch (persistErr) {
-            logger.error(persistErr, "[secret-plot-driver] Failed to persist state");
+            logger.error(persistErr, "[secret-plot-driver] Failed to persist state from generation fallback");
           }
         }
 
