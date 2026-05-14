@@ -6523,6 +6523,25 @@ export async function generateRoutes(app: FastifyInstance) {
             logger.warn(`[pre-gen] Non-critical agent(s) failed (${failedNames}) — continuing generation`);
           }
 
+          // Secret Plot Driver stores structured state for both the UI panel and
+          // the next prompt. Persist from the completed pre-gen result before any
+          // later branch can return early.
+          const plotResult = preGenResults.find((r) => r.type === "secret_plot");
+          if (plotResult?.success && plotResult.data && typeof plotResult.data === "object") {
+            try {
+              await persistSecretPlotMemory({
+                agentsStore,
+                agentConfigId: secretPlotAgent?.id ?? plotResult.agentId,
+                chatId: input.chatId,
+                plotData: plotResult.data as Record<string, unknown>,
+                clearMissingSceneDirections: true,
+                source: "pre_generation",
+              });
+            } catch (persistErr) {
+              logger.error(persistErr, "[secret-plot-driver] Failed to persist state from pre_generation");
+            }
+          }
+
           const shouldReviewWriterAgentOutputs =
             (chatMode === "roleplay" || chatMode === "visual_novel") &&
             chatMeta.reviewWriterAgentOutputs === true &&
@@ -6547,53 +6566,8 @@ export async function generateRoutes(app: FastifyInstance) {
             return;
           }
 
-          // ── Secret Plot Driver: persist fresh state + build injection ──
-          const plotResult = preGenResults.find((r) => r.type === "secret_plot");
           if (secretPlotMemoryWrites.length > 0) {
             await Promise.all(secretPlotMemoryWrites);
-          }
-          if (plotResult?.success && plotResult.data && typeof plotResult.data === "object") {
-            const plotData = plotResult.data as Record<string, unknown>;
-            const agentConfigId = secretPlotAgent?.id ?? plotResult.agentId;
-
-            // Persist to agent memory so swipes/regens read from it
-            try {
-              if (plotData.overarchingArc) {
-                await agentsStore.setMemory(agentConfigId, input.chatId, "overarchingArc", plotData.overarchingArc);
-              }
-              if (plotData.sceneDirections) {
-                const allDirections = normalizeSecretPlotSceneDirections(plotData.sceneDirections);
-                const active = allDirections.filter((d) => !d.fulfilled);
-                const justFulfilled = allDirections.filter((d) => d.fulfilled).map((d) => d.direction);
-                await agentsStore.setMemory(agentConfigId, input.chatId, "sceneDirections", active);
-
-                // Keep a rolling window of recently fulfilled directions so the agent doesn't repeat them
-                if (justFulfilled.length > 0) {
-                  const mem = await agentsStore.getMemory(agentConfigId, input.chatId);
-                  const prev = normalizeStringArray(mem.recentlyFulfilled);
-                  const merged = [...prev, ...justFulfilled].slice(-10); // keep last 10
-                  await agentsStore.setMemory(agentConfigId, input.chatId, "recentlyFulfilled", merged);
-                }
-              } else {
-                // Agent didn't return new directions — clear stale ones so fulfilled
-                // directions from the previous turn aren't re-injected into the prompt
-                await agentsStore.setMemory(agentConfigId, input.chatId, "sceneDirections", []);
-              }
-              if (plotData.pacing) {
-                await agentsStore.setMemory(agentConfigId, input.chatId, "pacing", plotData.pacing);
-              }
-              await agentsStore.setMemory(
-                agentConfigId,
-                input.chatId,
-                "staleDetected",
-                plotData.staleDetected ?? false,
-              );
-              logger.debug(
-                `[secret-plot-driver] Persisted pre-gen state — arc: ${plotData.overarchingArc ? "updated" : "unchanged"}, directions: ${Array.isArray(plotData.sceneDirections) ? (plotData.sceneDirections as any[]).filter((d: any) => !d.fulfilled).length : 0} active, pacing: ${plotData.pacing ?? "unknown"}`,
-              );
-            } catch (persistErr) {
-              logger.error(persistErr, "[secret-plot-driver] Failed to persist state");
-            }
           }
 
           const runtimeHandledPreGen = splitRuntimeHandledAgentInjections(
