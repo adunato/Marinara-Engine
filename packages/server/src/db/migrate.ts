@@ -300,9 +300,19 @@ const CREATE_TABLES: string[] = [
     id TEXT PRIMARY KEY NOT NULL,
     agent_config_id TEXT NOT NULL REFERENCES agent_configs(id),
     chat_id TEXT NOT NULL,
+    character_id TEXT,
+    memory_type TEXT NOT NULL DEFAULT 'legacy_kv',
     key TEXT NOT NULL,
     value TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL
+    title TEXT,
+    content TEXT NOT NULL DEFAULT '',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    embedding TEXT,
+    content_hash TEXT,
+    enabled TEXT NOT NULL DEFAULT 'true',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS custom_tools (
     id TEXT PRIMARY KEY NOT NULL,
@@ -657,6 +667,56 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "lorebook_entries",
     column: "description",
     definition: "TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: "agent_memory",
+    column: "character_id",
+    definition: "TEXT",
+  },
+  {
+    table: "agent_memory",
+    column: "memory_type",
+    definition: "TEXT NOT NULL DEFAULT 'legacy_kv'",
+  },
+  {
+    table: "agent_memory",
+    column: "title",
+    definition: "TEXT",
+  },
+  {
+    table: "agent_memory",
+    column: "content",
+    definition: "TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: "agent_memory",
+    column: "metadata",
+    definition: "TEXT NOT NULL DEFAULT '{}'",
+  },
+  {
+    table: "agent_memory",
+    column: "embedding",
+    definition: "TEXT",
+  },
+  {
+    table: "agent_memory",
+    column: "content_hash",
+    definition: "TEXT",
+  },
+  {
+    table: "agent_memory",
+    column: "enabled",
+    definition: "TEXT NOT NULL DEFAULT 'true'",
+  },
+  {
+    table: "agent_memory",
+    column: "created_at",
+    definition: "TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: "agent_memory",
+    column: "deleted_at",
+    definition: "TEXT",
   },
   {
     table: "lorebook_entries",
