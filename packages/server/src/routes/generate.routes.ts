@@ -4560,24 +4560,7 @@ export async function generateRoutes(app: FastifyInstance) {
       // navigated away), a write error must NOT crash the agent pipeline —
       // otherwise Promise.allSettled in executePhase silently drops the
       // entire group's results, causing agents to appear as "not triggered".
-      const secretPlotMemoryWrites: Promise<void>[] = [];
       const sendAgentEvent = (result: AgentResult) => {
-        if (result.success && result.type === "secret_plot" && result.data && typeof result.data === "object") {
-          const agentConfigId =
-            resolvedAgents.find((agent) => agent.type === "secret-plot-driver")?.id ?? result.agentId ?? null;
-          secretPlotMemoryWrites.push(
-            persistSecretPlotMemory({
-              agentsStore,
-              agentConfigId,
-              chatId: input.chatId,
-              plotData: result.data as Record<string, unknown>,
-              clearMissingSceneDirections: true,
-              source: "generation",
-            }).catch((err) => {
-              logger.error(err, "[secret-plot-driver] Failed to persist state from generation");
-            }),
-          );
-        }
         trySendSseEvent(reply, {
           type: "agent_result",
           data: {
@@ -5146,6 +5129,25 @@ export async function generateRoutes(app: FastifyInstance) {
           logger.warn(`[pre-gen] Non-critical agent(s) failed (${failedNames}) — continuing generation`);
         }
 
+        // Secret Plot Driver stores structured state for both the UI panel and the
+        // next prompt. Persist from the completed pre-gen result before any later
+        // branch can return early.
+        const plotResult = preGenResults.find((r) => r.type === "secret_plot");
+        if (plotResult?.success && plotResult.data && typeof plotResult.data === "object") {
+          try {
+            await persistSecretPlotMemory({
+              agentsStore,
+              agentConfigId: secretPlotAgent?.id ?? plotResult.agentId,
+              chatId: input.chatId,
+              plotData: plotResult.data as Record<string, unknown>,
+              clearMissingSceneDirections: true,
+              source: "pre_generation",
+            });
+          } catch (persistErr) {
+            logger.error(persistErr, "[secret-plot-driver] Failed to persist state from pre_generation");
+          }
+        }
+
         const shouldReviewWriterAgentOutputs =
           (chatMode === "roleplay" || chatMode === "visual_novel") &&
           chatMeta.reviewWriterAgentOutputs === true &&
@@ -5168,25 +5170,6 @@ export async function generateRoutes(app: FastifyInstance) {
             },
           });
           return;
-        }
-
-        // ── Secret Plot Driver: ensure fresh state is persisted before prompt injection ──
-        const plotResult = preGenResults.find((r) => r.type === "secret_plot");
-        if (secretPlotMemoryWrites.length > 0) {
-          await Promise.all(secretPlotMemoryWrites);
-        } else if (plotResult?.success && plotResult.data && typeof plotResult.data === "object") {
-          try {
-            await persistSecretPlotMemory({
-              agentsStore,
-              agentConfigId: secretPlotAgent?.id ?? plotResult.agentId,
-              chatId: input.chatId,
-              plotData: plotResult.data as Record<string, unknown>,
-              clearMissingSceneDirections: true,
-              source: "generation-fallback",
-            });
-          } catch (persistErr) {
-            logger.error(persistErr, "[secret-plot-driver] Failed to persist state from generation fallback");
-          }
         }
 
         // Inject pre-gen agent context at depth 0 (very bottom of prompt)
