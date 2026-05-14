@@ -216,6 +216,7 @@ import {
   normalizeSecretPlotSceneDirections,
   normalizeStringArray,
 } from "./generate/agent-normalizers.js";
+import { persistSecretPlotMemory } from "./generate/secret-plot-memory.js";
 import {
   buildGenerationPromptPresetCandidates,
   type PromptPresetCandidateSource,
@@ -5855,8 +5856,25 @@ export async function generateRoutes(app: FastifyInstance) {
         // navigated away), a write error must NOT crash the agent pipeline —
         // otherwise Promise.allSettled in executePhase silently drops the
         // entire group's results, causing agents to appear as "not triggered".
+        const secretPlotMemoryWrites: Promise<void>[] = [];
         const sendAgentEvent = (result: AgentResult) => {
           if (shouldDeferSpotifyAgentEvent(result)) return;
+          if (result.success && result.type === "secret_plot" && result.data && typeof result.data === "object") {
+            const agentConfigId =
+              resolvedAgents.find((agent) => agent.type === "secret-plot-driver")?.id ?? result.agentId ?? null;
+            secretPlotMemoryWrites.push(
+              persistSecretPlotMemory({
+                agentsStore,
+                agentConfigId,
+                chatId: input.chatId,
+                plotData: result.data as Record<string, unknown>,
+                clearMissingSceneDirections: true,
+                source: "generation",
+              }).catch((err) => {
+                logger.error(err, "[secret-plot-driver] Failed to persist state from generation");
+              }),
+            );
+          }
           trySendSseEvent(reply, {
             type: "agent_result",
             data: {
@@ -6531,6 +6549,9 @@ export async function generateRoutes(app: FastifyInstance) {
 
           // ── Secret Plot Driver: persist fresh state + build injection ──
           const plotResult = preGenResults.find((r) => r.type === "secret_plot");
+          if (secretPlotMemoryWrites.length > 0) {
+            await Promise.all(secretPlotMemoryWrites);
+          }
           if (plotResult?.success && plotResult.data && typeof plotResult.data === "object") {
             const plotData = plotResult.data as Record<string, unknown>;
             const agentConfigId = secretPlotAgent?.id ?? plotResult.agentId;
