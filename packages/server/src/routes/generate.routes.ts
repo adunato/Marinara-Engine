@@ -365,7 +365,13 @@ function formatConversationPromptTurn(content: string, role: string, personaName
 }
 
 function resolveLorebookGenerationTriggers(
-  input: { impersonate?: boolean; regenerateMessageId?: string | null; userMessage?: string | null },
+  input: {
+    impersonate?: boolean;
+    regenerateMessageId?: string | null;
+    userMessage?: string | null;
+    generationGuide?: string | null;
+    generationGuideSource?: "narrator" | "guide" | "game_start" | null;
+  },
   chatMode: string,
 ): string[] {
   const triggers = new Set<string>();
@@ -376,6 +382,11 @@ function resolveLorebookGenerationTriggers(
   } else if (input.regenerateMessageId) {
     triggers.add("swipe");
     triggers.add("regenerate");
+  } else if (
+    input.generationGuide?.trim() &&
+    (input.generationGuideSource === "narrator" || input.generationGuideSource === "guide")
+  ) {
+    triggers.add("chat");
   } else if (!input.userMessage?.trim()) {
     triggers.add("continue");
     triggers.add("autonomous");
@@ -384,6 +395,22 @@ function resolveLorebookGenerationTriggers(
   }
 
   return Array.from(triggers);
+}
+
+type LorebookScanMessage = { role: "user" | "assistant" | "system"; content: string };
+
+function buildLorebookScanMessagesWithGenerationGuide(
+  messages: LorebookScanMessage[],
+  input: {
+    generationGuide?: string | null;
+    generationGuideSource?: "narrator" | "guide" | "game_start" | null;
+  },
+): LorebookScanMessage[] {
+  const guide = input.generationGuide?.trim();
+  if (!guide || (input.generationGuideSource !== "narrator" && input.generationGuideSource !== "guide")) {
+    return messages;
+  }
+  return [...messages, { role: "user", content: guide }];
 }
 
 function normalizePartyLookupName(value: string): string {
@@ -1166,6 +1193,14 @@ export async function generateRoutes(app: FastifyInstance) {
         msg.content = msg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
       }
       promptMacroContext.lastInput = [...mappedMessages].reverse().find((message) => message.role === "user")?.content;
+      const toLorebookScanMessages = () =>
+        buildLorebookScanMessagesWithGenerationGuide(
+          mappedMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+          input,
+        );
 
       // ── Compute chat embedding for semantic lorebook matching (if any entries are vectorized) ──
       sendProgress("embedding");
@@ -1261,6 +1296,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           })(),
           chatMessages: mappedMessages,
+          lorebookScanMessages: toLorebookScanMessages(),
           chatSummary: ((chatMeta.summary as string) ?? "").trim() || null,
           enableAgents: chatEnableAgents,
           activeAgentIds: chatActiveAgentIds,
@@ -2352,11 +2388,7 @@ export async function generateRoutes(app: FastifyInstance) {
         // ── Lorebook injection for conversation mode ──
         {
           sendProgress("lorebooks");
-          const scanMessages = mappedMessages.map((m) => ({
-            role: m.role as "user" | "assistant" | "system",
-            content: m.content,
-          }));
-          const lorebookResult = await processLorebooks(app.db, scanMessages, null, {
+          const lorebookResult = await processLorebooks(app.db, toLorebookScanMessages(), null, {
             chatId: input.chatId,
             characterIds,
             personaId,
@@ -2406,11 +2438,7 @@ export async function generateRoutes(app: FastifyInstance) {
       // preset-driven chats get lorebook content via the preset assembler.
       if (!presetId && (chatMode === "roleplay" || chatMode === "visual_novel")) {
         sendProgress("lorebooks");
-        const scanMessages = mappedMessages.map((m) => ({
-          role: m.role as "user" | "assistant" | "system",
-          content: m.content,
-        }));
-        const lorebookResult = await processLorebooks(app.db, scanMessages, null, {
+        const lorebookResult = await processLorebooks(app.db, toLorebookScanMessages(), null, {
           chatId: input.chatId,
           characterIds,
           personaId,
@@ -3580,13 +3608,9 @@ export async function generateRoutes(app: FastifyInstance) {
         // ── Lorebook injection for game mode ──
         if (!presetHandledLorebooks) {
           sendProgress("lorebooks");
-          const scanMessages = mappedMessages.map((m) => ({
-            role: m.role as "user" | "assistant" | "system",
-            content: m.content,
-          }));
           const lorebookResult = await processLorebooks(
             app.db,
-            scanMessages,
+            toLorebookScanMessages(),
             await resolveLatestGameStateForLorebooks(app.db, input.chatId),
             {
               chatId: input.chatId,

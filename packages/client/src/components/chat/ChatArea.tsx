@@ -799,6 +799,7 @@ export function ChatArea() {
                 connectionId: null,
                 regenerateMessageId: messageId,
                 generationGuide: currentInput?.toString(),
+                generationGuideSource: "guide",
               }
             : { chatId: activeChatId, connectionId: null, regenerateMessageId: messageId },
         );
