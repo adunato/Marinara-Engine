@@ -2824,11 +2824,21 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
+        const runtimePhase = cfg.type === "secret-plot-driver" ? "pre_generation" : (cfg.phase as string);
+        if (cfg.type === "secret-plot-driver" && cfg.phase !== runtimePhase) {
+          logger.warn(
+            "[secret-plot-driver] Stored phase %s is stale for chat %s; running as %s",
+            cfg.phase,
+            input.chatId,
+            runtimePhase,
+          );
+        }
+
         resolvedAgents.push({
           id: cfg.id,
           type: cfg.type,
           name: cfg.name,
-          phase: cfg.phase as string,
+          phase: runtimePhase,
           promptTemplate: cfg.promptTemplate as string,
           connectionId: effectiveConnectionId,
           settings,
