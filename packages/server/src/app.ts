@@ -27,10 +27,14 @@ import { existsSync } from "fs";
 import { basename, join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { getBuildCommit, getBuildLabel } from "./config/build-info.js";
-import { isFileStorageBackend, isAutoCreateDefaultConnectionDisabled } from "./config/runtime-config.js";
+import {
+  getLogLevel,
+  getNodeEnv,
+  isFileStorageBackend,
+  isAutoCreateDefaultConnectionDisabled,
+} from "./config/runtime-config.js";
 import { corsDelegate } from "./config/cors-config.js";
 import { sidecarProcessService } from "./services/sidecar/sidecar-process.service.js";
-import { createLoggerOptions } from "./lib/logger.js";
 
 const isLite = process.env.MARINARA_LITE === "true" || process.env.MARINARA_LITE === "1";
 const REVALIDATE_FILES = new Set(["index.html"]);
@@ -39,7 +43,10 @@ const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 
 export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
   const app = Fastify({
-    logger: createLoggerOptions(),
+    logger: {
+      level: getLogLevel(),
+      transport: getNodeEnv() !== "production" ? { target: "pino-pretty", options: { colorize: true } } : undefined,
+    },
     bodyLimit: MAX_UPLOAD_BYTES, // Large profile imports can include many base64 avatars.
     ...(https && { https }),
   });
