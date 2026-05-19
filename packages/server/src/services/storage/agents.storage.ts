@@ -43,6 +43,7 @@ export interface AgentMemoryFilters {
   chatId?: string | null;
   characterId?: string | null;
   agentConfigId?: string | null;
+  memoryScope?: string | null;
   memoryType?: string | null;
   includeInternal?: boolean;
   includeDeleted?: boolean;
@@ -54,6 +55,7 @@ export interface SaveAgentMemoryInput {
   agentConfigId: string;
   chatId: string;
   characterId?: string | null;
+  memoryScope?: string | null;
   memoryType?: string | null;
   key?: string | null;
   title?: string | null;
@@ -105,6 +107,11 @@ function stringifyMetadata(value: Record<string, unknown> | null | undefined): s
   return JSON.stringify(value ?? {});
 }
 
+function normalizeMemoryScope(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
 function memoryContentFromValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
@@ -143,6 +150,7 @@ function recordMatchesFilters(record: AgentMemoryRecord, filters: AgentMemoryFil
   if (filters.chatId !== undefined && record.chatId !== filters.chatId) return false;
   if (filters.characterId !== undefined && record.characterId !== filters.characterId) return false;
   if (filters.agentConfigId !== undefined && record.agentConfigId !== filters.agentConfigId) return false;
+  if (filters.memoryScope !== undefined && record.metadata.memoryScope !== filters.memoryScope) return false;
   if (filters.memoryType && record.memoryType !== filters.memoryType) return false;
   return true;
 }
@@ -599,7 +607,10 @@ export function createAgentsStorage(db: DB) {
       const timestamp = now();
       const memoryType = (input.memoryType ?? "general").trim() || "general";
       const content = input.content.trim();
-      const metadata = stringifyMetadata(input.metadata);
+      const memoryScope = normalizeMemoryScope(input.memoryScope);
+      const scopedMetadata = { ...(input.metadata ?? {}) };
+      if (memoryScope) scopedMetadata.memoryScope = memoryScope;
+      const metadata = stringifyMetadata(scopedMetadata);
       const embedding = input.embedding ? JSON.stringify(input.embedding) : null;
       const contentHash = hashAgentMemoryContent(content);
 
@@ -629,21 +640,28 @@ export function createAgentsStorage(db: DB) {
 
       const stableKey = input.key?.trim();
       if (stableKey) {
-        const existing = await db
-          .select()
-          .from(agentMemory)
-          .where(
-            and(
-              eq(agentMemory.agentConfigId, resolvedAgentConfigId),
-              eq(agentMemory.chatId, input.chatId),
-              eq(agentMemory.key, stableKey),
-            ),
-          );
+        const existing = memoryScope
+          ? await db
+              .select()
+              .from(agentMemory)
+              .where(and(eq(agentMemory.chatId, input.chatId), eq(agentMemory.key, stableKey)))
+          : await db
+              .select()
+              .from(agentMemory)
+              .where(
+                and(
+                  eq(agentMemory.agentConfigId, resolvedAgentConfigId),
+                  eq(agentMemory.chatId, input.chatId),
+                  eq(agentMemory.key, stableKey),
+                ),
+              );
         const matched = existing
           .map(normalizeMemoryRow)
           .find(
             (record) =>
-              record.memoryType === memoryType && (record.characterId ?? null) === (input.characterId ?? null),
+              record.memoryType === memoryType &&
+              (record.characterId ?? null) === (input.characterId ?? null) &&
+              (!memoryScope || record.metadata.memoryScope === memoryScope),
           );
         if (matched) {
           await db

@@ -6230,6 +6230,10 @@ export async function generateRoutes(app: FastifyInstance) {
               const results = await executeToolCalls([call], {
                 ...baseToolExecutionContext,
                 agentConfigId: agent.id,
+                agentMemoryScope:
+                  typeof agentSettings.memoryScope === "string" && agentSettings.memoryScope.trim()
+                    ? agentSettings.memoryScope.trim()
+                    : null,
               });
               const result = results[0]?.result ?? "Tool execution failed";
               if (agent.type === "spotify" && call.function.name === "spotify_play") {

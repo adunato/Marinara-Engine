@@ -45,6 +45,7 @@ export interface AgentMemoryStore {
     agentConfigId: string;
     chatId: string;
     characterId?: string | null;
+    memoryScope?: string | null;
     memoryType?: string | null;
     key?: string | null;
     title?: string | null;
@@ -58,6 +59,7 @@ export interface AgentMemoryStore {
       chatId?: string | null;
       characterId?: string | null;
       agentConfigId?: string | null;
+      memoryScope?: string | null;
       memoryType?: string | null;
       includeInternal?: boolean;
       includeDeleted?: boolean;
@@ -72,6 +74,7 @@ export interface AgentMemoryStore {
       chatId?: string | null;
       characterId?: string | null;
       agentConfigId?: string | null;
+      memoryScope?: string | null;
       memoryType?: string | null;
       includeInternal?: boolean;
       includeDeleted?: boolean;
@@ -169,6 +172,7 @@ export interface ToolExecutionContext {
   gameState?: Record<string, unknown>;
   chatId?: string;
   agentConfigId?: string;
+  agentMemoryScope?: string | null;
   activeCharacters?: Array<{ id: string; name: string }>;
   chatMeta?: Record<string, unknown>;
   onUpdateMetadata?: (patch: MetadataPatchInput) => Promise<MetadataPatch>;
@@ -550,7 +554,8 @@ async function appendChatSummary(
 type AgentMemoryOwnership = {
   chatId: string;
   agentConfigId: string;
-  characterId?: string | null;
+  characterId?: string;
+  memoryScope?: string | null;
 };
 
 function asString(value: unknown): string | null {
@@ -572,9 +577,9 @@ function asMetadata(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function resolveCharacterId(args: Record<string, unknown>, context?: ToolExecutionContext): string | null {
+function resolveCharacterId(args: Record<string, unknown>, context?: ToolExecutionContext): string | undefined {
   const requestedName = asString(args.characterName);
-  if (!requestedName) return null;
+  if (!requestedName) return undefined;
   const match = context?.activeCharacters?.find((character) => character.name.toLowerCase() === requestedName.toLowerCase());
   if (!match) {
     throw new Error(`Unknown active character for agent memory: ${requestedName}`);
@@ -599,7 +604,23 @@ function resolveAgentMemoryOwnership(
     chatId: context.chatId,
     agentConfigId: context.agentConfigId,
     characterId: resolveCharacterId(args, context),
+    memoryScope: asString(context.agentMemoryScope),
   };
+}
+
+function scopedAgentMemoryFilters(ownership: AgentMemoryOwnership): {
+  agentConfigId?: string;
+  memoryScope?: string;
+} {
+  return ownership.memoryScope
+    ? { memoryScope: ownership.memoryScope }
+    : { agentConfigId: ownership.agentConfigId };
+}
+
+function canAccessAgentMemoryRecord(record: AgentMemoryRecord, ownership: AgentMemoryOwnership): boolean {
+  if (record.chatId !== ownership.chatId) return false;
+  if (ownership.memoryScope) return record.metadata.memoryScope === ownership.memoryScope;
+  return record.agentConfigId === ownership.agentConfigId;
 }
 
 function publicAgentMemoryRecord(record: AgentMemoryRecord, includeContent = true): Record<string, unknown> {
@@ -632,7 +653,7 @@ async function saveAgentMemory(
   const recordId = asString(args.recordId);
   if (recordId) {
     const existing = await context!.agentMemory!.getAgentMemoryRecord(recordId);
-    if (existing && (existing.chatId !== ownership.chatId || existing.agentConfigId !== ownership.agentConfigId)) {
+    if (existing && !canAccessAgentMemoryRecord(existing, ownership)) {
       return { saved: false, error: "Agent memory record is not owned by the executing agent in this chat" };
     }
   }
@@ -648,6 +669,7 @@ async function saveAgentMemory(
     agentConfigId: ownership.agentConfigId,
     chatId: ownership.chatId,
     characterId: ownership.characterId ?? null,
+    memoryScope: ownership.memoryScope,
     memoryType: asString(args.memoryType) ?? "general",
     key: asString(args.key),
     title: asString(args.title),
@@ -704,7 +726,7 @@ async function searchAgentMemory(
   const candidates = await context!.agentMemory!.searchAgentMemoryCandidates(
     {
       chatId: ownership.chatId,
-      agentConfigId: ownership.agentConfigId,
+      ...scopedAgentMemoryFilters(ownership),
       characterId: ownership.characterId,
       memoryType: asString(args.memoryType),
       includeInternal: asBoolean(args.includeInternal),
@@ -753,7 +775,7 @@ async function listAgentMemory(
   const records = await context!.agentMemory!.listAgentMemory(
     {
       chatId: ownership.chatId,
-      agentConfigId: ownership.agentConfigId,
+      ...scopedAgentMemoryFilters(ownership),
       characterId: ownership.characterId,
       memoryType: asString(args.memoryType),
       includeInternal: asBoolean(args.includeInternal),
@@ -773,7 +795,7 @@ async function deleteAgentMemory(
   const ownership = resolveAgentMemoryOwnership(args, context);
   const record = await context!.agentMemory!.getAgentMemoryRecord(recordId);
   if (!record || record.deletedAt || !record.enabled) return { deleted: false, error: "Agent memory record not found" };
-  if (record.chatId !== ownership.chatId || record.agentConfigId !== ownership.agentConfigId) {
+  if (!canAccessAgentMemoryRecord(record, ownership)) {
     return { deleted: false, error: "Agent memory record is not owned by the executing agent in this chat" };
   }
   if (ownership.characterId !== undefined && record.characterId !== ownership.characterId) {
