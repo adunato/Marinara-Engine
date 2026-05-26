@@ -619,7 +619,7 @@ function scopedAgentMemoryFilters(ownership: AgentMemoryOwnership): {
 
 function canAccessAgentMemoryRecord(record: AgentMemoryRecord, ownership: AgentMemoryOwnership): boolean {
   if (record.chatId !== ownership.chatId) return false;
-  if (ownership.memoryScope) return record.metadata.memoryScope === ownership.memoryScope;
+  if (ownership.memoryScope) return record.memoryScope === ownership.memoryScope;
   return record.agentConfigId === ownership.agentConfigId;
 }
 
@@ -729,7 +729,7 @@ async function searchAgentMemory(
       ...scopedAgentMemoryFilters(ownership),
       characterId: ownership.characterId,
       memoryType: asString(args.memoryType),
-      includeInternal: asBoolean(args.includeInternal),
+      includeInternal: false,
     },
     100,
   );
@@ -778,7 +778,7 @@ async function listAgentMemory(
       ...scopedAgentMemoryFilters(ownership),
       characterId: ownership.characterId,
       memoryType: asString(args.memoryType),
-      includeInternal: asBoolean(args.includeInternal),
+      includeInternal: false,
     },
     limit,
   );

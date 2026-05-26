@@ -933,6 +933,11 @@ export async function runMigrations(db: DB) {
       `CREATE INDEX IF NOT EXISTS idx_character_card_versions ON character_card_versions(character_id, created_at DESC)`,
     ),
   );
+  await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_agent_memory_chat ON agent_memory(chat_id, updated_at DESC)`));
+  await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_agent_memory_deleted ON agent_memory(deleted_at) WHERE deleted_at IS NULL`));
+  await db.run(
+    sql.raw(`CREATE INDEX IF NOT EXISTS idx_agent_memory_character_type ON agent_memory(character_id, memory_type)`),
+  );
   await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_custom_themes_active ON custom_themes(is_active)`));
   await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_chat_presets_mode_active ON chat_presets(mode, is_active)`));
 }

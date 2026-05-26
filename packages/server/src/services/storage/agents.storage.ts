@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Agent Configs, Runs & Memory
 // ──────────────────────────────────────────────
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNull, ne, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { DB } from "../../db/connection.js";
 import { agentConfigs, agentRuns, agentMemory } from "../../db/schema/index.js";
@@ -25,6 +25,7 @@ export interface AgentMemoryRecord {
   agentConfigId: string;
   chatId: string;
   characterId: string | null;
+  memoryScope: string | null;
   memoryType: string;
   key: string;
   value: string;
@@ -107,8 +108,8 @@ function stringifyMetadata(value: Record<string, unknown> | null | undefined): s
   return JSON.stringify(value ?? {});
 }
 
-function normalizeMemoryScope(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
+function normalizeMemoryScope(value: unknown): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
   return trimmed ? trimmed : null;
 }
 
@@ -124,6 +125,7 @@ function normalizeMemoryRow(row: AgentMemoryRow): AgentMemoryRecord {
     agentConfigId: row.agentConfigId,
     chatId: row.chatId,
     characterId: row.characterId ?? null,
+    memoryScope: normalizeMemoryScope(metadata.memoryScope),
     memoryType: row.memoryType || "legacy_kv",
     key: row.key,
     value: row.value,
@@ -150,7 +152,7 @@ function recordMatchesFilters(record: AgentMemoryRecord, filters: AgentMemoryFil
   if (filters.chatId !== undefined && record.chatId !== filters.chatId) return false;
   if (filters.characterId !== undefined && record.characterId !== filters.characterId) return false;
   if (filters.agentConfigId !== undefined && record.agentConfigId !== filters.agentConfigId) return false;
-  if (filters.memoryScope !== undefined && record.metadata.memoryScope !== filters.memoryScope) return false;
+  if (filters.memoryScope !== undefined && record.memoryScope !== filters.memoryScope) return false;
   if (filters.memoryType && record.memoryType !== filters.memoryType) return false;
   return true;
 }
@@ -277,11 +279,46 @@ export function createAgentsStorage(db: DB) {
     if (resolvedFilters.agentConfigId) {
       resolvedFilters.agentConfigId = await resolveAgentConfigId(resolvedFilters.agentConfigId);
     }
-    const rows = await db.select().from(agentMemory).orderBy(desc(agentMemory.updatedAt));
+    if (resolvedFilters.chatId === null || resolvedFilters.agentConfigId === null) return [];
+    const conditions = [];
+    if (resolvedFilters.chatId !== undefined) conditions.push(eq(agentMemory.chatId, resolvedFilters.chatId));
+    if (resolvedFilters.characterId !== undefined) {
+      conditions.push(
+        resolvedFilters.characterId === null ? isNull(agentMemory.characterId) : eq(agentMemory.characterId, resolvedFilters.characterId),
+      );
+    }
+    if (resolvedFilters.agentConfigId !== undefined) {
+      conditions.push(eq(agentMemory.agentConfigId, resolvedFilters.agentConfigId));
+    }
+    if (resolvedFilters.memoryType) conditions.push(eq(agentMemory.memoryType, resolvedFilters.memoryType));
+    if (resolvedFilters.memoryScope !== undefined) {
+      conditions.push(
+        resolvedFilters.memoryScope === null
+          ? sql`(json_type(${agentMemory.metadata}, '$.memoryScope') IS NULL OR json_type(${agentMemory.metadata}, '$.memoryScope') <> 'text' OR trim(coalesce(cast(json_extract(${agentMemory.metadata}, '$.memoryScope') AS TEXT), '')) = '')`
+          : sql`(json_type(${agentMemory.metadata}, '$.memoryScope') = 'text' AND trim(cast(json_extract(${agentMemory.metadata}, '$.memoryScope') AS TEXT)) = ${resolvedFilters.memoryScope})`,
+      );
+    }
+    if (!resolvedFilters.includeDeleted) conditions.push(isNull(agentMemory.deletedAt));
+    if (!resolvedFilters.includeDisabled) conditions.push(eq(agentMemory.enabled, "true"));
+    if (!resolvedFilters.includeInternal) {
+      conditions.push(
+        ne(agentMemory.memoryType, "internal"),
+        ne(agentMemory.memoryType, "legacy_kv"),
+        sql`${agentMemory.memoryType} NOT LIKE ${"%\\_internal"} ESCAPE '\\'`,
+      );
+    }
+
+    const normalizedLimit = Math.max(1, Math.min(limit, 100));
+    const rows = await db
+      .select()
+      .from(agentMemory)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(agentMemory.updatedAt))
+      .limit(normalizedLimit);
     return rows
       .map(normalizeMemoryRow)
       .filter((record) => recordMatchesFilters(record, resolvedFilters))
-      .slice(0, Math.max(1, Math.min(limit, 100)));
+      .slice(0, normalizedLimit);
   }
 
   return {
@@ -555,12 +592,12 @@ export function createAgentsStorage(db: DB) {
           .where(and(eq(agentMemory.agentConfigId, resolvedAgentConfigId), eq(agentMemory.chatId, chatId)));
         const existingByKey = new Map(existingRows.map((row) => [row.key, row]));
         const timestamp = now();
+        const memoryType = await resolveAgentMemoryType(resolvedAgentConfigId);
         const inserts: (typeof agentMemory.$inferInsert)[] = [];
 
         for (const entry of entries) {
           const rawValue = values[entry.key];
           const content = memoryContentFromValue(rawValue);
-          const memoryType = await resolveAgentMemoryType(resolvedAgentConfigId);
           const existing = existingByKey.get(entry.key);
           if (existing) {
             await tx
@@ -609,33 +646,38 @@ export function createAgentsStorage(db: DB) {
       const content = input.content.trim();
       const memoryScope = normalizeMemoryScope(input.memoryScope);
       const scopedMetadata = { ...(input.metadata ?? {}) };
+      delete scopedMetadata.memoryScope;
       if (memoryScope) scopedMetadata.memoryScope = memoryScope;
       const metadata = stringifyMetadata(scopedMetadata);
       const embedding = input.embedding ? JSON.stringify(input.embedding) : null;
       const contentHash = hashAgentMemoryContent(content);
 
       if (input.recordId) {
-        await db
-          .update(agentMemory)
-          .set({
-            agentConfigId: resolvedAgentConfigId,
-            chatId: input.chatId,
-            characterId: input.characterId ?? null,
-            memoryType,
-            key: input.key?.trim() || input.recordId,
-            value: content,
-            title: input.title?.trim() || null,
-            content,
-            metadata,
-            embedding,
-            contentHash,
-            enabled: String(input.enabled ?? true),
-            deletedAt: null,
-            updatedAt: timestamp,
-          })
-          .where(eq(agentMemory.id, input.recordId));
         const rows = await db.select().from(agentMemory).where(eq(agentMemory.id, input.recordId));
-        if (rows[0]) return normalizeMemoryRow(rows[0]);
+        if (rows[0]) {
+          await db
+            .update(agentMemory)
+            .set({
+              agentConfigId: resolvedAgentConfigId,
+              chatId: input.chatId,
+              characterId: input.characterId ?? null,
+              memoryType,
+              key: input.key?.trim() || input.recordId,
+              value: content,
+              title: input.title?.trim() || null,
+              content,
+              metadata,
+              embedding,
+              contentHash,
+              enabled: String(input.enabled ?? true),
+              deletedAt: null,
+              updatedAt: timestamp,
+            })
+            .where(eq(agentMemory.id, input.recordId));
+          const updatedRows = await db.select().from(agentMemory).where(eq(agentMemory.id, input.recordId));
+          if (updatedRows[0]) return normalizeMemoryRow(updatedRows[0]);
+          throw new Error(`Agent memory record disappeared after update: ${input.recordId}`);
+        }
       }
 
       const stableKey = input.key?.trim();
@@ -661,7 +703,7 @@ export function createAgentsStorage(db: DB) {
             (record) =>
               record.memoryType === memoryType &&
               (record.characterId ?? null) === (input.characterId ?? null) &&
-              (!memoryScope || record.metadata.memoryScope === memoryScope),
+              (!memoryScope || record.memoryScope === memoryScope),
           );
         if (matched) {
           await db
@@ -679,7 +721,8 @@ export function createAgentsStorage(db: DB) {
             })
             .where(eq(agentMemory.id, matched.id));
           const rows = await db.select().from(agentMemory).where(eq(agentMemory.id, matched.id));
-          return normalizeMemoryRow(rows[0]!);
+          if (rows[0]) return normalizeMemoryRow(rows[0]);
+          throw new Error(`Agent memory record disappeared after stable-key update: ${matched.id}`);
         }
       }
 
