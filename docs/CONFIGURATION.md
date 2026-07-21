@@ -61,6 +61,7 @@ A small group of low-level settings are locked in when the server starts. Changi
 - `TZ`
 - `AUTO_OPEN_BROWSER`, `AUTO_UPDATE_ENABLED`, `AUTO_CREATE_DEFAULT_CONNECTION`
 - `LOG_DISABLE_REQUEST_LOGGING`
+- `PHOENIX_LLM_TRACING_ENABLED`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT`
 - The image, video, sprite, and ComfyUI timeout and poll settings (`IMAGE_GEN_TIMEOUT_MS`, `VIDEO_GEN_TIMEOUT_MS`, `VIDEO_GEN_MAX_RESPONSE_BYTES`, `SPRITE_GENERATION_TIMEOUT_MS`, `SPRITE_ANIMATED_FFMPEG_TIMEOUT_MS`, `COMFYUI_GEN_TIMEOUT`, and the four `*_VIDEO_POLL_INTERVAL_MS` settings)
 
 When one of these changes, the log warns that a restart is required. Access-control settings and secrets like `BASIC_AUTH_USER`, `BASIC_AUTH_PASS`, `IP_ALLOWLIST`, `ADMIN_SECRET`, and `CSRF_TRUSTED_ORIGINS` do not need a restart.
@@ -150,6 +151,30 @@ LOG_DISABLE_REQUEST_LOGGING=true
 ```
 
 Browser logging is separate and is not controlled by `LOG_LEVEL`.
+
+### Searchable LLM traces with Phoenix
+
+For a searchable view of complete LLM inputs and outputs, Marinara can send OpenInference traces to a local [Arize Phoenix](https://arize.com/docs/phoenix) instance. This is disabled by default because prompts can contain private conversation text.
+
+Start the bundled local Phoenix container:
+
+```
+pnpm phoenix:up
+```
+
+Then add these settings to `.env` and restart Marinara:
+
+```
+PHOENIX_LLM_TRACING_ENABLED=true
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6007
+PHOENIX_PROJECT=marinara-engine
+```
+
+Open `http://localhost:6007` to inspect requests, responses, tools, model parameters, token usage, errors, and timing. Binary image, file, audio, and video bodies are omitted; the trace records their attachment counts. The local sidecar provider and embedding requests are not traced.
+
+Use `pnpm phoenix:down` to stop Phoenix. Its SQLite data remains in the `phoenix-data` Docker volume. To follow Phoenix's own container logs, run `pnpm phoenix:logs`.
+
+If Marinara itself runs in Docker while Phoenix runs on the host, use `PHOENIX_COLLECTOR_ENDPOINT=http://host.docker.internal:6007` instead.
 
 ## Timeouts
 
