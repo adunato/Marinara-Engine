@@ -2,7 +2,7 @@
 
 This guide explains how to link a Conversation chat to a Roleplay or Game chat so the two share context. It also covers **Cross-Chat Awareness**, the special tags that pass information across a link, and how to jump between linked chats.
 
-Marinara Engine (called Marinara after this) has two separate features that let chats know about each other. One is automatic. The other is an explicit one-to-one link you set up yourself. This guide keeps them apart, because they work in different ways.
+Marinara Engine (called Marinara after this) has three separate features that let chats know about each other: Connected Chats, Cross-Chat Awareness, and Roleplay Source Chats. This guide keeps them apart because they work in different ways.
 
 ## What Connected Chats do
 
@@ -13,6 +13,18 @@ Once linked, the Conversation side automatically reads the linked story chat's r
 The story chat (the Roleplay or Game) does not automatically read the Conversation's messages back. To send information the other way, a character uses special tags. Those tags are described further down.
 
 A common use: you run an immersive Roleplay or Game in one chat, and a casual out-of-character (OOC) direct-message chat in a Conversation. The OOC chat stays aware of the story, so you can talk about it as it happens.
+
+## Roleplay Source Chats are not Connected Chats
+
+**Source Chats** let one Roleplay read from multiple existing Conversation, Roleplay, or Game chats. Choose them in the **Source Chats** step while setting up a Roleplay, or add and remove them later under **Chat Settings → Source Chats**.
+
+Each source is read-only and refreshed when the Roleplay generates:
+
+- Conversation sources provide their stored daily and weekly summaries plus recent messages.
+- Roleplay sources provide their rolling summary plus recent messages.
+- Game sources provide their latest session summary, current tracked state, and recent messages.
+
+Source Chats do not create navigation links, send notes or influences, or receive anything back from the Roleplay. Use the separate one-to-one **Connected Chats** feature when you want an OOC Conversation with switching, notes, influences, or character DMs.
 
 ## Cross-Chat Awareness is not the same as a link
 

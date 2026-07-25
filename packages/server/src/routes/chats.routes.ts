@@ -15,6 +15,7 @@ import {
   DEFAULT_CONVERSATION_PROMPT,
   DEFAULT_GAME_SYSTEM_PROMPT,
   markAutonomousUnreadSchema,
+  replaceChatContextSourcesSchema,
   nameToXmlTag,
   normalizeChatSummaryEntries,
   resolveMacros,
@@ -1308,6 +1309,39 @@ export async function chatsRoutes(app: FastifyInstance) {
     await storage.deleteInfluencesForChat(req.params.id);
     await storage.deleteNotesForChat(req.params.id);
     return { disconnected: true };
+  });
+
+  app.get<{ Params: { id: string } }>("/:id/context-sources", async (req, reply) => {
+    const chat = await storage.getById(req.params.id);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+    if (chat.mode !== "roleplay") {
+      return reply.status(400).send({ error: "Context sources are available only for Roleplay chats" });
+    }
+    return storage.listContextSources(req.params.id);
+  });
+
+  app.put<{ Params: { id: string } }>("/:id/context-sources", async (req, reply) => {
+    const input = replaceChatContextSourcesSchema.parse(req.body);
+    const chat = await storage.getById(req.params.id);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+    if (chat.mode !== "roleplay") {
+      return reply.status(400).send({ error: "Context sources are available only for Roleplay chats" });
+    }
+
+    const sourceChatIds = Array.from(new Set(input.sourceChatIds));
+    if (sourceChatIds.includes(req.params.id)) {
+      return reply.status(400).send({ error: "A Roleplay chat cannot use itself as a context source" });
+    }
+
+    for (const sourceChatId of sourceChatIds) {
+      const source = await storage.getById(sourceChatId);
+      if (!source) return reply.status(404).send({ error: `Source chat not found: ${sourceChatId}` });
+      if (source.mode !== "conversation" && source.mode !== "roleplay" && source.mode !== "game") {
+        return reply.status(400).send({ error: `Unsupported source chat mode: ${source.mode}` });
+      }
+    }
+
+    return storage.replaceContextSources(req.params.id, sourceChatIds);
   });
 
   // List pending OOC influences for a chat

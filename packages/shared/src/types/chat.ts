@@ -114,6 +114,14 @@ export interface Chat {
   metadata: ChatMetadata;
 }
 
+/** A directional, read-only chat used as generation context by a Roleplay chat. */
+export interface ChatContextSource {
+  id: string;
+  targetChatId: string;
+  sourceChatId: string;
+  createdAt: string;
+}
+
 /** A folder for organising chats in the sidebar. */
 export interface ChatFolder {
   id: string;

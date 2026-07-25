@@ -96,6 +96,7 @@ import {
   type AgentAddSpriteSubject,
 } from "./AgentAddSetupFields";
 import { ConversationTimeZoneSelect } from "./ConversationTimeZoneSelect";
+import { ChatContextSourcesPicker } from "./ChatContextSourcesPicker";
 
 // ─── Step definitions ─────────────────────────
 
@@ -120,6 +121,11 @@ const ROLEPLAY_STEPS: WizardStep[] = [
     key: "participants",
     title: "Persona & Characters",
     body: "Choose who you are and who joins the scene.",
+  },
+  {
+    key: "sources",
+    title: "Source Chats",
+    body: "Optionally use summaries and recent messages from existing chats as read-only story context.",
   },
   {
     key: "lorebooks",
@@ -2921,6 +2927,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     connection: renderConnection,
     preset: renderPreset,
     participants: renderParticipants,
+    sources: () => <ChatContextSourcesPicker chatId={chat.id} />,
     lorebooks: renderLorebooks,
     agents: renderAgents,
   };
