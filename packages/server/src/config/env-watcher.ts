@@ -49,6 +49,11 @@ const RESTART_REQUIRED_KEYS = new Set<string>([
   // Fastify reads disableRequestLogging once from the factory options at boot
   // (app.ts), so toggling this after startup has no effect until a restart.
   "LOG_DISABLE_REQUEST_LOGGING",
+  // Providers are decorated when they are constructed, and the global tracer
+  // is registered once, so Phoenix changes need a clean process restart.
+  "PHOENIX_LLM_TRACING_ENABLED",
+  "PHOENIX_COLLECTOR_ENDPOINT",
+  "PHOENIX_PROJECT",
 ]);
 
 // Keys whose values must be masked when logged.

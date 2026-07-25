@@ -1,0 +1,14 @@
+services:
+  phoenix:
+    image: arizephoenix/phoenix:version-19.3.0
+    ports:
+      - "6007:6006"
+      - "4317:4317"
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes:
+      - phoenix-data:/mnt/data
+    restart: unless-stopped
+
+volumes:
+  phoenix-data:

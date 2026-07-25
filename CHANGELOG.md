@@ -4,6 +4,10 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+### Added
+
+- Added opt-in local Arize Phoenix tracing for searchable LLM prompts, responses, tools, model parameters, token usage, errors, and timing.
+
 ## [2.3.4]
 
 ### Added
