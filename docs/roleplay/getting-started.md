@@ -16,13 +16,14 @@ Pick Roleplay Mode when you want an immersive scene. Pick [Conversation Mode](..
 
 ## Starting a roleplay
 
-Create a new Roleplay chat to open the setup wizard. The wizard has five steps. Only the AI connection is required. Every other step is optional and can be changed later.
+Create a new Roleplay chat to open the setup wizard. The wizard has six steps. Only the AI connection is required. Every other step is optional and can be changed later.
 
 1. **Name & Connection**. Name the roleplay and choose which AI connection answers. You can leave the name blank.
 2. **Pick a Preset**. A preset controls the prompt structure and generation settings. The default preset works well for most chats.
 3. **Persona & Characters**. Choose the persona you play and which characters join the scene.
-4. **Attach Lorebooks**. A lorebook is a set of world facts that the AI reads when keywords appear. This step is optional.
-5. **Enable Agents**. Pick which agents run in this chat. You can add or remove agents later in **Chat Settings**, under **Agents**.
+4. **Source Chats**. Optionally select existing Conversation, Roleplay, or Game chats whose summaries and recent messages should provide read-only story context.
+5. **Attach Lorebooks**. A lorebook is a set of world facts that the AI reads when keywords appear. This step is optional.
+6. **Enable Agents**. Pick which agents run in this chat. You can add or remove agents later in **Chat Settings**, under **Agents**.
 
 After you finish the wizard, your scene opens and you can send your first message.
 

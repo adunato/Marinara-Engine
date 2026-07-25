@@ -94,6 +94,10 @@ export const summariesPatchSchema = z.object({
   weekSummaries: z.record(z.string(), summaryEntrySchema).optional(),
 });
 
+export const replaceChatContextSourcesSchema = z.object({
+  sourceChatIds: z.array(z.string().min(1)).max(50),
+});
+
 export const markAutonomousUnreadSchema = z.object({
   characterId: z.string().min(1).nullable().optional().default(null),
   count: z.number().int().positive().max(100).optional().default(1),
@@ -103,4 +107,5 @@ export type CreateChatInput = z.infer<typeof createChatSchema>;
 export type CreateMessageInput = z.infer<typeof createMessageSchema>;
 export type GenerateRequestInput = z.infer<typeof generateRequestSchema>;
 export type SummariesPatchInput = z.infer<typeof summariesPatchSchema>;
+export type ReplaceChatContextSourcesInput = z.infer<typeof replaceChatContextSourcesSchema>;
 export type MarkAutonomousUnreadInput = z.infer<typeof markAutonomousUnreadSchema>;

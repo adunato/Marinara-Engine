@@ -246,6 +246,7 @@ import {
   buildConversationCurrentContextBlock,
   replaceConversationContextBlockForTarget,
 } from "./generate/conversation-context-block.js";
+import { buildRoleplayContextSourcesBlock } from "./generate/roleplay-context-sources.js";
 import { prepareConversationPromptHistory } from "./generate/conversation-history-runtime.js";
 import { resolveConversationPresenceRuntime } from "./generate/conversation-presence-runtime.js";
 import { resolveProfessorMariPromptContext } from "./generate/professor-mari-prompt-context.js";
@@ -383,7 +384,10 @@ import {
   stripSpacesBeforeLineBreaks,
   trimIncompleteModelEnding,
 } from "../services/generation/generation-text-utils.js";
-import { formatSmartGroupCandidates, parsePromptPresetChoices } from "../services/generation/conversation-context-utils.js";
+import {
+  formatSmartGroupCandidates,
+  parsePromptPresetChoices,
+} from "../services/generation/conversation-context-utils.js";
 import { recoverImplicitSelfieCommand } from "../services/generation/selfie-command-recovery.js";
 import {
   buildLorebookScanMessagesWithGenerationGuide,
@@ -392,12 +396,7 @@ import {
   resolveLorebookGenerationTriggers,
   resolveLorebookTokenBudget,
 } from "../services/generation/lorebook-generation-runtime.js";
-import {
-  addLocationEntry,
-  addInventoryEntry,
-  upsertQuest,
-  addNpcEntry,
-} from "../services/game/journal.service.js";
+import { addLocationEntry, addInventoryEntry, upsertQuest, addNpcEntry } from "../services/game/journal.service.js";
 import { updateJournal } from "../services/generation/game-journal-runtime.js";
 import { buildGmFormatReminder } from "../services/game/gm-prompts.js";
 import {
@@ -785,11 +784,7 @@ export async function generateRoutes(app: FastifyInstance) {
         if (
           !input.forCharacterId &&
           regenCandidate.characterId &&
-          shouldRestoreRegenerationCharacterTarget(
-            requestChatMode,
-            earlyMeta.groupChatMode,
-            regenerationCharacterIds,
-          )
+          shouldRestoreRegenerationCharacterTarget(requestChatMode, earlyMeta.groupChatMode, regenerationCharacterIds)
         ) {
           input.forCharacterId = regenCandidate.characterId;
         }
@@ -1771,10 +1766,8 @@ export async function generateRoutes(app: FastifyInstance) {
             resolvePromptMacrosWithoutVariableWrites,
           );
         const deferredLorebookEntryStateBaseline = deferConversationLorebookScanToResponder
-          ? ((chatMeta.entryStateOverrides as Record<
-              string,
-              { ephemeral?: number | null; enabled?: boolean }
-            >) ?? undefined)
+          ? ((chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
+            undefined)
           : undefined;
         const deferredLorebookTimingStateBaseline = deferConversationLorebookScanToResponder
           ? ((chatMeta.entryTimingStates as Record<string, LorebookEntryTimingState>) ?? undefined)
@@ -1797,10 +1790,8 @@ export async function generateRoutes(app: FastifyInstance) {
             semanticSimilarityBaseline: lorebookSemanticSimilarityBaseline,
             entryStateOverrides: options.previewOnly
               ? deferredLorebookEntryStateBaseline
-              : ((chatMeta.entryStateOverrides as Record<
-                  string,
-                  { ephemeral?: number | null; enabled?: boolean }
-                >) ?? undefined),
+              : ((chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
+                undefined),
             entryTimingStates: options.previewOnly
               ? deferredLorebookTimingStateBaseline
               : ((chatMeta.entryTimingStates as Record<string, LorebookEntryTimingState>) ?? undefined),
@@ -2553,6 +2544,23 @@ export async function generateRoutes(app: FastifyInstance) {
           chats,
           finalMessages,
         });
+
+        if (chatMode === "roleplay" && !isSceneChat) {
+          const contextSourcesBlock = await buildRoleplayContextSourcesBlock({
+            chatId: input.chatId,
+            chats,
+            characters: chars,
+            gameStateStore,
+          });
+          if (contextSourcesBlock) {
+            const firstUserIdx = finalMessages.findIndex((message) => message.role === "user");
+            finalMessages.splice(firstUserIdx >= 0 ? firstUserIdx : finalMessages.length, 0, {
+              role: "system",
+              content: contextSourcesBlock,
+              contextKind: "injection",
+            });
+          }
+        }
 
         const recentSocialMediaActivityBlock = await buildRecentSocialMediaActivityBlock({
           db: app.db,
@@ -4586,10 +4594,9 @@ export async function generateRoutes(app: FastifyInstance) {
 
           return availableGroupCharacters
             .filter((character) => {
-              const names = [
-                character.name,
-                conversationCharacterPresenceById.get(character.id)?.displayName,
-              ].filter((name): name is string => typeof name === "string" && name.trim().length > 0);
+              const names = [character.name, conversationCharacterPresenceById.get(character.id)?.displayName].filter(
+                (name): name is string => typeof name === "string" && name.trim().length > 0,
+              );
               if (names.some((name) => requestedNames.has(normalizeTextForMatch(name)))) return true;
               return names.some((name) => {
                 const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -5261,40 +5268,44 @@ export async function generateRoutes(app: FastifyInstance) {
                   loopMessages,
                   round === 0 ? "Prompt sent to model" : `Prompt sent to model (tool round ${round + 1})`,
                 );
-                result = await withLlmRequestTimeout(chatGenerationTimeoutMs, () => provider.chatComplete!(loopMessages, {
-                  model: conn.model,
-                  temperature,
-                  maxTokens: effectiveMaxTokensForSend,
-                  maxContext: effectiveMaxContext,
-                  topP,
-                  topK: providerTopK,
-                  frequencyPenalty: frequencyPenalty || undefined,
-                  presencePenalty: presencePenalty || undefined,
-                  minP: minP || undefined,
-                  stop: stopSequences.length ? stopSequences : undefined,
-                  tools: toolDefs,
-                  enableCaching: conn.enableCaching === "true",
-                  anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
-                  cachingAtDepth: conn.cachingAtDepth ?? 5,
-                  enableThinking,
-                  captureReasoning,
-                  reasoningEffort: resolvedEffort ?? undefined,
-                  excludePastReasoning,
-                  verbosity: verbosity ?? undefined,
-                  serviceTier,
-                  customParameters,
-                  enabledParameters,
-                  suppressModelParameters,
-                  onThinking,
-                  onToken: input.streaming ? onToken : undefined,
-                  openrouterProvider: conn.openrouterProvider ?? undefined,
-                  signal: abortController.signal,
-                  encryptedReasoningItems: excludePastReasoning ? undefined : encryptedReasoningCache.get(input.chatId),
-                  onEncryptedReasoning: excludePastReasoning
-                    ? undefined
-                    : (items) => encryptedReasoningCache.set(input.chatId, items),
-                  onChatCompletionsReasoning: rememberChatCompletionsReasoning,
-                }));
+                result = await withLlmRequestTimeout(chatGenerationTimeoutMs, () =>
+                  provider.chatComplete!(loopMessages, {
+                    model: conn.model,
+                    temperature,
+                    maxTokens: effectiveMaxTokensForSend,
+                    maxContext: effectiveMaxContext,
+                    topP,
+                    topK: providerTopK,
+                    frequencyPenalty: frequencyPenalty || undefined,
+                    presencePenalty: presencePenalty || undefined,
+                    minP: minP || undefined,
+                    stop: stopSequences.length ? stopSequences : undefined,
+                    tools: toolDefs,
+                    enableCaching: conn.enableCaching === "true",
+                    anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
+                    cachingAtDepth: conn.cachingAtDepth ?? 5,
+                    enableThinking,
+                    captureReasoning,
+                    reasoningEffort: resolvedEffort ?? undefined,
+                    excludePastReasoning,
+                    verbosity: verbosity ?? undefined,
+                    serviceTier,
+                    customParameters,
+                    enabledParameters,
+                    suppressModelParameters,
+                    onThinking,
+                    onToken: input.streaming ? onToken : undefined,
+                    openrouterProvider: conn.openrouterProvider ?? undefined,
+                    signal: abortController.signal,
+                    encryptedReasoningItems: excludePastReasoning
+                      ? undefined
+                      : encryptedReasoningCache.get(input.chatId),
+                    onEncryptedReasoning: excludePastReasoning
+                      ? undefined
+                      : (items) => encryptedReasoningCache.set(input.chatId, items),
+                    onChatCompletionsReasoning: rememberChatCompletionsReasoning,
+                  }),
+                );
               } catch (err: any) {
                 // If the error was caused by an abort, cancel silently and skip post-processing.
                 if (abortController.signal.aborted || (err && err.name === "AbortError")) {
@@ -5479,39 +5490,43 @@ export async function generateRoutes(app: FastifyInstance) {
                 loopMessages = fitPromptForSend(loopMessages);
                 rememberMainPromptPreviewForAgents(loopMessages);
                 logPromptSentToModel(loopMessages, "Prompt sent to model (final tool follow-up)");
-                const finalResult = await withLlmRequestTimeout(chatGenerationTimeoutMs, () => provider.chatComplete!(loopMessages, {
-                  model: conn.model,
-                  temperature,
-                  maxTokens: effectiveMaxTokensForSend,
-                  maxContext: effectiveMaxContext,
-                  topP,
-                  topK: providerTopK,
-                  frequencyPenalty: frequencyPenalty || undefined,
-                  presencePenalty: presencePenalty || undefined,
-                  minP: minP || undefined,
-                  stop: stopSequences.length ? stopSequences : undefined,
-                  enableCaching: conn.enableCaching === "true",
-                  anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
-                  cachingAtDepth: conn.cachingAtDepth ?? 5,
-                  enableThinking,
-                  captureReasoning,
-                  reasoningEffort: resolvedEffort ?? undefined,
-                  excludePastReasoning,
-                  verbosity: verbosity ?? undefined,
-                  serviceTier,
-                  customParameters,
-                  enabledParameters,
-                  suppressModelParameters,
-                  onThinking,
-                  onToken: input.streaming ? onToken : undefined,
-                  openrouterProvider: conn.openrouterProvider ?? undefined,
-                  signal: abortController.signal,
-                  encryptedReasoningItems: excludePastReasoning ? undefined : encryptedReasoningCache.get(input.chatId),
-                  onEncryptedReasoning: excludePastReasoning
-                    ? undefined
-                    : (items) => encryptedReasoningCache.set(input.chatId, items),
-                  onChatCompletionsReasoning: rememberChatCompletionsReasoning,
-                }));
+                const finalResult = await withLlmRequestTimeout(chatGenerationTimeoutMs, () =>
+                  provider.chatComplete!(loopMessages, {
+                    model: conn.model,
+                    temperature,
+                    maxTokens: effectiveMaxTokensForSend,
+                    maxContext: effectiveMaxContext,
+                    topP,
+                    topK: providerTopK,
+                    frequencyPenalty: frequencyPenalty || undefined,
+                    presencePenalty: presencePenalty || undefined,
+                    minP: minP || undefined,
+                    stop: stopSequences.length ? stopSequences : undefined,
+                    enableCaching: conn.enableCaching === "true",
+                    anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
+                    cachingAtDepth: conn.cachingAtDepth ?? 5,
+                    enableThinking,
+                    captureReasoning,
+                    reasoningEffort: resolvedEffort ?? undefined,
+                    excludePastReasoning,
+                    verbosity: verbosity ?? undefined,
+                    serviceTier,
+                    customParameters,
+                    enabledParameters,
+                    suppressModelParameters,
+                    onThinking,
+                    onToken: input.streaming ? onToken : undefined,
+                    openrouterProvider: conn.openrouterProvider ?? undefined,
+                    signal: abortController.signal,
+                    encryptedReasoningItems: excludePastReasoning
+                      ? undefined
+                      : encryptedReasoningCache.get(input.chatId),
+                    onEncryptedReasoning: excludePastReasoning
+                      ? undefined
+                      : (items) => encryptedReasoningCache.set(input.chatId, items),
+                    onChatCompletionsReasoning: rememberChatCompletionsReasoning,
+                  }),
+                );
                 if (finalResult.content && fullResponse.length === prevLen) {
                   await writeContentChunked(finalResult.content);
                 }

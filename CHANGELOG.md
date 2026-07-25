@@ -6,6 +6,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Added
 
+- Added multi-select Source Chats during Roleplay setup and in Chat Settings, letting existing Conversation, Roleplay, and Game summaries plus recent messages provide live, read-only story context.
 - Added opt-in local Arize Phoenix tracing for searchable LLM prompts, responses, tools, model parameters, token usage, errors, and timing.
 
 ## [2.3.4]

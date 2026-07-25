@@ -89,6 +89,7 @@ import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
 import { AgentSuiteModal } from "./AgentSuiteModal";
 import { ConversationTimeZoneSelect } from "./ConversationTimeZoneSelect";
+import { ChatContextSourcesPicker } from "./ChatContextSourcesPicker";
 import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from "../../hooks/use-characters";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
 import { useDefaultPreset, usePresetFull, usePresets } from "../../hooks/use-presets";
@@ -118,10 +119,7 @@ import {
 import { useUpdateGameWidgets } from "../../hooks/use-game";
 import { useRegexScripts, useUpdateRegexScript, type RegexScriptRow } from "../../hooks/use-regex-scripts";
 import { api } from "../../lib/api-client";
-import {
-  trackChatMetadataSave,
-  waitForPendingChatMetadataSaves,
-} from "../../lib/chat-metadata-save-barrier";
+import { trackChatMetadataSave, waitForPendingChatMetadataSaves } from "../../lib/chat-metadata-save-barrier";
 import { appendLocalSidecarConnectionOption, filterLanguageGenerationConnections } from "../../lib/connection-filters";
 import {
   deriveActiveLorebookViews,
@@ -741,6 +739,7 @@ const CHAT_SETTINGS_ORDER = {
   cardTheming: -850,
   groupChat: -800,
   scopedRegex: -750,
+  contextSources: -720,
   connectedChat: -700,
   connectedNotes: -690,
   lorebooks: -600,
@@ -1293,16 +1292,13 @@ export function ChatSettingsDrawer({
     [deletedBuiltInAgentTypes, metadata.activeAgentIds],
   );
   const mapsPackage = installedCapabilities.find(
-    (item) =>
-      item.status === "active" && item.manifest.kind.includes("maps") && item.manifest.entrypoints.client,
+    (item) => item.status === "active" && item.manifest.kind.includes("maps") && item.manifest.entrypoints.client,
   );
   const mapsPackageEnabledForChat =
     metadata.enableAgents === true && Boolean(mapsPackage && activeAgentIds.includes(mapsPackage.id));
   const callsPackage = installedCapabilities.find(
     (item) =>
-      item.status === "active" &&
-      item.manifest.kind.includes("conversation-calls") &&
-      item.manifest.entrypoints.client,
+      item.status === "active" && item.manifest.kind.includes("conversation-calls") && item.manifest.entrypoints.client,
   );
   const availableConversationCommandOptions = useMemo(() => {
     return CONVERSATION_COMMAND_TOGGLE_OPTIONS.filter((command) => {
@@ -2171,19 +2167,17 @@ export function ChatSettingsDrawer({
       illustratorAutoBackgroundsEnabled: !illustratorAutoBackgroundsEnabled,
     });
   }, [chat.id, illustratorAutoBackgroundsEnabled, updateMeta]);
-  const renderIllustratorImageStyleSelect = (
-    options: { emptyOptionLabel?: string; description?: string } = {},
-  ) => (
+  const renderIllustratorImageStyleSelect = (options: { emptyOptionLabel?: string; description?: string } = {}) => (
     <label className="flex flex-col gap-1">
       <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
       <select
         value={(metadata.imageStyleProfileId as string) ?? ""}
-        onChange={(event) =>
-          updateMeta.mutate({ id: chat.id, imageStyleProfileId: event.target.value || null })
-        }
+        onChange={(event) => updateMeta.mutate({ id: chat.id, imageStyleProfileId: event.target.value || null })}
         className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
       >
-        <option value="">{options.emptyOptionLabel ?? "Use default style from Style Profiles in Advanced settings"}</option>
+        <option value="">
+          {options.emptyOptionLabel ?? "Use default style from Style Profiles in Advanced settings"}
+        </option>
         {imageStyleProfiles.profiles.map((profile) => (
           <option key={profile.id} value={profile.id}>
             {profile.name}
@@ -4315,6 +4309,18 @@ export function ChatSettingsDrawer({
             </div>
           )}
 
+          {/* Roleplay context sources */}
+          {chatMode === "roleplay" && (
+            <Section
+              style={{ order: CHAT_SETTINGS_ORDER.contextSources }}
+              label="Source Chats"
+              icon={<ArrowRightLeft size="0.875rem" />}
+              help="Use summaries and recent messages from existing Conversation, Roleplay, or Game chats as read-only context for this roleplay."
+            >
+              <ChatContextSourcesPicker chatId={chat.id} />
+            </Section>
+          )}
+
           {/* Conversation/Game prompt preset */}
           {isConversation && (
             <div style={{ order: CHAT_SETTINGS_ORDER.promptPreset }}>
@@ -5999,9 +6005,7 @@ export function ChatSettingsDrawer({
                   <div
                     className={cn(
                       "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                      metadata.crossChatAwareness !== false
-                        ? "bg-[var(--primary)]"
-                        : "bg-[var(--muted-foreground)]/50",
+                      metadata.crossChatAwareness !== false ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
                     )}
                   >
                     <div
@@ -6337,22 +6341,24 @@ export function ChatSettingsDrawer({
                             ? "Run scene analysis and any attached custom agents during generation."
                             : "Run AI agents during generation (world state, expressions, etc.)"}
                         </span>
-                        {isGame && metadata.enableAgents && (() => {
-                          const setupCfg = metadata.gameSetupConfig as Record<string, unknown> | undefined;
-                          const sceneConnId =
-                            (metadata.gameSceneConnectionId as string) ||
-                            (setupCfg?.sceneConnectionId as string) ||
-                            null;
-                          const sceneConn = sceneConnId
-                            ? ((connections ?? []) as Array<{ id: string; name: string; model?: string }>).find(
-                                (connection) => connection.id === sceneConnId,
-                              )
-                            : null;
-                          const connectionLabel = sceneConn
-                            ? `${sceneConn.name}${sceneConn.model ? ` — ${sceneConn.model}` : ""}`
-                            : "Local sidecar (Gemma)";
-                          return <span className="mt-0.5 block text-[var(--primary)]/70">{connectionLabel}</span>;
-                        })()}
+                        {isGame &&
+                          metadata.enableAgents &&
+                          (() => {
+                            const setupCfg = metadata.gameSetupConfig as Record<string, unknown> | undefined;
+                            const sceneConnId =
+                              (metadata.gameSceneConnectionId as string) ||
+                              (setupCfg?.sceneConnectionId as string) ||
+                              null;
+                            const sceneConn = sceneConnId
+                              ? ((connections ?? []) as Array<{ id: string; name: string; model?: string }>).find(
+                                  (connection) => connection.id === sceneConnId,
+                                )
+                              : null;
+                            const connectionLabel = sceneConn
+                              ? `${sceneConn.name}${sceneConn.model ? ` — ${sceneConn.model}` : ""}`
+                              : "Local sidecar (Gemma)";
+                            return <span className="mt-0.5 block text-[var(--primary)]/70">{connectionLabel}</span>;
+                          })()}
                       </>
                     }
                     checked={metadata.enableAgents === true}
@@ -8872,7 +8878,8 @@ export function ChatSettingsDrawer({
             {agentAddIsFeature ? (
               <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                 This lets characters initiate the downloaded feature in this chat. Manual controls supplied by the
-                installed package remain available independently, and no separate agent model call or connection is used.
+                installed package remain available independently, and no separate agent model call or connection is
+                used.
               </div>
             ) : agentAddIsRuntimeDisabled ? (
               <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">

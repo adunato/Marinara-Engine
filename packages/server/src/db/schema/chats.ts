@@ -101,6 +101,21 @@ export const conversationNotes = fileTable("conversation_notes", {
   createdAt: text("created_at").notNull(),
 });
 
+export const chatContextSources = fileTable(
+  "chat_context_sources",
+  {
+    id: text("id").primaryKey(),
+    targetChatId: text("target_chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    sourceChatId: text("source_chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  { uniqueBy: [["targetChatId", "sourceChatId"]] },
+);
+
 // ── Memory Chunks: embedded conversation fragments for semantic recall ──
 export const memoryChunks = fileTable("memory_chunks", {
   id: text("id").primaryKey(),

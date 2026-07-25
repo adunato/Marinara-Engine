@@ -203,6 +203,7 @@ export const FILE_BACKED_TABLES = [
   "custom_stickers",
   "ooc_influences",
   "conversation_notes",
+  "chat_context_sources",
   "memory_chunks",
   "chat_folders",
   "api_connection_folders",
@@ -254,6 +255,8 @@ export const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; 
     { parent: "chats", child: "game_checkpoints", parentKey: "id", childKey: "chatId" },
     { parent: "chats", child: "game_scene_videos", parentKey: "id", childKey: "chatId" },
     { parent: "chats", child: "game_turn_storyboards", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "chat_context_sources", parentKey: "id", childKey: "targetChatId" },
+    { parent: "chats", child: "chat_context_sources", parentKey: "id", childKey: "sourceChatId" },
     {
       parent: "game_turn_storyboards",
       child: "game_turn_storyboard_keyframes",

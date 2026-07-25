@@ -17,6 +17,7 @@ import {
   gameTurnStoryboards,
   oocInfluences,
   conversationNotes,
+  chatContextSources,
   agentRuns,
   agentMemory,
   memoryChunks,
@@ -1495,6 +1496,33 @@ export function createChatsStorage(db: DB) {
       if (parsed) {
         await db.update(chats).set({ connectedChatId: null, updatedAt: timestamp }).where(eq(chats.id, parsed));
       }
+    },
+
+    // ── Roleplay Context Sources ──
+
+    async listContextSources(targetChatId: string) {
+      return db
+        .select()
+        .from(chatContextSources)
+        .where(eq(chatContextSources.targetChatId, targetChatId))
+        .orderBy(chatContextSources.createdAt);
+    },
+
+    async replaceContextSources(targetChatId: string, sourceChatIds: string[]) {
+      await db.transaction(async (tx) => {
+        await tx.delete(chatContextSources).where(eq(chatContextSources.targetChatId, targetChatId));
+        if (sourceChatIds.length === 0) return;
+        const createdAt = now();
+        await tx.insert(chatContextSources).values(
+          sourceChatIds.map((sourceChatId) => ({
+            id: newId(),
+            targetChatId,
+            sourceChatId,
+            createdAt,
+          })),
+        );
+      });
+      return this.listContextSources(targetChatId);
     },
 
     // ── OOC Influences ──
