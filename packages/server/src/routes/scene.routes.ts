@@ -17,7 +17,11 @@ import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import type { GenerationFallbackNotifier } from "../services/generation/fallback-notification.js";
 import { createReplyFallbackNotifier } from "./generate/fallback-notification.js";
-import { stripConversationPromptTimestamps } from "../services/conversation/transcript-sanitize.js";
+import { resolveConversationTimeZone } from "../services/conversation/timezone.js";
+import {
+  buildSceneConversationContext,
+  resolveSceneConversationContext,
+} from "../services/conversation/scene-context.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import type { ChatCompletionResult, ChatMessage } from "../services/llm/base-provider.js";
 import { localAuthProviderBaseUrl } from "@marinara-engine/shared";
@@ -202,6 +206,34 @@ function parseMetadata(chat: { metadata?: string | Record<string, unknown> | nul
   }
 }
 
+async function compileOriginConversationContext(args: {
+  chats: ReturnType<typeof createChatsStorage>;
+  chars: ReturnType<typeof createCharactersStorage>;
+  chat: {
+    id: string;
+    characterIds?: unknown;
+    metadata?: string | Record<string, unknown> | null;
+  };
+  personaName: string;
+  now?: Date;
+}): Promise<string> {
+  const metadata = parseMetadata(args.chat);
+  const characterNames = new Map<string, string>();
+  await Promise.all(
+    parseCharacterIds(args.chat.characterIds).map(async (characterId) => {
+      characterNames.set(characterId, await getCharacterName(args.chars, characterId));
+    }),
+  );
+  return buildSceneConversationContext({
+    messages: await args.chats.listMessages(args.chat.id),
+    metadata,
+    personaName: args.personaName,
+    characterNames,
+    now: args.now ?? new Date(),
+    timeZone: resolveConversationTimeZone(metadata),
+  });
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -336,14 +368,12 @@ export async function sceneRoutes(app: FastifyInstance) {
 
     if (!sceneChat) return reply.status(500).send({ error: "Failed to create scene chat" });
 
-    // Build conversation transcript as hidden context (NOT displayed)
+    // Preserve the exact context used by the planner. Older callers may submit
+    // plans without a capture, so compile a read-only fallback from the origin.
     const { personaName } = await buildPersonaContext(chars, originChat.personaId, originChat.mode);
-    const initiatorName = initiatorCharId ? await getCharacterName(chars, initiatorCharId) : "User";
-    const recentMsgs = await getRecentMessages(chats, originChatId, 30);
-    const historyText = recentMsgs
-      .map((m) => `${m.role === "user" ? personaName : initiatorName}: ${stripConversationPromptTimestamps(m.content)}`)
-      .join("\n\n")
-      .slice(-3000);
+    const historyText = await resolveSceneConversationContext(plan.conversationContext, () =>
+      compileOriginConversationContext({ chats, chars, chat: originChat, personaName }),
+    );
 
     // Store scene metadata on the new chat (single write)
     // Inherit lorebooks from origin chat
@@ -801,11 +831,7 @@ export async function sceneRoutes(app: FastifyInstance) {
         ? `Available backgrounds: ${availableBackgrounds.join(", ")}`
         : `No backgrounds uploaded. Set background to null.`;
 
-    // Get recent conversation for context
-    const recentMsgs = await getRecentMessages(chats, chatId, 20);
-    const historyText = recentMsgs
-      .map((m) => `${m.role === "user" ? personaName : "Character"}: ${stripConversationPromptTimestamps(m.content)}`)
-      .join("\n\n");
+    const conversationContext = await compileOriginConversationContext({ chats, chars, chat, personaName });
 
     const planPrompt: ChatMessage[] = [
       {
@@ -830,8 +856,8 @@ export async function sceneRoutes(app: FastifyInstance) {
           bgListStr,
           `</backgrounds>`,
           ``,
-          `Recent conversation:`,
-          historyText.slice(-2000),
+          `Conversation context:`,
+          conversationContext,
         ].join("\n"),
       },
       {
@@ -939,6 +965,7 @@ export async function sceneRoutes(app: FastifyInstance) {
       rating: parsed.rating === "nsfw" ? "nsfw" : "sfw",
       relationshipHistory: String(parsed.relationshipHistory || ""),
       participationGuide: String(parsed.participationGuide || "").replace(/^\*+|\*+$/g, ""),
+      conversationContext,
     };
 
     return { plan: fullPlan } satisfies ScenePlanResponse;

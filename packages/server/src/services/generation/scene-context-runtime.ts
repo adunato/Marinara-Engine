@@ -45,7 +45,7 @@ export function injectSceneContextMessages({
   if (sceneConvoCtx) {
     awarenessLines.push(
       `## Conversation Context`,
-      `The following is a transcript of the conversation that led up to this scene:`,
+      `The following structured history snapshot contains the summaries and conversation turns that led up to this scene:`,
       passThroughLeaf(sceneConvoCtx),
     );
   }

@@ -52,6 +52,8 @@ export interface SceneFullPlan {
   relationshipHistory: string;
   /** A short, fun, user-visible guide about how to play/participate in this scene. */
   participationGuide: string;
+  /** Server-captured origin Conversation context used to plan and create this scene. */
+  conversationContext?: string;
 }
 
 export type ScenePromptPov = "first_person" | "second_person" | "third_person";
