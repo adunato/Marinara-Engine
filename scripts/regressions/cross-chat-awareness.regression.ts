@@ -116,14 +116,21 @@ assert.equal(isCrossChatAwarenessEnabled('{"crossChatAwareness":false}'), false)
 assert.deepEqual(
   selectCrossChatSourceChats(
     [
-      { id: "current", metadata: {} },
-      { id: "unrelated-enabled", metadata: {} },
-      { id: "explicitly-disabled", metadata: { crossChatAwareness: false } },
+      { id: "current", characterIds: '["alice","bob"]', metadata: {} },
+      { id: "alice-enabled", characterIds: '["alice","charlie"]', metadata: {} },
+      { id: "bob-enabled", characterIds: ["bob", "dana"], metadata: {} },
+      { id: "unrelated-enabled", characterIds: '["erin","frank"]', metadata: {} },
+      {
+        id: "shared-but-disabled",
+        characterIds: '["alice","grace"]',
+        metadata: { crossChatAwareness: false },
+      },
     ],
     "current",
+    ["alice", "bob"],
   ).map((chat) => chat.id),
-  ["unrelated-enabled"],
-  "all enabled conversations are sources even when they share no character with the current chat",
+  ["alice-enabled", "bob-enabled"],
+  "sources must be enabled and share at least one character with the current chat",
 );
 
 console.info("Cross-chat awareness regression checks passed.");

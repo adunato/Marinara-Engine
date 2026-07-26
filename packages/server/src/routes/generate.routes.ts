@@ -2343,6 +2343,7 @@ export async function generateRoutes(app: FastifyInstance) {
             convoAwarenessBlock = await buildAwarenessBlock(
               app.db,
               input.chatId,
+              characterIds,
               personaName,
               promptTimeZone,
               wrapFormat,

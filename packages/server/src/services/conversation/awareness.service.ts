@@ -71,11 +71,18 @@ export function isCrossChatAwarenessEnabled(metadata: unknown): boolean {
   return asRecord(metadata).crossChatAwareness !== false;
 }
 
-export function selectCrossChatSourceChats<T extends { id: string; metadata: unknown }>(
+export function selectCrossChatSourceChats<T extends { id: string; characterIds: unknown; metadata: unknown }>(
   conversationChats: T[],
   currentChatId: string,
+  currentCharacterIds: string[],
 ): T[] {
-  return conversationChats.filter((chat) => chat.id !== currentChatId && isCrossChatAwarenessEnabled(chat.metadata));
+  const currentCharacters = new Set(currentCharacterIds);
+  return conversationChats.filter(
+    (chat) =>
+      chat.id !== currentChatId &&
+      isCrossChatAwarenessEnabled(chat.metadata) &&
+      parseCharacterIds(chat.characterIds).some((characterId) => currentCharacters.has(characterId)),
+  );
 }
 
 function formatConversationSummaries(metadata: Record<string, unknown>, wrapFormat: WrapFormat): string {
@@ -170,6 +177,7 @@ export function formatAwarenessContextBlock(conversationBlocks: string[], wrapFo
 export async function buildAwarenessBlock(
   db: DB,
   currentChatId: string,
+  currentCharacterIds: string[],
   fallbackPersonaName: string,
   timeZone?: string,
   wrapFormat: WrapFormat = "xml",
@@ -185,7 +193,7 @@ export async function buildAwarenessBlock(
     })
     .from(chats)
     .where(eq(chats.mode, "conversation"))) as ChatRow[];
-  const sourceChats = selectCrossChatSourceChats(conversationChats, currentChatId);
+  const sourceChats = selectCrossChatSourceChats(conversationChats, currentChatId, currentCharacterIds);
   if (sourceChats.length === 0) return null;
 
   const characterStorage = createCharactersStorage(db);
