@@ -9,7 +9,7 @@ import {
 import { TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR, useUIStore } from "../../../stores/ui.store";
 import { useChatStore } from "../../../stores/chat.store";
 import { useGameStateStore } from "../../../stores/game-state.store";
-import { useGameStatePatcher } from "../../../hooks/use-game-state-patcher";
+import { createEmptyGameState, useGameStatePatcher } from "../../../hooks/use-game-state-patcher";
 import { getCssBackgroundStyle, getCssColorFallback, isCssGradient } from "../../../lib/css-colors";
 import { useRenderTimer } from "../../../lib/perf-diagnostics";
 import { cn } from "../../../lib/utils";
@@ -93,15 +93,22 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
     trackerPanelSectionOrder,
     trackerPanelUseExpressionSprites,
   });
+  const displayedGameState =
+    currentGameState ??
+    (!isLoadingGameState && activeChatId && enabledAgentTypes.has("custom-tracker")
+      ? createEmptyGameState(activeChatId)
+      : null);
   const [activeEditMode, setActiveEditMode] = useState<TrackerEditMode | null>(null);
   const deleteMode = activeEditMode === "delete";
   const addMode = activeEditMode === "add";
   const lockMode = activeEditMode === "lock";
   const hideMode = activeEditMode === "hide";
-  const fieldLocks = currentGameState
-    ? normalizeTrackerFieldLocksForState(currentGameState.fieldLocks, currentGameState)
+  const fieldLocks = displayedGameState
+    ? normalizeTrackerFieldLocksForState(displayedGameState.fieldLocks, displayedGameState)
     : null;
-  const hiddenTrackerFields = currentGameState ? normalizeTrackerHiddenFields(currentGameState.hiddenTrackerFields) : null;
+  const hiddenTrackerFields = displayedGameState
+    ? normalizeTrackerHiddenFields(displayedGameState.hiddenTrackerFields)
+    : null;
   const updateFieldLocks = useTrackerFieldLockUpdater({ chatId: activeChatId, fieldLocks, patchField });
   const updateHiddenTrackerFields = useCallback(
     (updater: (hiddenFields: TrackerHiddenFields | null | undefined) => TrackerHiddenFields) => {
@@ -118,7 +125,7 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
     updateFieldLocks((locks) => toggleTrackerFieldLock(locks, key));
   }, [updateFieldLocks]);
   const hasFixedTrackerPanel = orderedTrackerSections.length > 0;
-  const showTrackerSections = !!activeChatId && !isLoadingGameState && !!currentGameState && hasFixedTrackerPanel;
+  const showTrackerSections = !!activeChatId && !isLoadingGameState && !!displayedGameState && hasFixedTrackerPanel;
   const trackerPanelHasCustomBackground =
     trackerPanelBackgroundColor.trim().toLowerCase() !== TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR;
   const trackerPanelBackgroundFallback = getCssColorFallback(
@@ -177,14 +184,16 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
 
         <div className={cn("relative z-10", fillHeight && "min-h-0 flex-1 overflow-y-auto")}>
           {showTrackerSections ? (
-            <TrackerPanelErrorBoundary resetKey={`${activeChatId}:${currentGameState.id}:${currentGameState.createdAt}`}>
+            <TrackerPanelErrorBoundary
+              resetKey={`${activeChatId}:${displayedGameState.id}:${displayedGameState.createdAt}`}
+            >
               <TrackerSectionList
                 activeChatId={activeChatId}
                 activePersona={activePersona}
                 characterSpriteLookup={characterSpriteLookup}
                 characterTrackerConfig={characterTrackerConfig}
                 characterTrackerSettings={characterTrackerSettings}
-                currentGameState={currentGameState}
+                currentGameState={displayedGameState}
                 enabledAgentTypes={enabledAgentTypes}
                 expressionSpritesEnabled={expressionSpritesEnabled}
                 featuredCharacterCardKeys={featuredCharacterCardKeys}

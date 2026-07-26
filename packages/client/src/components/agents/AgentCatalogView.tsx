@@ -50,7 +50,7 @@ const OFFICIAL_PACKAGE_MODES: Readonly<Record<string, readonly CatalogMode[]>> =
   "prose-guardian": ["roleplay"],
   background: ["roleplay"],
   "character-tracker": ["roleplay"],
-  "custom-tracker": ["roleplay"],
+  "custom-tracker": ["conversation", "roleplay"],
   expression: ["roleplay"],
   "hierarchical-maps": ["roleplay", "game"],
   "persona-stats": ["roleplay"],
