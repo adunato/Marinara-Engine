@@ -14,7 +14,7 @@ const messages = Array.from({ length: 40 }, (_, index) => ({
   role: index % 2 === 0 ? "user" : "assistant",
   characterId: index % 2 === 0 ? null : "character-alice",
   content: `FULL_TRANSCRIPT_MARKER_${index}_${"x".repeat(80)}`,
-  createdAt: `2026-07-${String(10 + Math.floor(index / 20)).padStart(2, "0")}T${String(index % 20).padStart(2, "0")}:00:00.000Z`,
+  createdAt: `2026-07-12T${String(6 + Math.floor(index / 4)).padStart(2, "0")}:${String((index % 4) * 15).padStart(2, "0")}:00.000Z`,
 }));
 
 const conversation = formatAwarenessConversation({
@@ -23,6 +23,7 @@ const conversation = formatAwarenessConversation({
   personaName: "Morgan",
   characterNames: new Map([["character-alice", "Alice"]]),
   metadata: {
+    dayRolloverHour: 4,
     summary: "ROLLING_SUMMARY_INCLUDED",
     weekSummaries: {
       "06.07.2026": { summary: "WEEKLY_SUMMARY_INCLUDED", keyDetails: ["WEEKLY_DETAIL_INCLUDED"] },
@@ -32,6 +33,14 @@ const conversation = formatAwarenessConversation({
     },
   },
   messages: [
+    {
+      id: "previous-logical-day-message",
+      chatId: "source-chat",
+      role: "user",
+      characterId: null,
+      content: "PREVIOUS_LOGICAL_DAY_OMITTED",
+      createdAt: "2026-07-12T03:59:00.000Z",
+    },
     ...messages,
     {
       id: "narrator-message",
@@ -59,6 +68,7 @@ const conversation = formatAwarenessConversation({
       extra: { hiddenFromAI: true },
     },
   ],
+  now: new Date("2026-07-12T18:00:00.000Z"),
   timeZone: "UTC",
   wrapFormat: "xml",
 });
@@ -70,13 +80,14 @@ assert.match(conversation, /<conversation_summaries>/u);
 assert.match(conversation, /<rolling_summary>[\s\S]*ROLLING_SUMMARY_INCLUDED/u);
 assert.match(conversation, /<weekly_summary>[\s\S]*WEEKLY_SUMMARY_INCLUDED[\s\S]*WEEKLY_DETAIL_INCLUDED/u);
 assert.match(conversation, /<daily_summary>[\s\S]*DAILY_SUMMARY_INCLUDED[\s\S]*DAILY_DETAIL_INCLUDED/u);
-assert.match(conversation, /<full_conversation_transcript>/u);
+assert.match(conversation, /<current_day_conversation_transcript>/u);
 assert.match(conversation, /Morgan: FULL_TRANSCRIPT_MARKER_0_/u);
 assert.match(conversation, /Alice: FULL_TRANSCRIPT_MARKER_39_/u);
 assert.match(conversation, /Narrator: NARRATOR_MESSAGE_INCLUDED/u);
 assert.match(conversation, /System: SYSTEM_MESSAGE_INCLUDED/u);
 assert.doesNotMatch(conversation, /HIDDEN_MESSAGE_OMITTED/u);
-assert.ok(conversation.length > 5_000, "the complete source transcript must not be clipped to the old token budget");
+assert.doesNotMatch(conversation, /PREVIOUS_LOGICAL_DAY_OMITTED/u);
+assert.ok(conversation.length > 5_000, "the complete current-day transcript must not be clipped to the old token budget");
 
 const awareness = formatAwarenessContextBlock([conversation], "xml");
 assert.match(awareness, /<cross_chat_awareness>/u);
