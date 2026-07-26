@@ -2303,6 +2303,10 @@ export function ChatSettingsDrawer({
   );
 
   const customAgents = useMemo(() => availableAgents.filter((agent) => agent.category === "custom"), [availableAgents]);
+  const conversationTrackerAgents = useMemo(
+    () => (isConversation ? availableAgents.filter((agent) => agent.category === "tracker") : []),
+    [availableAgents, isConversation],
+  );
   const activeCustomAgents = useMemo(
     () => customAgents.filter((agent) => activeAgentIds.includes(agent.id)),
     [activeAgentIds, customAgents],
@@ -3965,6 +3969,72 @@ export function ChatSettingsDrawer({
             {isGame && !metadata.enableAgents
               ? "All custom agents are already attached. Enable Agents to configure or run them."
               : "All custom agents are active. Configure them below the other agent menus."}
+          </p>
+        )}
+      </AgentCategorySection>
+    );
+  };
+
+  const renderConversationTrackerAgentPicker = () => {
+    if (conversationTrackerAgents.length === 0) return null;
+    const activeTrackers = conversationTrackerAgents.filter((agent) => activeAgentIds.includes(agent.id));
+    const inactiveTrackers = conversationTrackerAgents.filter((agent) => !activeAgentIds.includes(agent.id));
+    return (
+      <AgentCategorySection
+        label="Tracker Agents"
+        icon={<Activity size="0.75rem" />}
+        description="Track user-defined facts and values that change during this conversation."
+        count={activeTrackers.length}
+      >
+        {activeTrackers.length > 0 && (
+          <div className="mb-1.5 flex flex-col gap-1">
+            {activeTrackers.map((agent) => (
+              <div
+                key={agent.id}
+                data-chat-agent-entry={agent.id}
+                className="flex items-start gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
+              >
+                <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate text-xs">{agent.name}</span>
+                  <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
+                    {agent.description}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void toggleAgent(agent.id)}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                  title="Remove from chat"
+                >
+                  <Trash2 size="0.6875rem" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {inactiveTrackers.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            {inactiveTrackers.map((agent) => (
+              <button
+                key={agent.id}
+                data-chat-agent-entry={agent.id}
+                onClick={() => openAgentAddModal(agent)}
+                className="flex items-center gap-2.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
+              >
+                <Plus size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate text-xs">{agent.name}</span>
+                  <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
+                    {agent.description}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="px-1 text-[0.625rem] text-[var(--muted-foreground)]">
+            All Conversation tracker agents are active.
           </p>
         )}
       </AgentCategorySection>
@@ -5967,6 +6037,7 @@ export function ChatSettingsDrawer({
                     )}
                   </div>
                 )}
+                {renderConversationTrackerAgentPicker()}
                 {renderCustomAgentPicker()}
                 {renderActiveCustomAgentSettingsCard()}
               </div>
