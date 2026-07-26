@@ -127,8 +127,9 @@ Tracks status bars for your own character, such as Satiety, Energy, and Hygiene,
 Tracks fields you define yourself, such as currencies, counters, or flags. Use it when the built-in trackers do not cover something your story needs.
 
 - **Phase**: Post-Processing.
-- **Where it works**: Roleplay.
-- **Key settings**: **Add as Prompt Section** (on by default).
+- **Where it works**: Conversation and Roleplay.
+- **Key settings**: **Add as Prompt Section** (on by default). In Conversation, use the **Custom Tracker** button in the chat toolbar to add, edit, remove, and lock fields.
+- **Full guide**: [Custom Tracker in Conversation](../conversation/custom-tracker.md).
 
 ### Hierarchical Maps
 

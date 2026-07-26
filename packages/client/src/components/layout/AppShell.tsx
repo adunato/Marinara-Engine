@@ -34,6 +34,7 @@ import {
   resolveTrackerPanelContentScale,
   resolveTrackerPanelDesktopWidth,
 } from "../../lib/tracker-panel-layout";
+import { isTrackerPanelAvailableForChat } from "../../features/tracker-panel/lib/tracker-panel-availability";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   lazy,
@@ -107,7 +108,7 @@ const TRACKER_PANEL_DESKTOP_MOTION_MS = 260;
 const TRACKER_PANEL_DESKTOP_EXIT_MS = 240;
 const TRACKER_PANEL_DESKTOP_EASE = [0.16, 1, 0.3, 1] as const;
 const TRACKER_PANEL_DESKTOP_EXIT_EASE = [0.4, 0, 1, 1] as const;
-const TRACKER_PANEL_TOGGLE_SELECTOR = '[data-tracker-panel-toggle="roleplay-hud"]';
+const TRACKER_PANEL_TOGGLE_SELECTOR = "[data-tracker-panel-toggle]";
 const TRACKER_PANEL_ANCHOR_SELECTOR = '[data-tracker-panel-anchor="roleplay-hud"]';
 const ROLEPLAY_CHAT_COLUMN_SELECTOR = '[data-roleplay-chat-column="true"]';
 const TOP_BAR_SELECTOR = '[data-component="TopBar"]';
@@ -671,7 +672,7 @@ export function AppShell() {
   const showAmbientDecor =
     isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen && !noodleOpen;
   const hasDetailView = detailView != null;
-  const trackerPanelModeAvailable = activeChat?.mode === "roleplay" || activeChat?.mode === "visual_novel";
+  const trackerPanelModeAvailable = isTrackerPanelAvailableForChat(activeChat?.mode, activeChatMetadata);
   const trackerPanelActive = trackerPanelEnabled && trackerPanelOpen;
   const trackerPanelSurfaceAvailable =
     trackerPanelModeAvailable && !botBrowserOpen && !gameAssetsBrowserOpen && !noodleOpen && !hasDetailView;

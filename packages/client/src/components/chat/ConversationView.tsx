@@ -28,6 +28,7 @@ import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
 import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
+import { TrackerPanelIcon } from "../ui/TrackerPanelIcon";
 import { PendingTypingDots } from "./PendingTypingDots";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { PinnedImageOverlay } from "./PinnedImageOverlay";
@@ -52,6 +53,7 @@ import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packa
 import { CapabilityElement } from "../capabilities/CapabilityElement";
 import { TURN_GAME_BOT_REQUEST_EVENT } from "../../lib/capability-turn-game-events";
 import { useGenerate } from "../../hooks/use-generate";
+import { isCustomTrackerActiveForChat } from "../../features/tracker-panel/lib/tracker-panel-availability";
 
 const ConversationAutonomousEffects = lazy(async () => {
   const module = await import("./ConversationAutonomousEffects");
@@ -343,6 +345,9 @@ export function ConversationView({
   const typingCharacterName = useChatStore((s) => s.typingCharacterName);
   const delayedCharacterInfo = useChatStore((s) => s.delayedCharacterInfo);
   const conversationMessageStyle = useUIStore((s) => s.conversationMessageStyle);
+  const trackerPanelEnabled = useUIStore((s) => s.trackerPanelEnabled);
+  const trackerPanelOpen = useUIStore((s) => s.trackerPanelOpen);
+  const toggleTrackerPanel = useUIStore((s) => s.toggleTrackerPanel);
   const hasDraftInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const isGroupConversation = chatCharIds.length > 1;
   const liveTypingName = useMemo(() => {
@@ -431,6 +436,7 @@ export function ConversationView({
     return { background: `linear-gradient(135deg, ${g.from}, ${g.to})` };
   }, [convoGradient, theme]);
   const hasAutonomousMessaging = !!chatMeta.autonomousMessages || !!chatMeta.characterExchanges;
+  const customTrackerActive = isCustomTrackerActiveForChat(chatMeta);
   const callsPackage = installedCapabilities.find(
     (item) =>
       item.status === "active" &&
@@ -448,6 +454,16 @@ export function ConversationView({
         compact={compact}
       />
       <ActiveLorebookEntriesButton chatId={chatId} />
+      {customTrackerActive && trackerPanelEnabled && !trackerPanelOpen && (
+        <span data-tracker-panel-toggle="conversation-custom-tracker">
+          <ChatToolbarButton
+            icon={<TrackerPanelIcon size="0.875rem" />}
+            title="Custom Tracker"
+            onClick={() => toggleTrackerPanel(chatId)}
+            size={compact ? "sm" : undefined}
+          />
+        </span>
+      )}
       <ChatToolbarButton icon={<ImageIcon size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
       {onSwitchChat && (
         <ChatToolbarButton
