@@ -62,7 +62,7 @@ export async function mergeConversationCharacterMemories({
   const memoriesSection = wrapContent(memoryLines.join("\n"), "Memories", wrapFormat, 1);
   if (awarenessBlock) {
     if (wrapFormat === "xml") {
-      return awarenessBlock.replace(/<\/awareness>$/, `${memoriesSection}\n</awareness>`);
+      return awarenessBlock.replace(/(<\/(?:cross_chat_awareness|awareness)>)$/, `${memoriesSection}\n$1`);
     }
     return `${awarenessBlock}\n\n${memoriesSection}`;
   }

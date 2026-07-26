@@ -2335,23 +2335,15 @@ export async function generateRoutes(app: FastifyInstance) {
             );
           }
 
-          // ── Cross-chat awareness: show messages from other chats this character is in ──
+          // ── Cross-chat awareness: include complete context from every other enabled Conversation ──
           // (awarenessBlock is injected later, after persona info)
           const crossChatEnabled = chatMeta.crossChatAwareness !== false; // on by default
-          if (crossChatEnabled && !input.regenerateMessageId) {
+          if (crossChatEnabled) {
             const { buildAwarenessBlock } = await import("../services/conversation/awareness.service.js");
-            const charNameMap = new Map<string, string>();
-            for (let ci = 0; ci < characterIds.length; ci++) {
-              if (convoCharInfo[ci]) charNameMap.set(characterIds[ci]!, convoCharInfo[ci]!.name);
-            }
             convoAwarenessBlock = await buildAwarenessBlock(
               app.db,
               input.chatId,
-              characterIds,
-              charNameMap,
               personaName,
-              input.userMessage ?? "",
-              1500,
               promptTimeZone,
               wrapFormat,
             );

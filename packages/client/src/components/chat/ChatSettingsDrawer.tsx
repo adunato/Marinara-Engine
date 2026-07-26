@@ -6070,7 +6070,7 @@ export function ChatSettingsDrawer({
                   <div className="flex-1 min-w-0">
                     <span className="text-xs font-medium">Cross-Chat Awareness</span>
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Characters know what happens in their other chats
+                      Share complete summaries and transcripts with other enabled conversations
                     </p>
                   </div>
                   <div
