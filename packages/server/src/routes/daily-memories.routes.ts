@@ -53,6 +53,7 @@ async function participantNames(
   }
   const characterNames = new Map<string, string>();
   for (const characterId of characterIds) {
+    if (typeof characterId !== "string") continue;
     const row = await characters.getById(characterId);
     if (!row) continue;
     const data = parseRecord(row.data);
