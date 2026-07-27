@@ -1292,6 +1292,13 @@ export function ChatSettingsDrawer({
       ),
     [deletedBuiltInAgentTypes, metadata.activeAgentIds],
   );
+  const dailyMemoryAgentConfig = agentConfigsByType.get(DAILY_MEMORY_AGENT_ID) ?? null;
+  const dailyMemoryAgentSettings = useMemo(
+    () => mergeBuiltInAgentSettings(DAILY_MEMORY_AGENT_ID, dailyMemoryAgentConfig?.settings),
+    [dailyMemoryAgentConfig?.settings],
+  );
+  const dailyMemoryAgentActive =
+    isConversation && metadata.enableAgents === true && activeAgentIds.includes(DAILY_MEMORY_AGENT_ID);
   const mapsPackage = installedCapabilities.find(
     (item) => item.status === "active" && item.manifest.kind.includes("maps") && item.manifest.entrypoints.client,
   );
@@ -3011,6 +3018,25 @@ export function ChatSettingsDrawer({
     [chat.id, getDefaultPromptTemplateIdForAgent, readLatestAgentPromptTemplateSelections, updateMeta],
   );
 
+  const updateDailyMemoryAgentConfig = useCallback(
+    async ({ settings, connectionId }: { settings?: Record<string, unknown>; connectionId?: string | null }) => {
+      if (!dailyMemoryAgentConfig) {
+        toast.error("Daily Conversation Memories configuration is unavailable.");
+        return;
+      }
+      try {
+        await updateAgentConfig.mutateAsync({
+          id: dailyMemoryAgentConfig.id,
+          ...(settings ? { settings: { ...dailyMemoryAgentSettings, ...settings } } : {}),
+          ...(connectionId !== undefined ? { connectionId } : {}),
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not update Daily Memories settings.");
+      }
+    },
+    [dailyMemoryAgentConfig, dailyMemoryAgentSettings, updateAgentConfig],
+  );
+
   const handleLorebookKeeperBackfill = useCallback(async () => {
     await retryAgents(chat.id, ["lorebook-keeper"], { lorebookKeeperBackfill: true });
   }, [chat.id, retryAgents]);
@@ -3993,12 +4019,7 @@ export function ChatSettingsDrawer({
     const activeAgents = categoryAgents.filter((agent) => activeAgentIds.includes(agent.id));
     const inactiveAgents = categoryAgents.filter((agent) => !activeAgentIds.includes(agent.id));
     return (
-      <AgentCategorySection
-        label={label}
-        icon={icon}
-        description={description}
-        count={activeAgents.length}
-      >
+      <AgentCategorySection label={label} icon={icon} description={description} count={activeAgents.length}>
         {activeAgents.length > 0 && (
           <div className="mb-1.5 flex flex-col gap-1">
             {activeAgents.map((agent) => (
@@ -4051,6 +4072,123 @@ export function ChatSettingsDrawer({
           </p>
         )}
       </AgentCategorySection>
+    );
+  };
+
+  const renderDailyMemoryAgentSettings = () => {
+    if (!dailyMemoryAgentActive || !dailyMemoryAgentConfig) return null;
+    const settingNumber = (key: string, fallback: number) => {
+      const value = Number(dailyMemoryAgentSettings[key]);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const fieldClass =
+      "w-full rounded-lg bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-shadow focus:ring-[var(--primary)]/40";
+    return (
+      <AgentSettingsCard
+        icon={<Brain size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+        title="Daily Conversation Memories"
+        description="Configure formation and retrieval. These agent defaults are shared by Conversations that use this agent."
+        badge={
+          updateAgentConfig.isPending ? (
+            <span className="inline-flex items-center gap-1 text-[0.5625rem] text-[var(--muted-foreground)]">
+              <Loader2 size="0.625rem" className="animate-spin" /> Saving
+            </span>
+          ) : null
+        }
+      >
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="space-y-1 text-[0.625rem] text-[var(--muted-foreground)]">
+            <span className="font-medium">Memory formation connection</span>
+            <select
+              aria-label="Daily memory formation connection"
+              value={dailyMemoryAgentConfig.connectionId ?? ""}
+              disabled={updateAgentConfig.isPending}
+              onChange={(event) => void updateDailyMemoryAgentConfig({ connectionId: event.target.value || null })}
+              className={fieldClass}
+            >
+              <option value="">Agent default, then chat connection</option>
+              {textConnectionsList.map((connection) => (
+                <option key={connection.id} value={connection.id}>
+                  {connection.name}
+                  {connection.model ? ` — ${connection.model}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-[0.625rem] text-[var(--muted-foreground)]">
+            <span className="font-medium">Daily handover hour</span>
+            <select
+              aria-label="Conversation daily memory handover time"
+              value={settingNumber("handoverHour", 4)}
+              disabled={updateAgentConfig.isPending}
+              onChange={(event) =>
+                void updateDailyMemoryAgentConfig({ settings: { handoverHour: Number(event.target.value) } })
+              }
+              className={fieldClass}
+            >
+              {Array.from({ length: 24 }, (_, hour) => (
+                <option key={hour} value={hour}>{`${String(hour).padStart(2, "0")}:00`}</option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-[0.625rem] text-[var(--muted-foreground)]">
+            <span className="font-medium">Recent messages for retrieval</span>
+            <DraftNumberInput
+              value={settingNumber("retrievalMessageCount", 6)}
+              min={1}
+              max={50}
+              disabled={updateAgentConfig.isPending}
+              onCommit={(value) => void updateDailyMemoryAgentConfig({ settings: { retrievalMessageCount: value } })}
+              ariaLabel="Conversation daily memory retrieval messages"
+              className={fieldClass}
+            />
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {(
+              [
+                ["Semantic", "semanticWeight", 50],
+                ["Importance", "importanceWeight", 35],
+                ["Recency", "recencyWeight", 15],
+              ] as const
+            ).map(([label, key, fallback]) => (
+              <label key={key} className="space-y-1 text-center text-[0.5625rem] text-[var(--muted-foreground)]">
+                <span className="block truncate" title={`${label} weight`}>
+                  {label}
+                </span>
+                <DraftNumberInput
+                  value={settingNumber(key, fallback)}
+                  min={0}
+                  max={100}
+                  disabled={updateAgentConfig.isPending}
+                  onCommit={(value) => void updateDailyMemoryAgentConfig({ settings: { [key]: value } })}
+                  ariaLabel={`Conversation daily memory ${label.toLowerCase()} weight`}
+                  className={`${fieldClass} text-center`}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+        <AgentPromptTemplateSelect
+          options={getPromptOptionsForAgent(DAILY_MEMORY_AGENT_ID)}
+          selectedId={
+            agentPromptTemplateSelections[DAILY_MEMORY_AGENT_ID] ??
+            getDefaultPromptTemplateIdForAgent(DAILY_MEMORY_AGENT_ID)
+          }
+          overridden={typeof agentPromptTemplateSelections[DAILY_MEMORY_AGENT_ID] === "string"}
+          onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(DAILY_MEMORY_AGENT_ID, promptTemplateId)}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            openRightPanel("agents");
+            useUIStore.getState().openAgentDetail(DAILY_MEMORY_AGENT_ID);
+          }}
+          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+        >
+          <Settings2 size="0.75rem" /> Open full agent settings and prompt
+        </button>
+      </AgentSettingsCard>
     );
   };
 
@@ -6068,6 +6206,7 @@ export function ChatSettingsDrawer({
                   icon: <Puzzle size="0.75rem" />,
                   description: "Add specialized Conversation helpers such as daily memories.",
                 })}
+                {renderDailyMemoryAgentSettings()}
                 {renderCustomAgentPicker()}
                 {renderActiveCustomAgentSettingsCard()}
               </div>
