@@ -67,7 +67,8 @@ function finiteNumber(value: unknown, fallback: number): number {
 }
 
 export function normalizeDailyMemorySettings(value: unknown): DailyMemorySettings {
-  const settings = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const settings =
+    value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   return {
     handoverHour: Math.max(0, Math.min(23, Math.floor(finiteNumber(settings.handoverHour, 4)))),
     retrievalMessageCount: Math.max(
@@ -87,7 +88,11 @@ function previousCalendarDate(parts: { year: number; month: number; day: number 
   return { year: value.getUTCFullYear(), month: value.getUTCMonth() + 1, day: value.getUTCDate() };
 }
 
-export function latestCompletedDailyMemoryHandover(now: Date, timeZone: string | undefined, handoverHour: number): Date {
+export function latestCompletedDailyMemoryHandover(
+  now: Date,
+  timeZone: string | undefined,
+  handoverHour: number,
+): Date {
   const parts = getZonedDateParts(now, timeZone);
   let calendar = { year: parts.year, month: parts.month, day: parts.day };
   let handover = zonedWallClockToInstant({ ...calendar, hour: handoverHour, minute: 0, second: 0 }, timeZone);
@@ -109,11 +114,17 @@ export function buildCompletedDailyMemoryBuckets(options: {
   handoverHour: number;
 }): DailyMemoryBucket[] {
   const validMessages = options.messages
-    .filter((message) => typeof message.createdAt === "string" && Number.isFinite(new Date(message.createdAt).getTime()))
+    .filter(
+      (message) => typeof message.createdAt === "string" && Number.isFinite(new Date(message.createdAt).getTime()),
+    )
     .sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
   if (validMessages.length === 0) return [];
 
-  const latestEnd = latestCompletedDailyMemoryHandover(options.now ?? new Date(), options.timeZone, options.handoverHour);
+  const latestEnd = latestCompletedDailyMemoryHandover(
+    options.now ?? new Date(),
+    options.timeZone,
+    options.handoverHour,
+  );
   const earliest = new Date(validMessages[0]!.createdAt!).getTime();
   const bucketCount = Math.max(0, Math.ceil((latestEnd.getTime() - earliest) / DAY_MS));
   const buckets: DailyMemoryBucket[] = [];
@@ -347,7 +358,11 @@ export async function listDailyMemoryDays(options: {
     list.push(toDailyMemory(row));
     memoriesByDate.set(row.date, list);
   }
-  const dates = new Set([...options.buckets.map((bucket) => bucket.date), ...daysByDate.keys(), ...memoriesByDate.keys()]);
+  const dates = new Set([
+    ...options.buckets.map((bucket) => bucket.date),
+    ...daysByDate.keys(),
+    ...memoriesByDate.keys(),
+  ]);
   return [...dates]
     .sort((a, b) => dateKeyTime(a) - dateKeyTime(b))
     .map((date) => ({
@@ -418,6 +433,17 @@ export interface RankedDailyMemory extends DailyMemory {
   rankingScore: number;
 }
 
+export function buildDailyMemoryRetrievalQuery(
+  messages: DailyMemorySourceMessage[],
+  retrievalMessageCount: number,
+): string[] {
+  return messages
+    .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "narrator")
+    .slice(-retrievalMessageCount)
+    .map((message) => `${message.role}: ${String(message.content ?? "").trim()}`)
+    .filter((line) => line.trim().length > 0);
+}
+
 export async function retrieveDailyMemories(options: {
   db: DB;
   chatId: string;
@@ -456,7 +482,10 @@ export async function retrieveDailyMemories(options: {
       return { ...toDailyMemory(row), semanticScore, recencyScore, rankingScore };
     })
     .filter((memory): memory is RankedDailyMemory => memory !== null)
-    .sort((a, b) => b.rankingScore - a.rankingScore || b.importance - a.importance || dateKeyTime(b.date) - dateKeyTime(a.date))
+    .sort(
+      (a, b) =>
+        b.rankingScore - a.rankingScore || b.importance - a.importance || dateKeyTime(b.date) - dateKeyTime(a.date),
+    )
     .slice(0, options.settings.retrievalLimit);
 }
 
@@ -494,7 +523,9 @@ export async function ensureMissingDailyMemoryDays(options: {
 }): Promise<string[]> {
   const formedRows = await options.db.select().from(dailyMemoryDays).where(eq(dailyMemoryDays.chatId, options.chatId));
   const formedDates = new Set(formedRows.map((row) => row.date));
-  const missing = options.buckets.filter((bucket) => !formedDates.has(bucket.date)).slice(0, Math.max(0, options.maxDays));
+  const missing = options.buckets
+    .filter((bucket) => !formedDates.has(bucket.date))
+    .slice(0, Math.max(0, options.maxDays));
   const generated: string[] = [];
   for (const bucket of missing) {
     try {

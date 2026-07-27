@@ -88,6 +88,7 @@ import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
 import { DailyMemoriesEditorModal } from "./DailyMemoriesEditorModal";
+import { DailyMemoryRetrievalPreviewModal } from "./DailyMemoryRetrievalPreviewModal";
 import { AgentSuiteModal } from "./AgentSuiteModal";
 import { ConversationTimeZoneSelect } from "./ConversationTimeZoneSelect";
 import { ChatContextSourcesPicker } from "./ChatContextSourcesPicker";
@@ -3161,6 +3162,7 @@ export function ChatSettingsDrawer({
   const [showConnectionPicker, setShowConnectionPicker] = useState(false);
   const [showSummariesModal, setShowSummariesModal] = useState(false);
   const [showDailyMemoriesModal, setShowDailyMemoriesModal] = useState(false);
+  const [showDailyMemoryPreviewModal, setShowDailyMemoryPreviewModal] = useState(false);
   const [showAgentSuiteModal, setShowAgentSuiteModal] = useState(false);
   const [showMemoriesModal, setShowMemoriesModal] = useState(false);
   const handleAgentSuiteCloseGuardChange = useCallback((guard: (() => Promise<boolean>) | null) => {
@@ -4177,6 +4179,15 @@ export function ChatSettingsDrawer({
           overridden={typeof agentPromptTemplateSelections[DAILY_MEMORY_AGENT_ID] === "string"}
           onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(DAILY_MEMORY_AGENT_ID, promptTemplateId)}
         />
+        <button
+          type="button"
+          data-testid="preview-daily-memory-retrieval"
+          disabled={updateAgentConfig.isPending}
+          onClick={() => setShowDailyMemoryPreviewModal(true)}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] disabled:opacity-50"
+        >
+          <Eye size="0.75rem" /> Preview current memory extraction
+        </button>
         <button
           type="button"
           onClick={() => {
@@ -9097,6 +9108,12 @@ export function ChatSettingsDrawer({
         chat={chat}
         open={showDailyMemoriesModal}
         onClose={() => setShowDailyMemoriesModal(false)}
+      />
+
+      <DailyMemoryRetrievalPreviewModal
+        chatId={chat.id}
+        open={showDailyMemoryPreviewModal}
+        onClose={() => setShowDailyMemoryPreviewModal(false)}
       />
 
       {/* Agent Suite — stored agent data viewer/editor */}

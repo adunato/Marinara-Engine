@@ -166,6 +166,7 @@ import { countUserMessagesAfterSummaryAnchor } from "../services/conversation/au
 import {
   buildCompletedDailyMemoryBuckets,
   buildDailyMemoriesContextBlock,
+  buildDailyMemoryRetrievalQuery,
   ensureMissingDailyMemoryDays,
   retrieveDailyMemories,
 } from "../services/conversation/daily-memory.service.js";
@@ -2205,11 +2206,10 @@ export async function generateRoutes(app: FastifyInstance) {
               signal: abortController.signal,
             });
             try {
-              const retrievalMessages = dailyMemorySourceMessages
-                .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "narrator")
-                .slice(-dailyMemoryAgentRuntime.settings.retrievalMessageCount)
-                .map((message) => `${message.role}: ${String(message.content ?? "").trim()}`)
-                .filter((line) => line.trim().length > 0);
+              const retrievalMessages = buildDailyMemoryRetrievalQuery(
+                dailyMemorySourceMessages,
+                dailyMemoryAgentRuntime.settings.retrievalMessageCount,
+              );
               if (retrievalMessages.length > 0) {
                 const recalledDailyMemories = await retrieveDailyMemories({
                   db: app.db,

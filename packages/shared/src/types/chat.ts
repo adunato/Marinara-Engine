@@ -171,6 +171,18 @@ export interface DailyMemoryFormationResult {
   memories: DailyMemory[];
 }
 
+export interface DailyMemoryRetrievalPreviewMemory extends DailyMemory {
+  semanticScore: number;
+  recencyScore: number;
+  rankingScore: number;
+}
+
+export interface DailyMemoryRetrievalPreview {
+  retrievalMessageCount: number;
+  queryMessages: string[];
+  memories: DailyMemoryRetrievalPreviewMemory[];
+}
+
 /** A single week's consolidated conversation summary (Monday → Sunday). */
 export interface WeekSummaryEntry {
   /** Narrative recap of the week. */

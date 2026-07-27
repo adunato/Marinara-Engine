@@ -2,9 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { formatZonedConversationDate, resolveConversationTimeZone } from "../services/conversation/timezone.js";
 import {
   buildCompletedDailyMemoryBuckets,
+  buildDailyMemoryRetrievalQuery,
   generateAndReplaceDailyMemoryDay,
   listDailyMemoryDays,
   replaceDailyMemoryDay,
+  retrieveDailyMemories,
   type DailyMemoryDraft,
 } from "../services/conversation/daily-memory.service.js";
 import { resolveDailyMemoryAgentRuntime } from "../services/generation/daily-memory-agent-runtime.js";
@@ -110,6 +112,28 @@ export async function dailyMemoriesRoutes(app: FastifyInstance) {
       handoverHour: value.runtime.settings.handoverHour,
       currentWindowDate: formatZonedConversationDate(new Date(), value.timeZone, value.runtime.settings.handoverHour),
       days: await listDailyMemoryDays({ db: app.db, chatId: request.params.id, buckets: value.buckets }),
+    };
+  });
+
+  app.get<{ Params: { id: string } }>("/:id/daily-memories/preview", async (request, reply) => {
+    const value = await context(request.params.id);
+    if (!value) return reply.status(404).send({ error: "Conversation not found" });
+    if (!value.runtime) return reply.status(409).send({ error: "Daily Conversation Memories agent is not enabled" });
+    const queryMessages = buildDailyMemoryRetrievalQuery(value.messages, value.runtime.settings.retrievalMessageCount);
+    const memories =
+      queryMessages.length > 0
+        ? await retrieveDailyMemories({
+            db: app.db,
+            chatId: request.params.id,
+            query: queryMessages.join("\n"),
+            settings: value.runtime.settings,
+            embeddingSource: value.embeddingSource,
+          })
+        : [];
+    return {
+      retrievalMessageCount: value.runtime.settings.retrievalMessageCount,
+      queryMessages,
+      memories,
     };
   });
 
