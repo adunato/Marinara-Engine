@@ -503,6 +503,7 @@ export function AgentEditor() {
   const [localDailyMemorySemanticWeight, setLocalDailyMemorySemanticWeight] = useState(50);
   const [localDailyMemoryImportanceWeight, setLocalDailyMemoryImportanceWeight] = useState(35);
   const [localDailyMemoryRecencyWeight, setLocalDailyMemoryRecencyWeight] = useState(15);
+  const [localDailyMemoryMinimumRank, setLocalDailyMemoryMinimumRank] = useState(30);
   const [localRunInterval, setLocalRunInterval] = useState<number | "">("");
   const [localActivationKeywordsText, setLocalActivationKeywordsText] = useState("");
   const [localActivationScanDepth, setLocalActivationScanDepth] = useState<number | "">(
@@ -594,6 +595,7 @@ export function AgentEditor() {
       setLocalDailyMemorySemanticWeight(Number(settings.semanticWeight ?? defaultSettings.semanticWeight ?? 50));
       setLocalDailyMemoryImportanceWeight(Number(settings.importanceWeight ?? defaultSettings.importanceWeight ?? 35));
       setLocalDailyMemoryRecencyWeight(Number(settings.recencyWeight ?? defaultSettings.recencyWeight ?? 15));
+      setLocalDailyMemoryMinimumRank(Number(settings.minimumRank ?? defaultSettings.minimumRank ?? 30));
       setLocalImageConnectionId(
         agentType === "background" ? "" : normalizeImageConnectionOverride(settings.imageConnectionId),
       );
@@ -708,6 +710,7 @@ export function AgentEditor() {
       setLocalDailyMemorySemanticWeight(Number(defaultSettings.semanticWeight ?? 50));
       setLocalDailyMemoryImportanceWeight(Number(defaultSettings.importanceWeight ?? 35));
       setLocalDailyMemoryRecencyWeight(Number(defaultSettings.recencyWeight ?? 15));
+      setLocalDailyMemoryMinimumRank(Number(defaultSettings.minimumRank ?? 30));
       setLocalRunInterval((defaultSettings.runInterval as number) ?? "");
       setLocalActivationKeywordsText("");
       setLocalActivationScanDepth(DEFAULT_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH);
@@ -1067,6 +1070,7 @@ export function AgentEditor() {
               semanticWeight: localDailyMemorySemanticWeight,
               importanceWeight: localDailyMemoryImportanceWeight,
               recencyWeight: localDailyMemoryRecencyWeight,
+              minimumRank: localDailyMemoryMinimumRank,
             }
           : {}),
         ...(!isDirectorAgent && localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
@@ -1167,6 +1171,7 @@ export function AgentEditor() {
     localDailyMemorySemanticWeight,
     localDailyMemoryImportanceWeight,
     localDailyMemoryRecencyWeight,
+    localDailyMemoryMinimumRank,
     localRunInterval,
     localActivationKeywordsText,
     localActivationScanDepth,
@@ -1917,11 +1922,13 @@ export function AgentEditor() {
                 </label>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                {([
-                  ["Semantic", localDailyMemorySemanticWeight, setLocalDailyMemorySemanticWeight],
-                  ["Importance", localDailyMemoryImportanceWeight, setLocalDailyMemoryImportanceWeight],
-                  ["Recency", localDailyMemoryRecencyWeight, setLocalDailyMemoryRecencyWeight],
-                ] as const).map(([label, value, setter]) => (
+                {(
+                  [
+                    ["Semantic", localDailyMemorySemanticWeight, setLocalDailyMemorySemanticWeight],
+                    ["Importance", localDailyMemoryImportanceWeight, setLocalDailyMemoryImportanceWeight],
+                    ["Recency", localDailyMemoryRecencyWeight, setLocalDailyMemoryRecencyWeight],
+                  ] as const
+                ).map(([label, value, setter]) => (
                   <label key={label} className="space-y-1.5 text-xs text-[var(--muted-foreground)]">
                     <span className="font-medium">{label} weight</span>
                     <input
@@ -1943,6 +1950,28 @@ export function AgentEditor() {
                 Weights are normalized automatically. Defaults are 50 semantic, 35 importance, and 15 recency, giving
                 highly important memories a strong boost without making their inclusion unconditional.
               </p>
+              <label className="mt-4 block space-y-2 text-xs text-[var(--muted-foreground)]">
+                <span className="flex items-center justify-between gap-2 font-medium">
+                  <span>Minimum rank</span>
+                  <span className="tabular-nums text-[var(--foreground)]">{localDailyMemoryMinimumRank}%</span>
+                </span>
+                <input
+                  aria-label="Daily memory minimum rank"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={localDailyMemoryMinimumRank}
+                  onChange={(event) => {
+                    setLocalDailyMemoryMinimumRank(Number(event.target.value));
+                    markDirty();
+                  }}
+                  className="h-2 w-full cursor-pointer accent-[var(--primary)]"
+                />
+                <span className="block text-[0.625rem] leading-relaxed">
+                  Memories ranked below this percentage are excluded from preview and Conversation context.
+                </span>
+              </label>
             </FieldGroup>
           )}
 
@@ -3505,7 +3534,7 @@ export function AgentEditor() {
                           <button
                             type="button"
                             onClick={() => handleRemovePromptTemplate(option.id)}
-	                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                             title="Remove prompt option"
                           >
                             <Trash2 size="0.75rem" />

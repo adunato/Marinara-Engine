@@ -22,11 +22,11 @@ export const DAILY_MEMORY_DEFAULTS = {
   semanticWeight: 50,
   importanceWeight: 35,
   recencyWeight: 15,
+  minimumRank: 30,
   recencyHalfLifeDays: 30,
 } as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const DAILY_MEMORY_RETRIEVAL_MIN_SCORE = 0.3;
 const FORMATION_TIMEOUT_MS = 300_000;
 const TRANSCRIPT_CHUNK_CHARS = 32_000;
 const MAX_TRANSCRIPT_CHUNKS = 12;
@@ -37,6 +37,7 @@ export interface DailyMemorySettings {
   semanticWeight: number;
   importanceWeight: number;
   recencyWeight: number;
+  minimumRank: number;
   recencyHalfLifeDays: number;
 }
 
@@ -77,6 +78,7 @@ export function normalizeDailyMemorySettings(value: unknown): DailyMemorySetting
     semanticWeight: Math.max(0, Math.min(100, finiteNumber(settings.semanticWeight, 50))),
     importanceWeight: Math.max(0, Math.min(100, finiteNumber(settings.importanceWeight, 35))),
     recencyWeight: Math.max(0, Math.min(100, finiteNumber(settings.recencyWeight, 15))),
+    minimumRank: Math.max(0, Math.min(100, finiteNumber(settings.minimumRank, 30))),
     recencyHalfLifeDays: Math.max(1, Math.min(3650, finiteNumber(settings.recencyHalfLifeDays, 30))),
   };
 }
@@ -480,7 +482,7 @@ export async function retrieveDailyMemories(options: {
       return { ...toDailyMemory(row), semanticScore, recencyScore, rankingScore };
     })
     .filter((memory): memory is RankedDailyMemory => memory !== null)
-    .filter((memory) => memory.rankingScore >= DAILY_MEMORY_RETRIEVAL_MIN_SCORE)
+    .filter((memory) => memory.rankingScore >= options.settings.minimumRank / 100)
     .sort(
       (a, b) =>
         b.rankingScore - a.rankingScore || b.importance - a.importance || dateKeyTime(b.date) - dateKeyTime(a.date),

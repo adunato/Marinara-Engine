@@ -83,6 +83,7 @@ import { HelpTooltip } from "../ui/HelpTooltip";
 import { ExpandedTextarea } from "../ui/ExpandedTextarea";
 import { Modal } from "../ui/Modal";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
+import { DraftRangeInput } from "../ui/DraftRangeInput";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SecretPlotPanel } from "../agents/SecretPlotPanel";
@@ -1298,6 +1299,11 @@ export function ChatSettingsDrawer({
     () => mergeBuiltInAgentSettings(DAILY_MEMORY_AGENT_ID, dailyMemoryAgentConfig?.settings),
     [dailyMemoryAgentConfig?.settings],
   );
+  const dailyMemoryAgentSettingsRef = useRef(dailyMemoryAgentSettings);
+  const dailyMemoryAgentUpdateQueueRef = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => {
+    dailyMemoryAgentSettingsRef.current = dailyMemoryAgentSettings;
+  }, [dailyMemoryAgentSettings]);
   const dailyMemoryAgentActive =
     isConversation && metadata.enableAgents === true && activeAgentIds.includes(DAILY_MEMORY_AGENT_ID);
   const mapsPackage = installedCapabilities.find(
@@ -3025,18 +3031,32 @@ export function ChatSettingsDrawer({
         toast.error("Daily Conversation Memories configuration is unavailable.");
         return;
       }
-      try {
-        await updateAgentConfig.mutateAsync({
-          id: dailyMemoryAgentConfig.id,
-          ...(settings ? { settings: { ...dailyMemoryAgentSettings, ...settings } } : {}),
-          ...(connectionId !== undefined ? { connectionId } : {}),
+      const nextSettings = settings ? { ...dailyMemoryAgentSettingsRef.current, ...settings } : undefined;
+      if (nextSettings) dailyMemoryAgentSettingsRef.current = nextSettings;
+      const update = dailyMemoryAgentUpdateQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          await updateAgentConfig.mutateAsync({
+            id: dailyMemoryAgentConfig.id,
+            ...(nextSettings ? { settings: nextSettings } : {}),
+            ...(connectionId !== undefined ? { connectionId } : {}),
+          });
         });
+      dailyMemoryAgentUpdateQueueRef.current = update;
+      try {
+        await update;
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not update Daily Memories settings.");
       }
     },
-    [dailyMemoryAgentConfig, dailyMemoryAgentSettings, updateAgentConfig],
+    [dailyMemoryAgentConfig, updateAgentConfig],
   );
+
+  const openDailyMemoryPreview = useCallback(async () => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    await dailyMemoryAgentUpdateQueueRef.current.catch(() => undefined);
+    setShowDailyMemoryPreviewModal(true);
+  }, []);
 
   const handleLorebookKeeperBackfill = useCallback(async () => {
     await retryAgents(chat.id, ["lorebook-keeper"], { lorebookKeeperBackfill: true });
@@ -4170,6 +4190,25 @@ export function ChatSettingsDrawer({
             ))}
           </div>
         </div>
+        <label className="space-y-1.5 text-[0.625rem] text-[var(--muted-foreground)]">
+          <span className="flex items-center justify-between gap-2 font-medium">
+            <span>Minimum rank</span>
+            <span className="tabular-nums text-[var(--foreground)]">{settingNumber("minimumRank", 30)}%</span>
+          </span>
+          <DraftRangeInput
+            value={settingNumber("minimumRank", 30)}
+            min={0}
+            max={100}
+            step={1}
+            disabled={updateAgentConfig.isPending}
+            onCommit={(value) => void updateDailyMemoryAgentConfig({ settings: { minimumRank: value } })}
+            ariaLabel="Conversation daily memory minimum rank"
+            className="h-2 w-full cursor-pointer accent-[var(--primary)] disabled:cursor-not-allowed"
+          />
+          <span className="block text-[0.5625rem] leading-relaxed">
+            Memories ranked below this percentage are excluded from preview and Conversation context.
+          </span>
+        </label>
         <AgentPromptTemplateSelect
           options={getPromptOptionsForAgent(DAILY_MEMORY_AGENT_ID)}
           selectedId={
@@ -4183,7 +4222,7 @@ export function ChatSettingsDrawer({
           type="button"
           data-testid="preview-daily-memory-retrieval"
           disabled={updateAgentConfig.isPending}
-          onClick={() => setShowDailyMemoryPreviewModal(true)}
+          onClick={() => void openDailyMemoryPreview()}
           className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] disabled:opacity-50"
         >
           <Eye size="0.75rem" /> Preview current memory extraction

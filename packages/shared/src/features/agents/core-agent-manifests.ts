@@ -39,6 +39,7 @@ export const CORE_BUILT_IN_AGENT_MANIFESTS: readonly BuiltInAgentManifest[] = [
       semanticWeight: 50,
       importanceWeight: 35,
       recencyWeight: 15,
+      minimumRank: 30,
       recencyHalfLifeDays: 30,
     },
   },
