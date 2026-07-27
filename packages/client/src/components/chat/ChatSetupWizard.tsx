@@ -248,7 +248,7 @@ type AvailableAgent = {
   phase: AgentPhase;
   builtIn: boolean;
   runtimeDisabled?: boolean;
-  execution?: "pipeline" | "feature";
+  execution?: "pipeline" | "feature" | "managed";
 };
 
 type AgentAddPreview = {

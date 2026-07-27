@@ -79,6 +79,7 @@ import {
   DEFAULT_AGENT_TOOLS,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_AUTHOR,
+  DAILY_MEMORY_AGENT_ID,
   CUSTOM_AGENT_CAPABILITY_IDS,
   DEFAULT_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH,
   LOCAL_SIDECAR_CONNECTION_ID,
@@ -497,6 +498,11 @@ export function AgentEditor() {
   const [localImageConnectionId, setLocalImageConnectionId] = useState("");
   const [localContextSize, setLocalContextSize] = useState<number | "">("");
   const [localMaxTokens, setLocalMaxTokens] = useState<number | "">("");
+  const [localDailyMemoryHandoverHour, setLocalDailyMemoryHandoverHour] = useState(4);
+  const [localDailyMemoryRetrievalMessageCount, setLocalDailyMemoryRetrievalMessageCount] = useState(6);
+  const [localDailyMemorySemanticWeight, setLocalDailyMemorySemanticWeight] = useState(50);
+  const [localDailyMemoryImportanceWeight, setLocalDailyMemoryImportanceWeight] = useState(35);
+  const [localDailyMemoryRecencyWeight, setLocalDailyMemoryRecencyWeight] = useState(15);
   const [localRunInterval, setLocalRunInterval] = useState<number | "">("");
   const [localActivationKeywordsText, setLocalActivationKeywordsText] = useState("");
   const [localActivationScanDepth, setLocalActivationScanDepth] = useState<number | "">(
@@ -581,6 +587,13 @@ export function AgentEditor() {
       setLocalPromptTemplates(normalizeAgentPromptTemplateOptions(promptTemplateSource));
       setLocalContextSize(normalizeOptionalNumber(settings.contextSize));
       setLocalMaxTokens(normalizeOptionalNumber(settings.maxTokens) || (defaultSettings.maxTokens as number) || "");
+      setLocalDailyMemoryHandoverHour(Number(settings.handoverHour ?? defaultSettings.handoverHour ?? 4));
+      setLocalDailyMemoryRetrievalMessageCount(
+        Number(settings.retrievalMessageCount ?? defaultSettings.retrievalMessageCount ?? 6),
+      );
+      setLocalDailyMemorySemanticWeight(Number(settings.semanticWeight ?? defaultSettings.semanticWeight ?? 50));
+      setLocalDailyMemoryImportanceWeight(Number(settings.importanceWeight ?? defaultSettings.importanceWeight ?? 35));
+      setLocalDailyMemoryRecencyWeight(Number(settings.recencyWeight ?? defaultSettings.recencyWeight ?? 15));
       setLocalImageConnectionId(
         agentType === "background" ? "" : normalizeImageConnectionOverride(settings.imageConnectionId),
       );
@@ -690,6 +703,11 @@ export function AgentEditor() {
       setLocalImageConnectionId("");
       setLocalContextSize("");
       setLocalMaxTokens((defaultSettings.maxTokens as number) ?? "");
+      setLocalDailyMemoryHandoverHour(Number(defaultSettings.handoverHour ?? 4));
+      setLocalDailyMemoryRetrievalMessageCount(Number(defaultSettings.retrievalMessageCount ?? 6));
+      setLocalDailyMemorySemanticWeight(Number(defaultSettings.semanticWeight ?? 50));
+      setLocalDailyMemoryImportanceWeight(Number(defaultSettings.importanceWeight ?? 35));
+      setLocalDailyMemoryRecencyWeight(Number(defaultSettings.recencyWeight ?? 15));
       setLocalRunInterval((defaultSettings.runInterval as number) ?? "");
       setLocalActivationKeywordsText("");
       setLocalActivationScanDepth(DEFAULT_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH);
@@ -745,6 +763,11 @@ export function AgentEditor() {
       setLocalImageConnectionId("");
       setLocalContextSize("");
       setLocalMaxTokens(DEFAULT_AGENT_MAX_TOKENS);
+      setLocalDailyMemoryHandoverHour(4);
+      setLocalDailyMemoryRetrievalMessageCount(6);
+      setLocalDailyMemorySemanticWeight(50);
+      setLocalDailyMemoryImportanceWeight(35);
+      setLocalDailyMemoryRecencyWeight(15);
       setLocalRunInterval(customRunIntervalMeta?.defaultValue ?? "");
       setLocalActivationKeywordsText("");
       setLocalActivationScanDepth(DEFAULT_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH);
@@ -820,6 +843,8 @@ export function AgentEditor() {
 
   // Narrative Director agent — one-shot story push setting
   const isDirectorAgent = agentDetailId === "director" || dbConfig?.type === "director";
+  const isDailyMemoryAgent =
+    agentDetailId === DAILY_MEMORY_AGENT_ID || dbConfig?.type === DAILY_MEMORY_AGENT_ID;
 
   // Illustrator agent — run interval setting
   const isIllustratorAgent = agentDetailId === "illustrator" || dbConfig?.type === "illustrator";
@@ -1035,6 +1060,15 @@ export function AgentEditor() {
         ...(mayIncludeTurnData && localIncludeParallelResults ? { includeParallelResults: true } : {}),
         ...(localContextSize !== "" ? { contextSize: Number(localContextSize) } : {}),
         ...(localMaxTokens !== "" ? { maxTokens: clampAgentMaxTokens(localMaxTokens) } : {}),
+        ...(isDailyMemoryAgent
+          ? {
+              handoverHour: localDailyMemoryHandoverHour,
+              retrievalMessageCount: localDailyMemoryRetrievalMessageCount,
+              semanticWeight: localDailyMemorySemanticWeight,
+              importanceWeight: localDailyMemoryImportanceWeight,
+              recencyWeight: localDailyMemoryRecencyWeight,
+            }
+          : {}),
         ...(!isDirectorAgent && localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
         ...(!isDirectorAgent && localInjectAsSection ? { injectAsSection: true } : {}),
         ...(isMusicAgent
@@ -1128,6 +1162,11 @@ export function AgentEditor() {
     localPromptTemplates,
     localContextSize,
     localMaxTokens,
+    localDailyMemoryHandoverHour,
+    localDailyMemoryRetrievalMessageCount,
+    localDailyMemorySemanticWeight,
+    localDailyMemoryImportanceWeight,
+    localDailyMemoryRecencyWeight,
     localRunInterval,
     localActivationKeywordsText,
     localActivationScanDepth,
@@ -1164,6 +1203,7 @@ export function AgentEditor() {
     isContinuityAgent,
     isHtmlAgent,
     isDirectorAgent,
+    isDailyMemoryAgent,
     isMusicAgent,
     isKnowledgeRetrievalAgent,
     isKnowledgeRouterAgent,
@@ -1835,6 +1875,77 @@ export function AgentEditor() {
           </FieldGroup>
 
           {/* ── Image Generation Connection (Illustrator only) ── */}
+          {isDailyMemoryAgent && (
+            <FieldGroup
+              label="Daily Memory Schedule & Retrieval"
+              icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
+              help="Controls when a Conversation day closes and how saved memories are ranked for each new message. Formation uses this agent's connection and prompt; retrieval itself does not call an LLM."
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="space-y-1.5 text-xs text-[var(--muted-foreground)]">
+                  <span className="font-medium">Daily handover time</span>
+                  <select
+                    aria-label="Daily memory handover time"
+                    value={localDailyMemoryHandoverHour}
+                    onChange={(event) => {
+                      setLocalDailyMemoryHandoverHour(Number(event.target.value));
+                      markDirty();
+                    }}
+                    className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  >
+                    {Array.from({ length: 24 }, (_, hour) => (
+                      <option key={hour} value={hour}>{`${String(hour).padStart(2, "0")}:00`}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1.5 text-xs text-[var(--muted-foreground)]">
+                  <span className="font-medium">Recent messages used for retrieval</span>
+                  <input
+                    aria-label="Daily memory retrieval messages"
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={localDailyMemoryRetrievalMessageCount}
+                    onChange={(event) => {
+                      setLocalDailyMemoryRetrievalMessageCount(
+                        Math.max(1, Math.min(50, Number(event.target.value) || 1)),
+                      );
+                      markDirty();
+                    }}
+                    className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                {([
+                  ["Semantic", localDailyMemorySemanticWeight, setLocalDailyMemorySemanticWeight],
+                  ["Importance", localDailyMemoryImportanceWeight, setLocalDailyMemoryImportanceWeight],
+                  ["Recency", localDailyMemoryRecencyWeight, setLocalDailyMemoryRecencyWeight],
+                ] as const).map(([label, value, setter]) => (
+                  <label key={label} className="space-y-1.5 text-xs text-[var(--muted-foreground)]">
+                    <span className="font-medium">{label} weight</span>
+                    <input
+                      aria-label={`Daily memory ${label.toLowerCase()} weight`}
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={value}
+                      onChange={(event) => {
+                        setter(Math.max(0, Math.min(100, Number(event.target.value) || 0)));
+                        markDirty();
+                      }}
+                      className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className="mt-3 text-[0.625rem] text-[var(--muted-foreground)]">
+                Weights are normalized automatically. Defaults are 50 semantic, 35 importance, and 15 recency, giving
+                highly important memories a strong boost without making their inclusion unconditional.
+              </p>
+            </FieldGroup>
+          )}
+
           {(agentDetailId === "illustrator" || dbConfig?.type === "illustrator") && (
             <FieldGroup
               label="Image Generation Connection Override"

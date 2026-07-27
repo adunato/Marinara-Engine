@@ -56,9 +56,11 @@ import { professorMariWorkspaceRoutes } from "./professor-mari-workspace.routes.
 import { noodleRoutes } from "./noodle.routes.js";
 import { capabilityPackagesRoutes } from "./capability-packages.routes.js";
 import { customAgentRepositoriesRoutes } from "./custom-agent-repositories.routes.js";
+import { dailyMemoriesRoutes } from "./daily-memories.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatsRoutes, { prefix: "/api/chats" });
+  await app.register(dailyMemoriesRoutes, { prefix: "/api/chats" });
   await app.register(chatFoldersRoutes, { prefix: "/api/chat-folders" });
   await app.register(chatPresetsRoutes, { prefix: "/api/chat-presets" });
   await app.register(charactersRoutes, { prefix: "/api/characters" });

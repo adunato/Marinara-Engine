@@ -300,7 +300,8 @@ export async function resolveAgentPipelineAgents({
     (agent) =>
       !isAgentConfigDeleted(agent.settings) &&
       !isBuiltInAgentRuntimeDisabled(agent.type as string) &&
-      !isRetiredBuiltInAgentId(agent.type as string),
+      !isRetiredBuiltInAgentId(agent.type as string) &&
+      BUILT_IN_AGENTS.find((builtIn) => builtIn.id === agent.type)?.execution !== "managed",
   );
   const resolvedAgents: ResolvedAgent[] = [];
   const agentProviderCache = new Map<string | null, AgentProviderCacheEntry>();

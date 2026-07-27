@@ -78,6 +78,7 @@ export * from "./constants/tracker-custom-field-icons.js";
 
 // Feature registries
 export * from "./features/agents/agent-manifest.types.js";
+export * from "./features/agents/core-agent-manifests.js";
 export {
   BUILT_IN_AGENT_MANIFESTS,
   isBuiltInAgentRuntimeDisabled,

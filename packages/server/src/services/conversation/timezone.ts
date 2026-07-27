@@ -73,7 +73,7 @@ export function toZonedWallClockDate(date: Date, timeZone?: string): Date {
   return new Date(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
 }
 
-function zonedWallClockToInstant(
+export function zonedWallClockToInstant(
   desired: Pick<ZonedDateParts, "year" | "month" | "day" | "hour" | "minute" | "second">,
   timeZone?: string,
 ): Date {

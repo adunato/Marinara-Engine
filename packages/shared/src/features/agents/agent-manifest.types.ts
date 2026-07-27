@@ -22,5 +22,6 @@ export interface BuiltInAgentManifest {
   /** Default prompt supplied by an installed package. Bundled compatibility manifests may omit it. */
   defaultPromptTemplate?: string;
   /** Feature entries use the Agents library for installation/activation but do not run through the LLM pipeline. */
-  execution?: "pipeline" | "feature";
+  /** Managed agents use the normal agent editor but execute through a dedicated native runtime. */
+  execution?: "pipeline" | "feature" | "managed";
 }

@@ -87,6 +87,7 @@ import { SettingsSwitch } from "../panels/settings/SettingControls";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
+import { DailyMemoriesEditorModal } from "./DailyMemoriesEditorModal";
 import { AgentSuiteModal } from "./AgentSuiteModal";
 import { ConversationTimeZoneSelect } from "./ConversationTimeZoneSelect";
 import { ChatContextSourcesPicker } from "./ChatContextSourcesPicker";
@@ -174,7 +175,7 @@ import type {
   SpotifySourceType,
   WeekSchedule,
 } from "@marinara-engine/shared";
-import { normalizeSpotifySourceType } from "@marinara-engine/shared";
+import { DAILY_MEMORY_AGENT_ID, normalizeSpotifySourceType } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
@@ -762,7 +763,7 @@ type AvailableAgent = {
   phase: AgentPhase;
   builtIn: boolean;
   runtimeDisabled?: boolean;
-  execution?: "pipeline" | "feature";
+  execution?: "pipeline" | "feature" | "managed";
 };
 
 type DrawerPersona = {
@@ -3133,6 +3134,7 @@ export function ChatSettingsDrawer({
   const [showPersonaPicker, setShowPersonaPicker] = useState(false);
   const [showConnectionPicker, setShowConnectionPicker] = useState(false);
   const [showSummariesModal, setShowSummariesModal] = useState(false);
+  const [showDailyMemoriesModal, setShowDailyMemoriesModal] = useState(false);
   const [showAgentSuiteModal, setShowAgentSuiteModal] = useState(false);
   const [showMemoriesModal, setShowMemoriesModal] = useState(false);
   const handleAgentSuiteCloseGuardChange = useCallback((guard: (() => Promise<boolean>) | null) => {
@@ -8810,6 +8812,29 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
+          {isConversation && metadata.enableAgents === true && activeAgentIds.includes(DAILY_MEMORY_AGENT_ID) && (
+            <Section
+              label="Daily Memories"
+              icon={<Brain size="0.875rem" />}
+              help="Review the memories formed for each completed Conversation day. You can edit importance, add or delete individual memories, clear a day, or regenerate it from the original messages."
+            >
+              <button
+                type="button"
+                data-testid="open-daily-memories"
+                onClick={() => setShowDailyMemoriesModal(true)}
+                className="flex w-full items-center justify-between rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="text-[0.6875rem] font-medium">Edit Daily Memories</span>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    Memories are grouped by completed day and remain separate from summaries and memory recall.
+                  </p>
+                </div>
+                <Pencil size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+              </button>
+            </Section>
+          )}
+
           <div style={{ order: CHAT_SETTINGS_ORDER.functionCalling }}>
             <FunctionCallingSection
               enableTools={metadata.enableTools as boolean | undefined}
@@ -8900,6 +8925,12 @@ export function ChatSettingsDrawer({
 
       {/* Automatic summarization editor */}
       <SummariesEditorModal chat={chat} open={showSummariesModal} onClose={() => setShowSummariesModal(false)} />
+
+      <DailyMemoriesEditorModal
+        chat={chat}
+        open={showDailyMemoriesModal}
+        onClose={() => setShowDailyMemoriesModal(false)}
+      />
 
       {/* Agent Suite — stored agent data viewer/editor */}
       <AgentSuiteModal

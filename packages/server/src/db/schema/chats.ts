@@ -136,3 +136,32 @@ export const memoryChunks = fileTable("memory_chunks", {
   lastMessageAt: text("last_message_at").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+// ── Daily Conversation Memories ──
+export const dailyMemoryDays = fileTable(
+  "daily_memory_days",
+  {
+    id: text("id").primaryKey(),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    formedAt: text("formed_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  { uniqueBy: [["chatId", "date"]] },
+);
+
+export const dailyMemories = fileTable("daily_memories", {
+  id: text("id").primaryKey(),
+  chatId: text("chat_id")
+    .notNull()
+    .references(() => chats.id, { onDelete: "cascade" }),
+  date: text("date").notNull(),
+  content: text("content").notNull(),
+  importance: integer("importance").notNull(),
+  /** JSON-serialized float[] embedding. */
+  embedding: text("embedding"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});

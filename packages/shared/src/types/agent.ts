@@ -426,6 +426,7 @@ export const BUILT_IN_AGENT_IDS = {
   CUSTOM_TRACKER: "custom-tracker",
   HAPTIC: "haptic",
   CYOA: "cyoa",
+  DAILY_MEMORY: "daily-memory",
 } as const;
 
 export const RETIRED_BUILT_IN_AGENT_IDS = [
@@ -463,7 +464,7 @@ export interface BuiltInAgentMeta {
   runtimeDisabled?: boolean;
   modeAllowlist?: readonly ChatMode[];
   promptTemplates?: AgentPromptTemplateOption[];
-  execution?: "pipeline" | "feature";
+  execution?: "pipeline" | "feature" | "managed";
 }
 
 function toBuiltInAgentMeta(agent: BuiltInAgentManifest): BuiltInAgentMeta {

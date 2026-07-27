@@ -163,6 +163,12 @@ import {
 } from "../services/conversation/transcript-sanitize.js";
 import { normalizePromptTimeZone, toZonedWallClockDate } from "../services/conversation/timezone.js";
 import { countUserMessagesAfterSummaryAnchor } from "../services/conversation/auto-summary.service.js";
+import {
+  buildCompletedDailyMemoryBuckets,
+  buildDailyMemoriesContextBlock,
+  ensureMissingDailyMemoryDays,
+  retrieveDailyMemories,
+} from "../services/conversation/daily-memory.service.js";
 import { executeKnowledgeRetrieval } from "../services/agents/knowledge-retrieval.js";
 import { executeKnowledgeRouter } from "../services/agents/knowledge-router.js";
 import { extractFileText, getSourceFilePath } from "./knowledge-sources.routes.js";
@@ -170,6 +176,7 @@ import { gameStateSnapshots as gameStateSnapshotsTable } from "../db/schema/inde
 import { eq } from "../db/file-query.js";
 import { PROFESSOR_MARI_ID, type GenerationParameterSendMap } from "@marinara-engine/shared";
 import { chunkAndEmbedMessages } from "../services/memory-recall.js";
+import { resolveDailyMemoryAgentRuntime } from "../services/generation/daily-memory-agent-runtime.js";
 import {
   isMemoryRecallVectorizerAvailable,
   resolveMemoryRecallEmbeddingSource,
@@ -1014,6 +1021,21 @@ export async function generateRoutes(app: FastifyInstance) {
         });
       } catch (err) {
         logger.warn(err, "[memory-recall] Embedding availability check failed; memory recall will stay disabled");
+      }
+    }
+    let dailyMemoryAgentRuntime: Awaited<ReturnType<typeof resolveDailyMemoryAgentRuntime>> = null;
+    if (chat.mode === "conversation") {
+      try {
+        dailyMemoryAgentRuntime = await resolveDailyMemoryAgentRuntime({
+          agents: agentsStore,
+          connections,
+          chatMetadata: chatMeta,
+          activeConnection: conn,
+          activeBaseUrl: baseUrl,
+          resolveBaseUrl,
+        });
+      } catch (err) {
+        logger.warn(err, "[daily-memory] Agent runtime resolution failed; daily memories will be skipped");
       }
     }
 
@@ -2155,6 +2177,65 @@ export async function generateRoutes(app: FastifyInstance) {
             fallbackBaseUrl: conversationSummaryFallback ? resolveBaseUrl(conversationSummaryFallback) : "",
           });
           finalMessages = preparedHistory.finalMessages;
+
+          if (dailyMemoryAgentRuntime) {
+            const dailyMemoryCharacterNames = new Map<string, string>();
+            for (let index = 0; index < characterIds.length; index += 1) {
+              const name = convoCharInfo[index]?.name;
+              if (name) dailyMemoryCharacterNames.set(characterIds[index]!, name);
+            }
+            const dailyMemorySourceMessages = scopedMessages.filter((message) => !isMessageHiddenFromAI(message));
+            const dailyMemoryBuckets = buildCompletedDailyMemoryBuckets({
+              messages: dailyMemorySourceMessages,
+              now: nowInstant,
+              timeZone: promptTimeZone,
+              handoverHour: dailyMemoryAgentRuntime.settings.handoverHour,
+            });
+            await ensureMissingDailyMemoryDays({
+              db: app.db,
+              chatId: input.chatId,
+              buckets: dailyMemoryBuckets,
+              maxDays: 2,
+              provider: dailyMemoryAgentRuntime.provider,
+              model: dailyMemoryAgentRuntime.model,
+              prompt: dailyMemoryAgentRuntime.prompt,
+              personaName,
+              characterNames: dailyMemoryCharacterNames,
+              embeddingSource: memoryRecallEmbeddingSource,
+              signal: abortController.signal,
+            });
+            try {
+              const retrievalMessages = dailyMemorySourceMessages
+                .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "narrator")
+                .slice(-dailyMemoryAgentRuntime.settings.retrievalMessageCount)
+                .map((message) => `${message.role}: ${String(message.content ?? "").trim()}`)
+                .filter((line) => line.trim().length > 0);
+              if (retrievalMessages.length > 0) {
+                const recalledDailyMemories = await retrieveDailyMemories({
+                  db: app.db,
+                  chatId: input.chatId,
+                  query: retrievalMessages.join("\n"),
+                  settings: dailyMemoryAgentRuntime.settings,
+                  embeddingSource: memoryRecallEmbeddingSource,
+                  now: nowInstant,
+                  signal: abortController.signal,
+                });
+                if (recalledDailyMemories.length > 0) {
+                  const block = buildDailyMemoriesContextBlock(recalledDailyMemories, wrapFormat);
+                  const insertAt = finalMessages.findIndex(
+                    (message) => message.role === "user" || message.role === "assistant",
+                  );
+                  finalMessages.splice(insertAt >= 0 ? insertAt : finalMessages.length, 0, {
+                    role: "system",
+                    content: block,
+                    contextKind: "injection",
+                  });
+                }
+              }
+            } catch (err) {
+              logger.warn(err, "[daily-memory] Retrieval failed; continuing without daily memories");
+            }
+          }
 
           // ── Conversation-mode profiles (Convo ONLY): display name, about-me, behavior ──
           // Built entirely inside this branch, so none of these fields can reach

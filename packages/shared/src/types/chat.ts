@@ -142,6 +142,35 @@ export interface DaySummaryEntry {
   keyDetails: string[];
 }
 
+/** A user-reviewable memory formed from one completed Conversation day. */
+export interface DailyMemory {
+  id: string;
+  chatId: string;
+  date: string;
+  memory: string;
+  importance: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DailyMemoryDay {
+  date: string;
+  formed: boolean;
+  formedAt: string | null;
+  memories: DailyMemory[];
+}
+
+export interface DailyMemoryListResponse {
+  handoverHour: number;
+  currentWindowDate: string;
+  days: DailyMemoryDay[];
+}
+
+export interface DailyMemoryFormationResult {
+  date: string;
+  memories: DailyMemory[];
+}
+
 /** A single week's consolidated conversation summary (Monday → Sunday). */
 export interface WeekSummaryEntry {
   /** Narrative recap of the week. */
