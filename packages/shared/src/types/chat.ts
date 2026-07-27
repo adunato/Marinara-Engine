@@ -179,7 +179,7 @@ export interface DailyMemoryRetrievalPreviewMemory extends DailyMemory {
 
 export interface DailyMemoryRetrievalPreview {
   retrievalMessageCount: number;
-  queryMessages: string[];
+  messagesConsidered: number;
   memories: DailyMemoryRetrievalPreviewMemory[];
 }
 

@@ -132,7 +132,7 @@ export async function dailyMemoriesRoutes(app: FastifyInstance) {
         : [];
     return {
       retrievalMessageCount: value.runtime.settings.retrievalMessageCount,
-      queryMessages,
+      messagesConsidered: queryMessages.length,
       memories,
     };
   });
