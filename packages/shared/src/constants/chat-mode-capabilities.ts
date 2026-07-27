@@ -86,9 +86,9 @@ export const ROLEPLAY_AGENT_PICKER_HIDDEN_IDS = [] as const;
 export const CONVERSATION_AGENT_IDS = [] as const;
 
 // Conversation mode's About Me profile and update_about_me tool are core features,
-// not downloadable agents. Custom Tracker is the only downloadable pipeline agent
-// enabled here; Conversation still permits user-authored custom agents.
-export const CONVERSATION_ALLOWED_AGENT_IDS = ["custom-tracker"] as const;
+// not downloadable agents. Conversation also permits its purpose-built daily-memory
+// and custom-tracker agents, plus user-authored custom agents.
+export const CONVERSATION_ALLOWED_AGENT_IDS = ["custom-tracker", "daily-memory"] as const;
 
 // Optional packages are never activated implicitly. Existing chats retain their
 // selections through the one-time legacy package migration.

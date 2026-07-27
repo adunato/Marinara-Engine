@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Chat: Settings Drawer — per-chat configuration
 // ──────────────────────────────────────────────
-import { useState, useRef, useEffect, useMemo, useCallback, type CSSProperties } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback, type CSSProperties, type ReactNode } from "react";
 import { useQuery, useQueryClient, useQueries } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -2304,8 +2304,8 @@ export function ChatSettingsDrawer({
   );
 
   const customAgents = useMemo(() => availableAgents.filter((agent) => agent.category === "custom"), [availableAgents]);
-  const conversationTrackerAgents = useMemo(
-    () => (isConversation ? availableAgents.filter((agent) => agent.category === "tracker") : []),
+  const conversationBuiltInAgents = useMemo(
+    () => (isConversation ? availableAgents.filter((agent) => agent.builtIn) : []),
     [availableAgents, isConversation],
   );
   const activeCustomAgents = useMemo(
@@ -3977,20 +3977,31 @@ export function ChatSettingsDrawer({
     );
   };
 
-  const renderConversationTrackerAgentPicker = () => {
-    if (conversationTrackerAgents.length === 0) return null;
-    const activeTrackers = conversationTrackerAgents.filter((agent) => activeAgentIds.includes(agent.id));
-    const inactiveTrackers = conversationTrackerAgents.filter((agent) => !activeAgentIds.includes(agent.id));
+  const renderConversationBuiltInAgentPicker = ({
+    category,
+    label,
+    description,
+    icon,
+  }: {
+    category: string;
+    label: string;
+    description: string;
+    icon: ReactNode;
+  }) => {
+    const categoryAgents = conversationBuiltInAgents.filter((agent) => agent.category === category);
+    if (categoryAgents.length === 0) return null;
+    const activeAgents = categoryAgents.filter((agent) => activeAgentIds.includes(agent.id));
+    const inactiveAgents = categoryAgents.filter((agent) => !activeAgentIds.includes(agent.id));
     return (
       <AgentCategorySection
-        label="Tracker Agents"
-        icon={<Activity size="0.75rem" />}
-        description="Track user-defined facts and values that change during this conversation."
-        count={activeTrackers.length}
+        label={label}
+        icon={icon}
+        description={description}
+        count={activeAgents.length}
       >
-        {activeTrackers.length > 0 && (
+        {activeAgents.length > 0 && (
           <div className="mb-1.5 flex flex-col gap-1">
-            {activeTrackers.map((agent) => (
+            {activeAgents.map((agent) => (
               <div
                 key={agent.id}
                 data-chat-agent-entry={agent.id}
@@ -4015,9 +4026,9 @@ export function ChatSettingsDrawer({
             ))}
           </div>
         )}
-        {inactiveTrackers.length > 0 ? (
+        {inactiveAgents.length > 0 ? (
           <div className="flex flex-col gap-1">
-            {inactiveTrackers.map((agent) => (
+            {inactiveAgents.map((agent) => (
               <button
                 key={agent.id}
                 data-chat-agent-entry={agent.id}
@@ -4036,7 +4047,7 @@ export function ChatSettingsDrawer({
           </div>
         ) : (
           <p className="px-1 text-[0.625rem] text-[var(--muted-foreground)]">
-            All Conversation tracker agents are active.
+            All Conversation {label.toLowerCase()} are active.
           </p>
         )}
       </AgentCategorySection>
@@ -6039,7 +6050,24 @@ export function ChatSettingsDrawer({
                     )}
                   </div>
                 )}
-                {renderConversationTrackerAgentPicker()}
+                {renderConversationBuiltInAgentPicker({
+                  category: "writer",
+                  label: "Writer Agents",
+                  icon: <Feather size="0.75rem" />,
+                  description: "Improve writing and continuity during this conversation.",
+                })}
+                {renderConversationBuiltInAgentPicker({
+                  category: "tracker",
+                  label: "Tracker Agents",
+                  icon: <Activity size="0.75rem" />,
+                  description: "Track user-defined facts and values that change during this conversation.",
+                })}
+                {renderConversationBuiltInAgentPicker({
+                  category: "misc",
+                  label: "Misc Agents",
+                  icon: <Puzzle size="0.75rem" />,
+                  description: "Add specialized Conversation helpers such as daily memories.",
+                })}
                 {renderCustomAgentPicker()}
                 {renderActiveCustomAgentSettingsCard()}
               </div>
