@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import { ChevronDown, ChevronRight, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Chat, DailyMemory, DailyMemoryDay } from "@marinara-engine/shared";
@@ -21,6 +21,7 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
   const [drafts, setDrafts] = useState<Record<string, DraftMemory[]>>({});
   const [snapshot, setSnapshot] = useState<Record<string, DraftMemory[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const scrollSurfaceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open || !query.data) return;
@@ -35,6 +36,19 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
   );
   const busy = saveDay.isPending || generateDay.isPending;
   const generatingDate = generateDay.isPending ? generateDay.variables : null;
+
+  const scrollDialogFromMemory = (event: WheelEvent<HTMLTextAreaElement>) => {
+    const scrollSurface = scrollSurfaceRef.current;
+    if (!scrollSurface || scrollSurface.scrollHeight <= scrollSurface.clientHeight) return;
+    event.preventDefault();
+    const delta =
+      event.deltaMode === 1
+        ? event.deltaY * 16
+        : event.deltaMode === 2
+          ? event.deltaY * scrollSurface.clientHeight
+          : event.deltaY;
+    scrollSurface.scrollTop += delta;
+  };
 
   const close = async () => {
     if (
@@ -100,12 +114,20 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
   };
 
   return (
-    <Modal open={open} onClose={() => void close()} title="Daily Memories" width="max-w-5xl" chatFloatingPanel>
-      <div className="flex min-h-0 flex-1 flex-col" data-testid="daily-memories-editor">
+    <Modal
+      open={open}
+      onClose={() => void close()}
+      title="Daily Memories"
+      width="max-w-5xl"
+      contentRef={scrollSurfaceRef}
+      contentTestId="daily-memories-editor-scroll"
+      chatFloatingPanel
+    >
+      <div data-testid="daily-memories-editor">
         <div className="border-b border-[var(--border)] px-5 py-3 text-xs text-[var(--muted-foreground)]">
           Review memories by completed Conversation day. Importance ranges from 1 (low) to 5 (very important).
         </div>
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+        <div className="space-y-2 p-4">
           {query.isLoading && (
             <p className="py-8 text-center text-sm text-[var(--muted-foreground)]">Loading memories…</p>
           )}
@@ -152,6 +174,7 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
                           aria-label={`Memory ${index + 1} for ${day.date}`}
                           value={memory.memory}
                           rows={2}
+                          onWheel={scrollDialogFromMemory}
                           onChange={(event) =>
                             setDrafts((current) => ({
                               ...current,
