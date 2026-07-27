@@ -22,6 +22,7 @@ interface ModalProps {
   /** Width class, e.g. "max-w-md", "max-w-lg" */
   width?: string;
   contentRef?: Ref<HTMLDivElement>;
+  contentTestId?: string;
   initialFocusRef?: RefObject<HTMLElement | null>;
   restoreFocusRef?: RefObject<HTMLElement | null>;
   focusScopePortalSelector?: string;
@@ -42,6 +43,7 @@ export function Modal({
   children,
   width = "max-w-md",
   contentRef,
+  contentTestId,
   initialFocusRef,
   restoreFocusRef,
   focusScopePortalSelector,
@@ -183,6 +185,7 @@ export function Modal({
         {/* Content */}
         <div
           ref={contentRef}
+          data-testid={contentTestId}
           className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 ${NEUTRAL_PANEL_SCROLL_AREA}`}
         >
           {children}

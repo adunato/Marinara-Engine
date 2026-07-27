@@ -21,12 +21,25 @@ export function DailyMemoryRetrievalPreviewModal({
       memories.push(memory);
       result.set(memory.date, memories);
     }
-    return [...result.entries()];
+    return [...result.entries()].sort(([leftDate], [rightDate]) => {
+      const [leftDay, leftMonth, leftYear] = leftDate.split(".").map(Number);
+      const [rightDay, rightMonth, rightYear] = rightDate.split(".").map(Number);
+      const leftTime = Date.UTC(leftYear ?? 0, (leftMonth ?? 1) - 1, leftDay ?? 1);
+      const rightTime = Date.UTC(rightYear ?? 0, (rightMonth ?? 1) - 1, rightDay ?? 1);
+      return leftTime - rightTime || leftDate.localeCompare(rightDate);
+    });
   }, [preview.data?.memories]);
 
   return (
-    <Modal open={open} onClose={onClose} title="Current Daily Memories" width="max-w-3xl" chatFloatingPanel>
-      <div className="flex min-h-0 flex-1 flex-col" data-testid="daily-memory-retrieval-preview">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Current Daily Memories"
+      width="max-w-3xl"
+      contentTestId="daily-memory-preview-scroll"
+      chatFloatingPanel
+    >
+      <div data-testid="daily-memory-retrieval-preview">
         <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-3">
           <p className="max-w-2xl text-xs leading-relaxed text-[var(--muted-foreground)]">
             These are the daily memories that would be injected for this Conversation using the saved retrieval
@@ -41,7 +54,7 @@ export function DailyMemoryRetrievalPreviewModal({
             <RefreshCw size="0.75rem" className={preview.isFetching ? "animate-spin" : ""} /> Refresh
           </button>
         </div>
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        <div className="space-y-4 p-4">
           {preview.isLoading && (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-[var(--muted-foreground)]">
               <Loader2 size="1rem" className="animate-spin" /> Ranking current memories…
@@ -74,7 +87,12 @@ export function DailyMemoryRetrievalPreviewModal({
                 </div>
               ) : (
                 grouped.map(([date, memories]) => (
-                  <div key={date} className="overflow-hidden rounded-xl border border-[var(--border)]">
+                  <div
+                    key={date}
+                    data-testid="daily-memory-preview-day"
+                    data-date={date}
+                    className="overflow-hidden rounded-xl border border-[var(--border)]"
+                  >
                     <div className="bg-[var(--secondary)]/50 px-3 py-2 text-xs font-semibold text-[var(--foreground)]">
                       {date}
                     </div>
