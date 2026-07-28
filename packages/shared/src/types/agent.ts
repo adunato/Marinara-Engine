@@ -427,6 +427,7 @@ export const BUILT_IN_AGENT_IDS = {
   HAPTIC: "haptic",
   CYOA: "cyoa",
   DAILY_MEMORY: "daily-memory",
+  DAILY_INTENTIONS: "daily-intentions",
 } as const;
 
 export const RETIRED_BUILT_IN_AGENT_IDS = [

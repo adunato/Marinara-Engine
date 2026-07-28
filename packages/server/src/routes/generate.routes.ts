@@ -170,6 +170,11 @@ import {
   ensureMissingDailyMemoryDays,
   retrieveDailyMemories,
 } from "../services/conversation/daily-memory.service.js";
+import {
+  buildDailyIntentionsContextBlock,
+  isDailyIntentionsAgentActive,
+  normalizeDailyIntentionsState,
+} from "../services/conversation/daily-intentions.service.js";
 import { executeKnowledgeRetrieval } from "../services/agents/knowledge-retrieval.js";
 import { executeKnowledgeRouter } from "../services/agents/knowledge-router.js";
 import { extractFileText, getSourceFilePath } from "./knowledge-sources.routes.js";
@@ -2242,6 +2247,27 @@ export async function generateRoutes(app: FastifyInstance) {
           // RP/VN/Game prompts. `convoFields` is set on the shared macro context here
           // (never elsewhere), so {{char_about}}/{{convo_behavior}}/etc. resolve to ""
           // in every other mode even if placed in a shared card/lorebook surface.
+          if (characterIds.length === 1 && isDailyIntentionsAgentActive(chatMeta)) {
+            try {
+              const dailyIntentionsBlock = buildDailyIntentionsContextBlock(
+                normalizeDailyIntentionsState(chatMeta.dailyIntentions),
+                convoCharInfo[0]?.displayName || convoCharInfo[0]?.name || "Character",
+              );
+              if (dailyIntentionsBlock) {
+                const insertAt = finalMessages.findIndex(
+                  (message) => message.role === "user" || message.role === "assistant",
+                );
+                finalMessages.splice(insertAt >= 0 ? insertAt : finalMessages.length, 0, {
+                  role: "system",
+                  content: dailyIntentionsBlock,
+                  contextKind: "injection",
+                });
+              }
+            } catch (err) {
+              logger.warn(err, "[daily-intentions] Context injection failed; continuing without Daily Intentions");
+            }
+          }
+
           const aboutMeOverrides = (chatMeta.conversationAboutMeOverrides ?? {}) as Record<string, string>;
           const autoInjectAbout = chatMeta.conversationAboutMeInject !== false;
           const effectiveAbout = (id: string, fallback: string): string => {

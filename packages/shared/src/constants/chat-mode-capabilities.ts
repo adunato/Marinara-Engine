@@ -88,7 +88,7 @@ export const CONVERSATION_AGENT_IDS = [] as const;
 // Conversation mode's About Me profile and update_about_me tool are core features,
 // not downloadable agents. Conversation also permits its purpose-built daily-memory
 // and custom-tracker agents, plus user-authored custom agents.
-export const CONVERSATION_ALLOWED_AGENT_IDS = ["custom-tracker", "daily-memory"] as const;
+export const CONVERSATION_ALLOWED_AGENT_IDS = ["custom-tracker", "daily-memory", "daily-intentions"] as const;
 
 // Optional packages are never activated implicitly. Existing chats retain their
 // selections through the one-time legacy package migration.

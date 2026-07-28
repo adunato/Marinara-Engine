@@ -90,6 +90,8 @@ import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
 import { DailyMemoriesEditorModal } from "./DailyMemoriesEditorModal";
 import { DailyMemoryRetrievalPreviewModal } from "./DailyMemoryRetrievalPreviewModal";
+import { DailyIntentionsConfigModal } from "./DailyIntentionsConfigModal";
+import { DailyIntentionsEditorModal } from "./DailyIntentionsEditorModal";
 import { AgentSuiteModal } from "./AgentSuiteModal";
 import { ConversationTimeZoneSelect } from "./ConversationTimeZoneSelect";
 import { ChatContextSourcesPicker } from "./ChatContextSourcesPicker";
@@ -177,7 +179,11 @@ import type {
   SpotifySourceType,
   WeekSchedule,
 } from "@marinara-engine/shared";
-import { DAILY_MEMORY_AGENT_ID, normalizeSpotifySourceType } from "@marinara-engine/shared";
+import {
+  DAILY_INTENTIONS_AGENT_ID,
+  DAILY_MEMORY_AGENT_ID,
+  normalizeSpotifySourceType,
+} from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
@@ -1306,6 +1312,8 @@ export function ChatSettingsDrawer({
   }, [dailyMemoryAgentSettings]);
   const dailyMemoryAgentActive =
     isConversation && metadata.enableAgents === true && activeAgentIds.includes(DAILY_MEMORY_AGENT_ID);
+  const dailyIntentionsAgentActive =
+    isConversation && metadata.enableAgents === true && activeAgentIds.includes(DAILY_INTENTIONS_AGENT_ID);
   const mapsPackage = installedCapabilities.find(
     (item) => item.status === "active" && item.manifest.kind.includes("maps") && item.manifest.entrypoints.client,
   );
@@ -3183,6 +3191,8 @@ export function ChatSettingsDrawer({
   const [showSummariesModal, setShowSummariesModal] = useState(false);
   const [showDailyMemoriesModal, setShowDailyMemoriesModal] = useState(false);
   const [showDailyMemoryPreviewModal, setShowDailyMemoryPreviewModal] = useState(false);
+  const [showDailyIntentionsConfigModal, setShowDailyIntentionsConfigModal] = useState(false);
+  const [showDailyIntentionsModal, setShowDailyIntentionsModal] = useState(false);
   const [showAgentSuiteModal, setShowAgentSuiteModal] = useState(false);
   const [showMemoriesModal, setShowMemoriesModal] = useState(false);
   const handleAgentSuiteCloseGuardChange = useCallback((guard: (() => Promise<boolean>) | null) => {
@@ -4237,6 +4247,37 @@ export function ChatSettingsDrawer({
           className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
         >
           <Settings2 size="0.75rem" /> Open full agent settings and prompt
+        </button>
+      </AgentSettingsCard>
+    );
+  };
+
+  const renderDailyIntentionsAgentSettings = () => {
+    if (!dailyIntentionsAgentActive) return null;
+    const eligible = chat.characterIds.length === 1;
+    return (
+      <AgentSettingsCard
+        icon={<Brain size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+        title="Daily Intentions"
+        description="Configure four Conversation-scoped intention areas and manual offline generation."
+      >
+        {!eligible && (
+          <p className="rounded-lg bg-amber-400/10 px-3 py-2 text-[0.625rem] leading-relaxed text-amber-300">
+            Daily Intentions currently supports Conversations with exactly one character. Configuration and existing
+            outputs are preserved, but generation and injection are paused for this chat.
+          </p>
+        )}
+        <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+          The cutoff is informational in this manual-only first version. Each area has its own editable heading and
+          prompt; order remains fixed.
+        </p>
+        <button
+          type="button"
+          data-testid="configure-daily-intentions"
+          onClick={() => setShowDailyIntentionsConfigModal(true)}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
+        >
+          <Settings2 size="0.75rem" /> Configure intention areas
         </button>
       </AgentSettingsCard>
     );
@@ -6257,6 +6298,7 @@ export function ChatSettingsDrawer({
                   description: "Add specialized Conversation helpers such as daily memories.",
                 })}
                 {renderDailyMemoryAgentSettings()}
+                {renderDailyIntentionsAgentSettings()}
                 {renderCustomAgentPicker()}
                 {renderActiveCustomAgentSettingsCard()}
               </div>
@@ -9052,6 +9094,29 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
+          {dailyIntentionsAgentActive && (
+            <Section
+              label="Daily Intentions"
+              icon={<Brain size="0.875rem" />}
+              help="Review, edit, or manually regenerate the single character's current first-person intentions. Successful areas replace immediately; failed areas keep their previous value."
+            >
+              <button
+                type="button"
+                data-testid="open-daily-intentions"
+                onClick={() => setShowDailyIntentionsModal(true)}
+                className="flex w-full items-center justify-between rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="text-[0.6875rem] font-medium">Edit Daily Intentions</span>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    Run all enabled areas sequentially, rerun one area, or rewrite the current output manually.
+                  </p>
+                </div>
+                <Pencil size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+              </button>
+            </Section>
+          )}
+
           <div style={{ order: CHAT_SETTINGS_ORDER.functionCalling }}>
             <FunctionCallingSection
               enableTools={metadata.enableTools as boolean | undefined}
@@ -9156,6 +9221,18 @@ export function ChatSettingsDrawer({
       />
 
       {/* Agent Suite — stored agent data viewer/editor */}
+      <DailyIntentionsConfigModal
+        chatId={chat.id}
+        open={showDailyIntentionsConfigModal}
+        onClose={() => setShowDailyIntentionsConfigModal(false)}
+      />
+
+      <DailyIntentionsEditorModal
+        chatId={chat.id}
+        open={showDailyIntentionsModal}
+        onClose={() => setShowDailyIntentionsModal(false)}
+      />
+
       <AgentSuiteModal
         chat={chat}
         open={showAgentSuiteModal}

@@ -317,6 +317,8 @@ export interface ChatMetadata {
   agentOverrides: Record<string, boolean>;
   /** Agent IDs scoped to this chat. Non-empty = only these agents run; empty = use globally-enabled agents. */
   activeAgentIds: string[];
+  /** Conversation-scoped Daily Intentions configuration and current-only outputs. */
+  dailyIntentions?: import("./daily-intentions.js").DailyIntentionsState;
   /** Per-chat selected named prompt template for each agent type. Missing/default = the agent's default prompt. */
   agentPromptTemplateIds?: Record<string, string>;
   /** Whether Illustrator should append matched character card appearance text to image prompts. */
