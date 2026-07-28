@@ -16,6 +16,7 @@ import {
   replaceDailyIntentionOutput,
   stripDailyIntentionsContext,
 } from "../services/conversation/daily-intentions.service.js";
+import { listDailyMemoryDays } from "../services/conversation/daily-memory.service.js";
 import type { ChatMessage } from "../services/llm/base-provider.js";
 import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
@@ -26,6 +27,7 @@ import { resolveBaseUrl } from "./generate/generate-route-utils.js";
 
 const runningAllChats = new Set<string>();
 const runningAreasByChat = new Map<string, Set<DailyIntentionAreaKey>>();
+const DAILY_INTENTIONS_MESSAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function parseRecord(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
@@ -144,120 +146,97 @@ export async function dailyIntentionsRoutes(app: FastifyInstance) {
   async function buildContextSnapshot(
     value: NonNullable<Awaited<ReturnType<typeof loadContext>>>,
   ): Promise<ChatMessage[]> {
-    const visibleMessages = (await chats.listMessages(value.chat.id)).filter(isVisibleMessage);
-    let messages: ChatMessage[] = [];
-    let previewSource = "";
-    try {
-      const preview = await app.inject({
-        method: "POST",
-        url: `/api/chats/${encodeURIComponent(value.chat.id)}/peek-prompt`,
-        payload: {},
-      });
-      if (preview.statusCode === 200) {
-        const body = JSON.parse(preview.payload) as { source?: unknown; messages?: unknown };
-        previewSource = typeof body.source === "string" ? body.source : "";
-        if (Array.isArray(body.messages)) {
-          messages = body.messages.flatMap((candidate) => {
-            const mapped = mapMessage(candidate);
-            return mapped ? [mapped] : [];
-          });
-        }
+    const snapshotAt = Date.now();
+    const allMessages = await chats.listMessages(value.chat.id);
+    let conversationStartIndex = 0;
+    for (let index = allMessages.length - 1; index >= 0; index -= 1) {
+      if (parseRecord(allMessages[index]?.extra).isConversationStart === true) {
+        conversationStartIndex = index;
+        break;
       }
-    } catch {
-      messages = [];
     }
-
-    const appendVisibleMessages = (candidates: typeof visibleMessages) => {
-      const existing = new Set(messages.map((message) => `${message.role}\u0000${message.content}`));
-      for (const message of candidates) {
-        const mapped = mapMessage(message);
-        if (!mapped) continue;
-        const identity = `${mapped.role}\u0000${mapped.content}`;
-        if (existing.has(identity)) continue;
-        messages.push(mapped);
-        existing.add(identity);
-      }
-    };
-
-    if (previewSource === "cached") {
-      let latestAssistantIndex = -1;
-      for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
-        if (visibleMessages[index]?.role === "assistant") {
-          latestAssistantIndex = index;
-          break;
-        }
-      }
-      appendVisibleMessages(visibleMessages.slice(latestAssistantIndex >= 0 ? latestAssistantIndex : 0));
-    } else if (messages.length > 0) {
-      appendVisibleMessages(visibleMessages);
-    }
-
-    if (messages.length === 0) {
-      messages = visibleMessages.flatMap((message) => {
+    const recentMessages = allMessages
+      .slice(conversationStartIndex)
+      .filter(isVisibleMessage)
+      .filter((message) => {
+        const createdAt = Date.parse(message.createdAt);
+        return (
+          Number.isFinite(createdAt) &&
+          createdAt >= snapshotAt - DAILY_INTENTIONS_MESSAGE_WINDOW_MS &&
+          createdAt <= snapshotAt
+        );
+      })
+      .flatMap((message) => {
         const mapped = mapMessage(message);
         return mapped ? [mapped] : [];
       });
-    }
 
-    if (previewSource !== "cached") {
-      const character = value.characterId ? await characters.getById(value.characterId) : null;
-      const characterData = parseRecord(character?.data);
-      const personas = await characters.listPersonas();
-      const persona =
-        (value.chat.personaId ? personas.find((candidate) => candidate.id === value.chat.personaId) : null) ??
-        personas.find((candidate) => candidate.isActive === "true");
-      const durableContext = {
-        character: characterData,
-        persona: persona
-          ? {
-              name: persona.name,
-              description: persona.description,
-              personality: persona.personality,
-              scenario: persona.scenario,
-              backstory: persona.backstory,
-              appearance: persona.appearance,
-              aboutMe: persona.aboutMe,
-            }
-          : null,
-        summary: value.metadata.summary ?? null,
-        summaryEntries: value.metadata.summaryEntries ?? null,
-        characterSchedules: value.metadata.characterSchedules ?? null,
-        conversationAboutMeOverrides: value.metadata.conversationAboutMeOverrides ?? null,
-      };
-      messages.unshift({
+    const character = value.characterId ? await characters.getById(value.characterId) : null;
+    const characterData = parseRecord(character?.data);
+    const personas = await characters.listPersonas();
+    const persona =
+      (value.chat.personaId ? personas.find((candidate) => candidate.id === value.chat.personaId) : null) ??
+      personas.find((candidate) => candidate.isActive === "true");
+    const messages: ChatMessage[] = [
+      {
         role: "system",
-        content: `<durable_conversation_context>\n${JSON.stringify(durableContext, null, 2)}\n</durable_conversation_context>`,
+        content: `<character_identity>\n${JSON.stringify(
+          {
+            character: characterData,
+            persona: persona
+              ? {
+                  name: persona.name,
+                  description: persona.description,
+                  personality: persona.personality,
+                  scenario: persona.scenario,
+                  backstory: persona.backstory,
+                  appearance: persona.appearance,
+                  aboutMe: persona.aboutMe,
+                }
+              : null,
+          },
+          null,
+          2,
+        )}\n</character_identity>`,
+        contextKind: "injection",
+      },
+    ];
+
+    if (value.metadata.summary || value.metadata.summaryEntries) {
+      messages.push({
+        role: "system",
+        content: `<conversation_summaries>\n${JSON.stringify(
+          {
+            summary: value.metadata.summary ?? null,
+            summaryEntries: value.metadata.summaryEntries ?? null,
+          },
+          null,
+          2,
+        )}\n</conversation_summaries>`,
         contextKind: "injection",
       });
-
-      try {
-        const dailyMemories = await app.inject({
-          method: "GET",
-          url: `/api/chats/${encodeURIComponent(value.chat.id)}/daily-memories`,
-        });
-        if (dailyMemories.statusCode === 200) {
-          const body = JSON.parse(dailyMemories.payload) as { days?: unknown };
-          if (Array.isArray(body.days)) {
-            const formed = body.days
-              .flatMap((day: any) => (Array.isArray(day?.memories) ? day.memories : []))
-              .slice(-100)
-              .map((memory: any) => memory?.memory)
-              .filter((memory): memory is string => typeof memory === "string" && !!memory.trim());
-            if (formed.length > 0) {
-              messages.unshift({
-                role: "system",
-                content: `<daily_memories>\n${formed.join("\n\n")}\n</daily_memories>`,
-                contextKind: "injection",
-              });
-            }
-          }
-        }
-      } catch {
-        // Daily Memories is optional; the remaining Conversation context is still valid.
-      }
     }
 
-    return messages.map((message) => ({ ...message, content: stripDailyIntentionsContext(message.content) }));
+    try {
+      const dailyMemoryDays = await listDailyMemoryDays({ db: app.db, chatId: value.chat.id, buckets: [] });
+      const dailyMemories = dailyMemoryDays.flatMap((day) =>
+        day.memories.map((memory) => `[${day.date}] ${memory.memory.trim()}`).filter((memory) => !!memory.trim()),
+      );
+      if (dailyMemories.length > 0) {
+        messages.push({
+          role: "system",
+          content: `<daily_memories>\n${dailyMemories.join("\n\n")}\n</daily_memories>`,
+          contextKind: "injection",
+        });
+      }
+    } catch {
+      // Daily Memories is optional; identity, summaries, and the 24-hour transcript remain valid.
+    }
+
+    return [...messages, ...recentMessages].map((message) => ({
+      ...message,
+      content: stripDailyIntentionsContext(message.content),
+    }));
   }
 
   async function persistOutput(chatId: string, key: DailyIntentionAreaKey, content: string) {
