@@ -79,6 +79,7 @@ import {
   DEFAULT_AGENT_TOOLS,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_AUTHOR,
+  DAILY_INTENTIONS_AGENT_ID,
   DAILY_MEMORY_AGENT_ID,
   CUSTOM_AGENT_CAPABILITY_IDS,
   DEFAULT_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH,
@@ -447,7 +448,9 @@ export function AgentEditor() {
       loaded: Array.isArray(connections),
       llmIds: new Set(
         rows
-          .filter((connection) => connection.provider !== "image_generation" && connection.provider !== "video_generation")
+          .filter(
+            (connection) => connection.provider !== "image_generation" && connection.provider !== "video_generation",
+          )
           .map((connection) => connection.id),
       ),
       imageIds: new Set(
@@ -846,8 +849,9 @@ export function AgentEditor() {
 
   // Narrative Director agent — one-shot story push setting
   const isDirectorAgent = agentDetailId === "director" || dbConfig?.type === "director";
-  const isDailyMemoryAgent =
-    agentDetailId === DAILY_MEMORY_AGENT_ID || dbConfig?.type === DAILY_MEMORY_AGENT_ID;
+  const isDailyMemoryAgent = agentDetailId === DAILY_MEMORY_AGENT_ID || dbConfig?.type === DAILY_MEMORY_AGENT_ID;
+  const isDailyIntentionsAgent =
+    agentDetailId === DAILY_INTENTIONS_AGENT_ID || dbConfig?.type === DAILY_INTENTIONS_AGENT_ID;
 
   // Illustrator agent — run interval setting
   const isIllustratorAgent = agentDetailId === "illustrator" || dbConfig?.type === "illustrator";
@@ -1478,9 +1482,7 @@ export function AgentEditor() {
   if (!agentDetailId || (!builtIn && !dbConfig && agentDetailId !== "__new__")) {
     return (
       <div className="mari-editor-shell flex flex-1 items-center justify-center">
-        <p className="mari-editor-empty px-4 py-3 text-sm">
-          Agent not found.
-        </p>
+        <p className="mari-editor-empty px-4 py-3 text-sm">Agent not found.</p>
       </div>
     );
   }
@@ -1617,8 +1619,8 @@ export function AgentEditor() {
           <AlertCircle size="0.8125rem" />
           <span className="flex-1">
             {isKnowledgeRouterAgent ? "Knowledge Retrieval" : "Knowledge Router"} is also configured. Both agents can
-            run in parallel if a chat enables both, injecting overlapping context. Consider enabling only one for cleaner
-            prompts.
+            run in parallel if a chat enables both, injecting overlapping context. Consider enabling only one for
+            cleaner prompts.
           </span>
         </div>
       )}
@@ -1846,38 +1848,54 @@ export function AgentEditor() {
             </FieldGroup>
           )}
 
-          {/* ── Connection Override ── */}
-          <FieldGroup
-            label="Connection Override"
-            icon={<Link2 size="0.875rem" className="text-[var(--primary)]" />}
-            help="Use a different AI connection for this agent. For example, use a faster/cheaper model for background processing tasks."
-          >
-            <select
-              value={localConnectionId}
-              onChange={(e) => {
-                setLocalConnectionId(e.target.value);
-                markDirty();
-              }}
-              className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+          {isDailyIntentionsAgent && (
+            <FieldGroup
+              label="Conversation Configuration"
+              icon={<Info size="0.875rem" className="text-[var(--primary)]" />}
+              help="Daily Intentions is configured independently for each eligible Conversation."
             >
-              <option value="">
-                {defaultAgentConn ? `Agent default (${defaultAgentConn.name})` : "Use chat connection"}
-              </option>
-              {import.meta.env.VITE_MARINARA_LITE !== "true" && (
-                <option value={LOCAL_SIDECAR_CONNECTION_ID}>Local Model (sidecar)</option>
-              )}
-              {llmConnections.map((conn) => (
-                <option key={conn.id} value={conn.id}>
-                  {conn.name} ({conn.provider})
+              <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+                Open Chat Settings in a single-character Conversation to choose the generation connection, edit each
+                area prompt, and run Daily Intentions. Its context is fixed to the preceding 24 hours of visible
+                messages plus Conversation summaries and saved Daily Memories.
+              </p>
+            </FieldGroup>
+          )}
+
+          {/* ── Connection Override ── */}
+          {!isDailyIntentionsAgent && (
+            <FieldGroup
+              label="Connection Override"
+              icon={<Link2 size="0.875rem" className="text-[var(--primary)]" />}
+              help="Use a different AI connection for this agent. For example, use a faster/cheaper model for background processing tasks."
+            >
+              <select
+                value={localConnectionId}
+                onChange={(e) => {
+                  setLocalConnectionId(e.target.value);
+                  markDirty();
+                }}
+                className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              >
+                <option value="">
+                  {defaultAgentConn ? `Agent default (${defaultAgentConn.name})` : "Use chat connection"}
                 </option>
-              ))}
-            </select>
-            <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              {localConnectionId === LOCAL_SIDECAR_CONNECTION_ID
-                ? "Uses the built-in Local Model from the Connections panel. The sidecar will start on demand when this agent runs."
-                : "When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active connection."}
-            </p>
-          </FieldGroup>
+                {import.meta.env.VITE_MARINARA_LITE !== "true" && (
+                  <option value={LOCAL_SIDECAR_CONNECTION_ID}>Local Model (sidecar)</option>
+                )}
+                {llmConnections.map((conn) => (
+                  <option key={conn.id} value={conn.id}>
+                    {conn.name} ({conn.provider})
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                {localConnectionId === LOCAL_SIDECAR_CONNECTION_ID
+                  ? "Uses the built-in Local Model from the Connections panel. The sidecar will start on demand when this agent runs."
+                  : "When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active connection."}
+              </p>
+            </FieldGroup>
+          )}
 
           {/* ── Image Generation Connection (Illustrator only) ── */}
           {isDailyMemoryAgent && (
@@ -2002,8 +2020,8 @@ export function AgentEditor() {
               </select>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 The Illustrator uses two connections: the LLM above analyzes the scene and writes an image prompt, then
-                this connection generates the actual image from that prompt. Leave this empty to use the default
-                Images connection from Settings → Connections, if one is configured.
+                this connection generates the actual image from that prompt. Leave this empty to use the default Images
+                connection from Settings → Connections, if one is configured.
               </p>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
@@ -2105,67 +2123,69 @@ export function AgentEditor() {
             </FieldGroup>
           )}
 
-          <FieldGroup
-            label="Agent Budget"
-            icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
-            help="Controls how much recent chat context the agent reads and how much output room it reserves. If max output is too high for the model context, prompt context can be trimmed."
-          >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                  Context Size
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={localContextSize}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setLocalContextSize(v === "" ? "" : Math.max(1, Math.min(200, parseInt(v) || 1)));
-                      markDirty();
-                    }}
-                    placeholder={String(DEFAULT_AGENT_CONTEXT_SIZE)}
-                    className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                  />
-                  <span className="text-[0.6875rem] text-[var(--muted-foreground)]">messages</span>
+          {!isDailyIntentionsAgent && (
+            <FieldGroup
+              label="Agent Budget"
+              icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
+              help="Controls how much recent chat context the agent reads and how much output room it reserves. If max output is too high for the model context, prompt context can be trimmed."
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                    Context Size
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={1}
+                      max={200}
+                      value={localContextSize}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setLocalContextSize(v === "" ? "" : Math.max(1, Math.min(200, parseInt(v) || 1)));
+                        markDirty();
+                      }}
+                      placeholder={String(DEFAULT_AGENT_CONTEXT_SIZE)}
+                      className="w-28 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    />
+                    <span className="text-[0.6875rem] text-[var(--muted-foreground)]">messages</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                    Max Output Tokens
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={MIN_AGENT_MAX_TOKENS}
+                      value={localMaxTokens}
+                      onChange={(e) => {
+                        setLocalMaxTokens(normalizeAgentMaxTokensInput(e.target.value));
+                        markDirty();
+                      }}
+                      onBlur={() => {
+                        if (localMaxTokens !== "") {
+                          setLocalMaxTokens(clampAgentMaxTokens(localMaxTokens));
+                        }
+                      }}
+                      placeholder={String(DEFAULT_AGENT_MAX_TOKENS)}
+                      className="w-32 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    />
+                    <span className="text-[0.6875rem] text-[var(--muted-foreground)]">tokens</span>
+                  </div>
                 </div>
               </div>
-              <div>
-                <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                  Max Output Tokens
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="number"
-                    min={MIN_AGENT_MAX_TOKENS}
-                    value={localMaxTokens}
-                    onChange={(e) => {
-                      setLocalMaxTokens(normalizeAgentMaxTokensInput(e.target.value));
-                      markDirty();
-                    }}
-                    onBlur={() => {
-                      if (localMaxTokens !== "") {
-                        setLocalMaxTokens(clampAgentMaxTokens(localMaxTokens));
-                      }
-                    }}
-                    placeholder={String(DEFAULT_AGENT_MAX_TOKENS)}
-                    className="w-32 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                  />
-                  <span className="text-[0.6875rem] text-[var(--muted-foreground)]">tokens</span>
-                </div>
-              </div>
-            </div>
-            <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              Each agent only sees its own context size. When agents are batched together (same model), the highest
-              context size in the batch is used and output budgets are combined.
-            </p>
-            <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              For 8k local models, try {DEFAULT_AGENT_MAX_TOKENS.toLocaleString()} or lower so the agent prompt keeps
-              enough room.
-            </p>
-          </FieldGroup>
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Each agent only sees its own context size. When agents are batched together (same model), the highest
+                context size in the batch is used and output budgets are combined.
+              </p>
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                For 8k local models, try {DEFAULT_AGENT_MAX_TOKENS.toLocaleString()} or lower so the agent prompt keeps
+                enough room.
+              </p>
+            </FieldGroup>
+          )}
 
           {isProseGuardianAgent && (
             <FieldGroup
@@ -3408,161 +3428,163 @@ export function AgentEditor() {
           )}
 
           {/* ── Prompt Template ── */}
-          <FieldGroup
-            label="Prompt Template"
-            icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
-            help="The system instructions this agent receives. Built-in agents have sensible defaults. You can override to customize behavior."
-          >
-            {/* Toolbar — only show default/override status for built-in agents */}
-            {builtIn && (
-              <div className="flex items-center gap-2 mb-2">
-                {isUsingDefaultPrompt ? (
-                  <span className="flex items-center gap-1 rounded-lg bg-emerald-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-emerald-400">
-                    <Check size="0.625rem" /> Using built-in default
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 rounded-lg bg-amber-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-amber-400">
-                    <FileText size="0.625rem" /> Custom override
-                  </span>
-                )}
-                <div className="flex-1" />
-                {!isUsingDefaultPrompt && (
-                  <button
-                    onClick={handleResetPrompt}
-                    className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                  >
-                    <RotateCcw size="0.625rem" /> Reset to default
-                  </button>
-                )}
-                {isUsingDefaultPrompt && defaultPrompt && (
-                  <button
-                    onClick={handleLoadDefault}
-                    className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                  >
-                    <FileText size="0.625rem" /> Copy default to edit
-                  </button>
-                )}
-              </div>
-            )}
-
-            {builtIn && isUsingDefaultPrompt ? (
-              <div className="relative">
-                <pre className="w-full max-h-[50vh] overflow-y-auto resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] text-[var(--muted-foreground)] whitespace-pre-wrap">
-                  {defaultPrompt || "No default prompt."}
-                </pre>
-                <span className="absolute right-3 top-2 rounded-md bg-[var(--card)] px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                  Default — click "Copy default to edit" to customize
-                </span>
-              </div>
-            ) : (
-              <MacroTextarea
-                value={localPrompt}
-                onChange={(value) => {
-                  setLocalPrompt(value);
-                  markDirty();
-                }}
-                rows={16}
-                title="Prompt Template"
-                placeholder="Write the system prompt for this agent…"
-                className="w-full resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-[60vh] overflow-y-auto"
-              />
-            )}
-            <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              {builtIn
-                ? "Leave empty to use the built-in default prompt. Edit to override with your own instructions."
-                : localResultType === "text_rewrite"
-                  ? 'Write the full system prompt for this custom editor. It must return JSON with "editedText" and "changes".'
-                  : "Write the full system prompt for this custom agent."}
-            </p>
-
-            <div className="mt-4 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs font-semibold text-[var(--foreground)]">Named prompt options</p>
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Chats can pick one of these without changing the agent globally.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleAddPromptTemplate}
-                  className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-                >
-                  <Plus size="0.6875rem" />
-                  Add option
-                </button>
-              </div>
-
-              {localPromptTemplates.length === 0 ? (
-                <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                  No named options yet. The chat menu will show only the default prompt.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {localPromptTemplates.map((option, index) => {
-                    const defaultPromptTemplate = defaultPromptTemplateById.get(option.id);
-                    const matchesDefaultPrompt =
-                      !!defaultPromptTemplate && option.promptTemplate === defaultPromptTemplate.promptTemplate;
-                    return (
-                      <div
-                        key={option.id}
-                        className="rounded-xl bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]"
-                      >
-                        <div className="mb-2 flex items-center gap-2">
-                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[var(--background)] text-[0.6875rem] font-semibold text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                            {index + 1}
-                          </span>
-                          <input
-                            value={option.name}
-                            onChange={(e) => handleUpdatePromptTemplate(option.id, { name: e.target.value })}
-                            className="min-w-0 flex-1 rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                            placeholder="Option name"
-                          />
-                          {defaultPromptTemplate && (
-                            <button
-                              type="button"
-                              onClick={() => handleResetPromptTemplate(option.id)}
-                              disabled={matchesDefaultPrompt}
-                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
-                              title={
-                                matchesDefaultPrompt ? "Prompt already matches the default" : "Restore default prompt"
-                              }
-                            >
-                              <RotateCcw size="0.75rem" />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleRemovePromptTemplate(option.id)}
-                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                            title="Remove prompt option"
-                          >
-                            <Trash2 size="0.75rem" />
-                          </button>
-                        </div>
-                        <input
-                          value={option.description ?? ""}
-                          onChange={(e) => handleUpdatePromptTemplate(option.id, { description: e.target.value })}
-                          className="mb-2 w-full rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-xs ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                          placeholder="Short description shown in Chat Settings"
-                        />
-                        <MacroTextarea
-                          value={option.promptTemplate}
-                          onChange={(value) => handleUpdatePromptTemplate(option.id, { promptTemplate: value })}
-                          rows={7}
-                          title={option.name ? `${option.name} Prompt` : `Prompt Option ${index + 1}`}
-                          className="w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                          placeholder="Write the prompt template for this option…"
-                        />
-                      </div>
-                    );
-                  })}
+          {!isDailyIntentionsAgent && (
+            <FieldGroup
+              label="Prompt Template"
+              icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
+              help="The system instructions this agent receives. Built-in agents have sensible defaults. You can override to customize behavior."
+            >
+              {/* Toolbar — only show default/override status for built-in agents */}
+              {builtIn && (
+                <div className="flex items-center gap-2 mb-2">
+                  {isUsingDefaultPrompt ? (
+                    <span className="flex items-center gap-1 rounded-lg bg-emerald-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-emerald-400">
+                      <Check size="0.625rem" /> Using built-in default
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 rounded-lg bg-amber-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-amber-400">
+                      <FileText size="0.625rem" /> Custom override
+                    </span>
+                  )}
+                  <div className="flex-1" />
+                  {!isUsingDefaultPrompt && (
+                    <button
+                      onClick={handleResetPrompt}
+                      className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      <RotateCcw size="0.625rem" /> Reset to default
+                    </button>
+                  )}
+                  {isUsingDefaultPrompt && defaultPrompt && (
+                    <button
+                      onClick={handleLoadDefault}
+                      className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      <FileText size="0.625rem" /> Copy default to edit
+                    </button>
+                  )}
                 </div>
               )}
-            </div>
 
-            {/* Default prompt preview removed — now shown inline above */}
-          </FieldGroup>
+              {builtIn && isUsingDefaultPrompt ? (
+                <div className="relative">
+                  <pre className="w-full max-h-[50vh] overflow-y-auto resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] text-[var(--muted-foreground)] whitespace-pre-wrap">
+                    {defaultPrompt || "No default prompt."}
+                  </pre>
+                  <span className="absolute right-3 top-2 rounded-md bg-[var(--card)] px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    Default — click "Copy default to edit" to customize
+                  </span>
+                </div>
+              ) : (
+                <MacroTextarea
+                  value={localPrompt}
+                  onChange={(value) => {
+                    setLocalPrompt(value);
+                    markDirty();
+                  }}
+                  rows={16}
+                  title="Prompt Template"
+                  placeholder="Write the system prompt for this agent…"
+                  className="w-full resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-[60vh] overflow-y-auto"
+                />
+              )}
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                {builtIn
+                  ? "Leave empty to use the built-in default prompt. Edit to override with your own instructions."
+                  : localResultType === "text_rewrite"
+                    ? 'Write the full system prompt for this custom editor. It must return JSON with "editedText" and "changes".'
+                    : "Write the full system prompt for this custom agent."}
+              </p>
+
+              <div className="mt-4 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-[var(--foreground)]">Named prompt options</p>
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Chats can pick one of these without changing the agent globally.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddPromptTemplate}
+                    className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                  >
+                    <Plus size="0.6875rem" />
+                    Add option
+                  </button>
+                </div>
+
+                {localPromptTemplates.length === 0 ? (
+                  <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    No named options yet. The chat menu will show only the default prompt.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {localPromptTemplates.map((option, index) => {
+                      const defaultPromptTemplate = defaultPromptTemplateById.get(option.id);
+                      const matchesDefaultPrompt =
+                        !!defaultPromptTemplate && option.promptTemplate === defaultPromptTemplate.promptTemplate;
+                      return (
+                        <div
+                          key={option.id}
+                          className="rounded-xl bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]"
+                        >
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[var(--background)] text-[0.6875rem] font-semibold text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                              {index + 1}
+                            </span>
+                            <input
+                              value={option.name}
+                              onChange={(e) => handleUpdatePromptTemplate(option.id, { name: e.target.value })}
+                              className="min-w-0 flex-1 rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                              placeholder="Option name"
+                            />
+                            {defaultPromptTemplate && (
+                              <button
+                                type="button"
+                                onClick={() => handleResetPromptTemplate(option.id)}
+                                disabled={matchesDefaultPrompt}
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
+                                title={
+                                  matchesDefaultPrompt ? "Prompt already matches the default" : "Restore default prompt"
+                                }
+                              >
+                                <RotateCcw size="0.75rem" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePromptTemplate(option.id)}
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                              title="Remove prompt option"
+                            >
+                              <Trash2 size="0.75rem" />
+                            </button>
+                          </div>
+                          <input
+                            value={option.description ?? ""}
+                            onChange={(e) => handleUpdatePromptTemplate(option.id, { description: e.target.value })}
+                            className="mb-2 w-full rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-xs ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                            placeholder="Short description shown in Chat Settings"
+                          />
+                          <MacroTextarea
+                            value={option.promptTemplate}
+                            onChange={(value) => handleUpdatePromptTemplate(option.id, { promptTemplate: value })}
+                            rows={7}
+                            title={option.name ? `${option.name} Prompt` : `Prompt Option ${index + 1}`}
+                            className="w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                            placeholder="Write the prompt template for this option…"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Default prompt preview removed — now shown inline above */}
+            </FieldGroup>
+          )}
 
           {/* ── Available Tools (Function Calling) ── */}
           <FieldGroup

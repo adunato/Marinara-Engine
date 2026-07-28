@@ -179,11 +179,7 @@ import type {
   SpotifySourceType,
   WeekSchedule,
 } from "@marinara-engine/shared";
-import {
-  DAILY_INTENTIONS_AGENT_ID,
-  DAILY_MEMORY_AGENT_ID,
-  normalizeSpotifySourceType,
-} from "@marinara-engine/shared";
+import { DAILY_INTENTIONS_AGENT_ID, DAILY_MEMORY_AGENT_ID, normalizeSpotifySourceType } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
@@ -3471,9 +3467,12 @@ export function ChatSettingsDrawer({
     const builtInMeta = installedAgentManifests.find((entry) => entry.id === agent.id) ?? null;
     let nextSettings: Record<string, unknown> = {
       ...mergeBuiltInAgentSettings(agent.id, config?.settings),
-      contextSize,
-      maxTokens: normalizedMaxTokens,
+      ...(agent.id === DAILY_INTENTIONS_AGENT_ID ? {} : { contextSize, maxTokens: normalizedMaxTokens }),
     };
+    if (agent.id === DAILY_INTENTIONS_AGENT_ID) {
+      delete nextSettings.contextSize;
+      delete nextSettings.maxTokens;
+    }
     const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
     if (intervalMeta && runInterval != null) {
       nextSettings.runInterval = runInterval;
@@ -3803,6 +3802,7 @@ export function ChatSettingsDrawer({
     : null;
   const agentAddIsRuntimeDisabled = agentAddPreview?.agent.runtimeDisabled === true;
   const agentAddIsFeature = agentAddPreview?.agent.execution === "feature";
+  const agentAddIsDailyIntentions = agentAddPreview?.agent.id === DAILY_INTENTIONS_AGENT_ID;
 
   const snapshotCurrentPresetSettings = useCallback((): ChatPresetSettings => {
     return {
@@ -9286,6 +9286,11 @@ export function ChatSettingsDrawer({
             ) : agentAddIsRuntimeDisabled ? (
               <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                 This adds its instructions to the next Roleplay prompt without making a separate model call.
+              </div>
+            ) : agentAddIsDailyIntentions ? (
+              <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                Daily Intentions uses the preceding 24 hours of visible messages, Conversation summaries, and saved
+                Daily Memories. Configure its connection, areas, and prompts from this Conversation after adding it.
               </div>
             ) : (
               <div className="space-y-1.5">
