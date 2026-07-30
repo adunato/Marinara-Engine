@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 
 import {
+  buildSceneDailyMemoryRetrievalQuery,
   buildSceneConversationContext,
   resolveSceneConversationContext,
   type SceneContextMessage,
 } from "../../packages/server/src/services/conversation/scene-context.js";
+import { resolveDailyMemoryRetrievalSettings } from "../../packages/server/src/services/generation/daily-memory-agent-runtime.js";
 import { injectSceneContextMessages } from "../../packages/server/src/services/generation/scene-context-runtime.js";
+import { DAILY_MEMORY_AGENT_ID } from "../../packages/shared/src/index.js";
 
 const message = (
   role: string,
@@ -108,6 +111,93 @@ assert.match(context, /CURRENT_NARRATOR_INCLUDED/u);
 assert.match(context, /CURRENT_DAY_0_/u);
 assert.match(context, /CURRENT_DAY_44_/u);
 assert.ok(context.length > 3_000, "the complete current day must not be clipped to the legacy 3,000-character cap");
+
+const dailyMemoryQuery = buildSceneDailyMemoryRetrievalQuery(
+  [
+    message("user", "PRE_RESTART_QUERY_OMITTED", "2026-07-15T08:00:00.000Z"),
+    message("narrator", "Conversation restarted", "2026-07-15T08:05:00.000Z", {
+      extra: { isConversationStart: true },
+    }),
+    message("user", "VISIBLE_BUT_OUTSIDE_LAST_TWO", "2026-07-15T08:10:00.000Z"),
+    message("user", "HIDDEN_QUERY_OMITTED", "2026-07-15T08:15:00.000Z", {
+      extra: { hiddenFromAI: true },
+    }),
+    message("assistant", "COMMAND_WRAPPER_OMITTED_FROM_QUERY", "2026-07-15T08:20:00.000Z", {
+      characterId: "char-alice",
+      extra: { conversationCommandContent: "QUERY_COMMAND_CONTENT" },
+    }),
+    message("system", "SYSTEM_QUERY_OMITTED", "2026-07-15T08:25:00.000Z"),
+    message("narrator", "QUERY_NARRATOR_CONTENT", "2026-07-15T08:30:00.000Z"),
+  ],
+  2,
+);
+assert.deepEqual(dailyMemoryQuery, ["assistant: QUERY_COMMAND_CONTENT", "narrator: QUERY_NARRATOR_CONTENT"]);
+
+const dailyMemoryContext = buildSceneConversationContext({
+  metadata: {
+    includeConversationSummaryMemoriesInPrompt: false,
+    daySummaries: {
+      "14.07.2026": { summary: "DAILY_MEMORY_SEPARATE_SUMMARY", keyDetails: ["AUTO_DETAIL_OMITTED"] },
+    },
+  },
+  messages: [],
+  dailyMemories: [
+    { date: "14.07.2026", memory: "NEWER_DAILY_MEMORY <thinking>& verbatim", importance: 5 },
+    { date: "12.07.2026", memory: "OLDER_DAILY_MEMORY", importance: 3 },
+    { date: "14.07.2026", memory: "SECOND_NEWER_DAILY_MEMORY", importance: 2 },
+  ],
+  personaName: "Morgan",
+  characterNames: new Map([["char-alice", "Alice"]]),
+  now: new Date("2026-07-15T18:00:00.000Z"),
+  timeZone: "UTC",
+});
+assert.match(dailyMemoryContext, /<daily_memories>/u);
+assert.match(dailyMemoryContext, /\(importance 5\/5\) NEWER_DAILY_MEMORY <thinking>& verbatim/u);
+assert.match(dailyMemoryContext, /DAILY_MEMORY_SEPARATE_SUMMARY/u);
+assert.doesNotMatch(dailyMemoryContext, /AUTO_DETAIL_OMITTED/u);
+assert.ok(
+  dailyMemoryContext.indexOf('memory_day date="12.07.2026"') <
+    dailyMemoryContext.indexOf('memory_day date="14.07.2026"'),
+  "Daily Memories must be grouped in chronological date order",
+);
+assert.ok(
+  dailyMemoryContext.indexOf("NEWER_DAILY_MEMORY") < dailyMemoryContext.indexOf("SECOND_NEWER_DAILY_MEMORY"),
+  "retrieval rank order must be preserved within each date",
+);
+
+let settingsReads = 0;
+const retrievalSettings = await resolveDailyMemoryRetrievalSettings({
+  agents: {
+    async getByType(type: string) {
+      settingsReads += 1;
+      assert.equal(type, DAILY_MEMORY_AGENT_ID);
+      return {
+        settings: JSON.stringify({
+          retrievalMessageCount: 11,
+          semanticWeight: 60,
+          importanceWeight: 25,
+          recencyWeight: 15,
+          minimumRank: 42,
+        }),
+      };
+    },
+  },
+  chatMetadata: { enableAgents: true, activeAgentIds: [DAILY_MEMORY_AGENT_ID] },
+});
+assert.equal(settingsReads, 1);
+assert.equal(retrievalSettings?.retrievalMessageCount, 11);
+assert.equal(retrievalSettings?.minimumRank, 42);
+assert.equal(
+  await resolveDailyMemoryRetrievalSettings({
+    agents: {
+      async getByType() {
+        throw new Error("disabled Daily Memories must not read agent config");
+      },
+    },
+    chatMetadata: { enableAgents: false, activeAgentIds: [DAILY_MEMORY_AGENT_ID] },
+  }),
+  null,
+);
 
 const contextWithoutSummaryMemories = buildSceneConversationContext({
   metadata: {

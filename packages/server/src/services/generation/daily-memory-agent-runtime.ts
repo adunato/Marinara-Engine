@@ -46,6 +46,23 @@ export function isDailyMemoryAgentEnabled(chatMetadata: Record<string, unknown>)
   );
 }
 
+/**
+ * Resolve only the persisted settings needed for read-only Daily Memories
+ * retrieval. Unlike the full agent runtime, this never materializes a missing
+ * built-in config or resolves a formation provider.
+ */
+export async function resolveDailyMemoryRetrievalSettings(options: {
+  agents: Pick<AgentStore, "getByType">;
+  chatMetadata: Record<string, unknown>;
+}): Promise<DailyMemorySettings | null> {
+  if (!isDailyMemoryAgentEnabled(options.chatMetadata)) return null;
+  const config = await options.agents.getByType(DAILY_MEMORY_AGENT_ID);
+  if (!config || isAgentConfigDeleted(config.settings)) return null;
+  return normalizeDailyMemorySettings(
+    mergeBuiltInAgentSettings(DAILY_MEMORY_AGENT_ID, parseSettings(config.settings)),
+  );
+}
+
 export async function resolveDailyMemoryAgentRuntime(options: {
   agents: AgentStore;
   connections: ConnectionStore;
