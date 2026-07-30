@@ -4,7 +4,60 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createFileNativeDB } from "../../packages/server/src/db/file-backed-store.js";
+import { buildRoleplayContextSourcesBlock } from "../../packages/server/src/routes/generate/roleplay-context-sources.js";
 import { createChatsStorage } from "../../packages/server/src/services/storage/chats.storage.js";
+
+const contextBlockWithoutSummaryMemories = await buildRoleplayContextSourcesBlock({
+  chatId: "target",
+  chats: {
+    async listContextSources() {
+      return [{ sourceChatId: "conversation-source" }];
+    },
+    async getById() {
+      return {
+        id: "conversation-source",
+        name: "Conversation Source",
+        mode: "conversation",
+        characterIds: [],
+        metadata: {
+          includeConversationSummaryMemoriesInPrompt: false,
+          weekSummaries: {
+            "06.07.2026": {
+              summary: "EXCLUDED_MEMORY_WEEK_SUMMARY_INCLUDED",
+              keyDetails: ["EXCLUDED_WEEK_DETAIL"],
+            },
+          },
+          daySummaries: {
+            "14.07.2026": {
+              summary: "EXCLUDED_MEMORY_DAY_SUMMARY_INCLUDED",
+              keyDetails: ["EXCLUDED_DAY_DETAIL"],
+            },
+          },
+        },
+      };
+    },
+    async listMessages() {
+      return [];
+    },
+  },
+  characters: {
+    async getById() {
+      return null;
+    },
+  },
+  gameStateStore: {
+    async getLatestCommitted() {
+      return null;
+    },
+    async getLatest() {
+      return null;
+    },
+  },
+});
+assert.match(contextBlockWithoutSummaryMemories ?? "", /EXCLUDED_MEMORY_WEEK_SUMMARY_INCLUDED/u);
+assert.match(contextBlockWithoutSummaryMemories ?? "", /EXCLUDED_MEMORY_DAY_SUMMARY_INCLUDED/u);
+assert.doesNotMatch(contextBlockWithoutSummaryMemories ?? "", /EXCLUDED_WEEK_DETAIL/u);
+assert.doesNotMatch(contextBlockWithoutSummaryMemories ?? "", /EXCLUDED_DAY_DETAIL/u);
 
 const storageDir = mkdtempSync(join(tmpdir(), "marinara-context-sources-"));
 process.env.FILE_STORAGE_DIR = storageDir;

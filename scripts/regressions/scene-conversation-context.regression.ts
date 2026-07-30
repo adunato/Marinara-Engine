@@ -109,6 +109,29 @@ assert.match(context, /CURRENT_DAY_0_/u);
 assert.match(context, /CURRENT_DAY_44_/u);
 assert.ok(context.length > 3_000, "the complete current day must not be clipped to the legacy 3,000-character cap");
 
+const contextWithoutSummaryMemories = buildSceneConversationContext({
+  metadata: {
+    includeConversationSummaryMemoriesInPrompt: false,
+    summaryTailMessages: 0,
+    weekSummaries: {
+      "06.07.2026": { summary: "EXCLUDED_MEMORY_WEEK_SUMMARY_INCLUDED", keyDetails: ["EXCLUDED_WEEK_DETAIL"] },
+    },
+    daySummaries: {
+      "14.07.2026": { summary: "EXCLUDED_MEMORY_DAY_SUMMARY_INCLUDED", keyDetails: ["EXCLUDED_DAY_DETAIL"] },
+    },
+  },
+  messages: [],
+  personaName: "Morgan",
+  characterNames: new Map([["char-alice", "Alice"]]),
+  now: new Date("2026-07-15T18:00:00.000Z"),
+  timeZone: "UTC",
+});
+assert.match(contextWithoutSummaryMemories, /EXCLUDED_MEMORY_WEEK_SUMMARY_INCLUDED/u);
+assert.match(contextWithoutSummaryMemories, /EXCLUDED_MEMORY_DAY_SUMMARY_INCLUDED/u);
+assert.doesNotMatch(contextWithoutSummaryMemories, /EXCLUDED_WEEK_DETAIL/u);
+assert.doesNotMatch(contextWithoutSummaryMemories, /EXCLUDED_DAY_DETAIL/u);
+assert.doesNotMatch(contextWithoutSummaryMemories, /<important_memories>/u);
+
 const rolloverContext = buildSceneConversationContext({
   metadata: { dayRolloverHour: 4, summaryTailMessages: 0 },
   messages: [

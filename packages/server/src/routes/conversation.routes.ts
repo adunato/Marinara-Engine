@@ -11,7 +11,12 @@ import { createCharactersStorage } from "../services/storage/characters.storage.
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
-import { CONVERSATION_SCHEDULE_DAYS, PROVIDERS, localAuthProviderBaseUrl } from "@marinara-engine/shared";
+import {
+  CONVERSATION_SCHEDULE_DAYS,
+  PROVIDERS,
+  localAuthProviderBaseUrl,
+  shouldIncludeConversationSummaryMemories,
+} from "@marinara-engine/shared";
 import type { CharacterData, ConversationStatusOverride } from "@marinara-engine/shared";
 import {
   generateCharacterSchedule,
@@ -285,9 +290,9 @@ function limitText(value: string, maxChars: number): string {
   return trimmed.length > maxChars ? `${trimmed.slice(0, maxChars - 1).trim()}…` : trimmed;
 }
 
-function formatSummaryEntry(label: string, entry: SummaryEntry): string[] {
+function formatSummaryEntry(label: string, entry: SummaryEntry, includeSummaryMemories: boolean): string[] {
   const lines = [`- ${label}: ${limitText(entry.summary, 700)}`];
-  if (entry.keyDetails.length > 0) {
+  if (includeSummaryMemories && entry.keyDetails.length > 0) {
     lines.push(
       `  Key details: ${entry.keyDetails
         .slice(0, 8)
@@ -310,13 +315,14 @@ function summarizePreviousSchedule(schedule: WeekSchedule): string[] {
     });
 }
 
-function buildScheduleContinuityContext(args: {
+export function buildScheduleContinuityContext(args: {
   meta: Record<string, unknown>;
   charData: CharacterData;
   existingSchedule: WeekSchedule;
 }): string {
   const { meta, charData, existingSchedule } = args;
   const sections: string[] = [];
+  const includeSummaryMemories = shouldIncludeConversationSummaryMemories(meta);
 
   sections.push(`<previous_schedule weekStart="${existingSchedule.weekStart}">`);
   sections.push(...summarizePreviousSchedule(existingSchedule));
@@ -326,7 +332,7 @@ function buildScheduleContinuityContext(args: {
   if (weekSummaries.length > 0) {
     sections.push(``, `<recent_week_summaries>`);
     for (const { key, entry } of weekSummaries) {
-      sections.push(...formatSummaryEntry(`Week of ${key}`, entry));
+      sections.push(...formatSummaryEntry(`Week of ${key}`, entry, includeSummaryMemories));
     }
     sections.push(`</recent_week_summaries>`);
   }
@@ -335,7 +341,7 @@ function buildScheduleContinuityContext(args: {
   if (daySummaries.length > 0) {
     sections.push(``, `<recent_day_summaries>`);
     for (const { key, entry } of daySummaries) {
-      sections.push(...formatSummaryEntry(key, entry));
+      sections.push(...formatSummaryEntry(key, entry, includeSummaryMemories));
     }
     sections.push(`</recent_day_summaries>`);
   }
@@ -1168,13 +1174,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     const scheduleNow = toZonedWallClockDate(now, resolveConversationTimeZone(meta));
 
     if (!schedule) {
-      const { status, activity } = getEffectiveCurrentStatus(
-        null,
-        statusOverrides[characterId],
-        now,
-        "",
-        scheduleNow,
-      );
+      const { status, activity } = getEffectiveCurrentStatus(null, statusOverrides[characterId], now, "", scheduleNow);
       return reply.send({ delayMs: getBusyDelay(status), status, activity });
     }
 
@@ -1229,7 +1229,14 @@ export async function conversationRoutes(app: FastifyInstance) {
       messages as Array<{ role: string; createdAt?: string; characterId?: string | null }>,
     );
 
-    const result = checkCharacterExchange(chatId, lastSpeakerCharId, filteredSchedules, statusOverrides, now, scheduleNow);
+    const result = checkCharacterExchange(
+      chatId,
+      lastSpeakerCharId,
+      filteredSchedules,
+      statusOverrides,
+      now,
+      scheduleNow,
+    );
     if (result.shouldTrigger) {
       const allowedCharacterId = result.characterIds.find(
         (characterId) => !isAutonomousDailyBudgetExhausted(characterId, schedules[characterId], meta),

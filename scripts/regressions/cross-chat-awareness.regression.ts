@@ -87,7 +87,34 @@ assert.match(conversation, /Narrator: NARRATOR_MESSAGE_INCLUDED/u);
 assert.match(conversation, /System: SYSTEM_MESSAGE_INCLUDED/u);
 assert.doesNotMatch(conversation, /HIDDEN_MESSAGE_OMITTED/u);
 assert.doesNotMatch(conversation, /PREVIOUS_LOGICAL_DAY_OMITTED/u);
-assert.ok(conversation.length > 5_000, "the complete current-day transcript must not be clipped to the old token budget");
+assert.ok(
+  conversation.length > 5_000,
+  "the complete current-day transcript must not be clipped to the old token budget",
+);
+
+const conversationWithoutSummaryMemories = formatAwarenessConversation({
+  chatName: "Alice & Morgan",
+  memberNames: ["Alice", "Morgan"],
+  personaName: "Morgan",
+  characterNames: new Map([["character-alice", "Alice"]]),
+  metadata: {
+    includeConversationSummaryMemoriesInPrompt: false,
+    weekSummaries: {
+      "06.07.2026": { summary: "EXCLUDED_MEMORY_WEEK_SUMMARY_INCLUDED", keyDetails: ["EXCLUDED_WEEK_DETAIL"] },
+    },
+    daySummaries: {
+      "10.07.2026": { summary: "EXCLUDED_MEMORY_DAY_SUMMARY_INCLUDED", keyDetails: ["EXCLUDED_DAY_DETAIL"] },
+    },
+  },
+  messages: [],
+  now: new Date("2026-07-12T18:00:00.000Z"),
+  timeZone: "UTC",
+  wrapFormat: "xml",
+});
+assert.match(conversationWithoutSummaryMemories, /EXCLUDED_MEMORY_WEEK_SUMMARY_INCLUDED/u);
+assert.match(conversationWithoutSummaryMemories, /EXCLUDED_MEMORY_DAY_SUMMARY_INCLUDED/u);
+assert.doesNotMatch(conversationWithoutSummaryMemories, /EXCLUDED_WEEK_DETAIL/u);
+assert.doesNotMatch(conversationWithoutSummaryMemories, /EXCLUDED_DAY_DETAIL/u);
 
 const awareness = formatAwarenessContextBlock([conversation], "xml");
 assert.match(awareness, /<cross_chat_awareness>/u);

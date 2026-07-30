@@ -272,6 +272,21 @@ export function normalizeSummaryTailMessages(value: unknown): number {
   if (!Number.isFinite(parsed) || parsed < MIN) return MIN;
   return parsed;
 }
+
+/** Backward-compatible prompt policy for automatic Conversation summary key details. */
+export function shouldIncludeConversationSummaryMemories(metadata: unknown): boolean {
+  let value = metadata;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return true;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return true;
+  return (value as Record<string, unknown>).includeConversationSummaryMemoriesInPrompt !== false;
+}
+
 export const CHAT_SUMMARY_OUTPUT_TOKENS = { MIN: 1, MAX: 32768, DEFAULT: 4096 } as const;
 
 export type GameStoryboardViewerDisplayMode = "floating" | "background";
@@ -298,6 +313,10 @@ export interface ChatMetadata {
   summaryConnectionId?: string | null;
   /** Maximum output tokens requested from the model for manual and automatic Roleplay chat summaries. */
   summaryMaxTokens?: number;
+  /** Optional text connection used for automatic Conversation day/week summaries. Null uses the chat connection. */
+  conversationSummaryConnectionId?: string | null;
+  /** Whether automatic Conversation summary key details are injected into model prompts. Defaults to true. */
+  includeConversationSummaryMemoriesInPrompt?: boolean;
   /**
    * When true, the automatic roleplay/visual-novel rolling summary hides the
    * messages it summarized (hiddenFromAI=true) except the most-recent

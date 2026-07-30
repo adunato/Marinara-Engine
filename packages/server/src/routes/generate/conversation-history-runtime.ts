@@ -1,14 +1,17 @@
-import type { WrapFormat } from "@marinara-engine/shared";
 import {
   normalizeSummaryTailMessages,
   normalizeTextForMatch,
+  shouldIncludeConversationSummaryMemories,
   stripLeadingMessageTimestamps,
+  type WrapFormat,
 } from "@marinara-engine/shared";
 
 import { logger } from "../../lib/logger.js";
 import {
   formatConversationDateKey,
   generateMissingConversationSummaries,
+  normalizeDaySummaries,
+  normalizeWeekSummaries,
   parseConversationDateKey,
 } from "../../services/conversation/auto-summary.service.js";
 import { stripConversationPromptTimestamps } from "../../services/conversation/transcript-sanitize.js";
@@ -19,12 +22,7 @@ import {
 } from "../../services/conversation/timezone.js";
 import { formatConversationPromptTurn } from "../../services/generation/generation-text-utils.js";
 import type { GenerationPromptMessage } from "../../services/generation/prompt-message-scope.js";
-import {
-  withConnectionFallbackProvider,
-  type FallbackConnection,
-} from "../../services/llm/connection-fallback-provider.js";
 import type { BaseLLMProvider } from "../../services/llm/base-provider.js";
-import { createLLMProvider } from "../../services/llm/provider-registry.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 import { annotateContentWithReactions, REACTION_ANNOTATION_CONTENT_CAP } from "./conversation-custom-assets.js";
 import {
@@ -51,18 +49,6 @@ type ConversationHistoryChatsStore = {
     chatId: string,
     updater: (freshMeta: Record<string, unknown>) => Record<string, unknown>,
   ): Promise<unknown>;
-};
-
-type ConversationSummaryConnection = {
-  provider: string;
-  apiKey: string;
-  model: string;
-  maxContext?: number | null;
-  openrouterProvider?: string | null;
-  maxTokensOverride?: number | null;
-  claudeFastMode?: string | null;
-  treatAsLocalEndpoint?: string | null;
-  defaultParameters?: unknown;
 };
 
 type BucketMsg = { role: string; content: string; author: string; ts: Date };
@@ -104,11 +90,7 @@ export async function prepareConversationPromptHistory(args: {
   nowInstant: Date;
   promptTimeZone?: string;
   wrapFormat: WrapFormat;
-  connection: ConversationSummaryConnection;
-  connectionId: string;
-  baseUrl: string;
-  fallbackConnection?: FallbackConnection | null;
-  fallbackBaseUrl?: string;
+  summaryRuntime?: { provider: BaseLLMProvider; model: string } | null;
 }): Promise<{ finalMessages: GenerationPromptMessage[]; importantMemoryBlock: string | null }> {
   const rolloverHour = Math.max(
     0,
@@ -161,81 +143,69 @@ export async function prepareConversationPromptHistory(args: {
         (firstSummaryConversationTurnIndex < 0 || index < firstSummaryConversationTurnIndex)
       ),
   );
-  const summaryProvider: BaseLLMProvider = withConnectionFallbackProvider({
-    primary: createLLMProvider(
-      args.connection.provider,
-      args.baseUrl,
-      args.connection.apiKey,
-      args.connection.maxContext,
-      args.connection.openrouterProvider,
-      args.connection.maxTokensOverride,
-      args.connection.claudeFastMode === "true",
-      args.connection.treatAsLocalEndpoint === "true",
-      args.connection.defaultParameters,
-    ),
-    primaryConnectionId: args.connectionId,
-    fallbackConnection: args.fallbackConnection,
-    fallbackBaseUrl: args.fallbackBaseUrl ?? "",
-    category: "agents",
-  });
-  const summaryRun = await generateMissingConversationSummaries({
-    messages: summarySourceMessages.map((message) => ({
-      id: typeof message.id === "string" ? message.id : undefined,
-      role: String(message.role ?? ""),
-      content: typeof message.content === "string" ? message.content : String(message.content ?? ""),
-      characterId: typeof message.characterId === "string" ? message.characterId : null,
-      createdAt: typeof message.createdAt === "string" ? message.createdAt : null,
-    })),
-    metadata: args.chatMeta,
-    provider: summaryProvider,
-    model: args.connection.model,
-    personaName: args.personaName,
-    charIdToName,
-    now: args.nowInstant,
-    rolloverHour,
-    timeZone: args.promptTimeZone,
-    maxMissingDays: 2,
-  });
-
-  for (const failure of summaryRun.failedDays) {
-    logger.warn(
-      { chatId: args.chatId, date: failure.date, err: failure.error },
-      "[conversation-summary] failed to generate day summary",
-    );
-  }
-  for (const failure of summaryRun.failedWeeks) {
-    logger.warn(
-      { chatId: args.chatId, weekKey: failure.weekKey, err: failure.error },
-      "[conversation-summary] failed to consolidate week summary",
-    );
-  }
-
-  const hasNewSummaries =
-    Object.keys(summaryRun.newlyGeneratedDays).length > 0 || Object.keys(summaryRun.newlyConsolidatedWeeks).length > 0;
-  if (hasNewSummaries || summaryRun.summaryFailureMetadataChanged) {
-    await args.chats.patchMetadata(args.chatId, (freshMeta) => {
-      const existingDaySummaries = (freshMeta.daySummaries as Record<string, unknown> | undefined) ?? {};
-      const existingWeekSummaries = (freshMeta.weekSummaries as Record<string, unknown> | undefined) ?? {};
-      return {
-        ...freshMeta,
-        daySummaries: { ...existingDaySummaries, ...summaryRun.newlyGeneratedDays },
-        weekSummaries: { ...existingWeekSummaries, ...summaryRun.newlyConsolidatedWeeks },
-        conversationSummaryFailures: summaryRun.summaryFailures,
-      };
+  let daySummaries = normalizeDaySummaries(args.chatMeta.daySummaries);
+  let weekSummaries = normalizeWeekSummaries(args.chatMeta.weekSummaries);
+  if (args.summaryRuntime) {
+    const summaryRun = await generateMissingConversationSummaries({
+      messages: summarySourceMessages.map((message) => ({
+        id: typeof message.id === "string" ? message.id : undefined,
+        role: String(message.role ?? ""),
+        content: typeof message.content === "string" ? message.content : String(message.content ?? ""),
+        characterId: typeof message.characterId === "string" ? message.characterId : null,
+        createdAt: typeof message.createdAt === "string" ? message.createdAt : null,
+      })),
+      metadata: args.chatMeta,
+      provider: args.summaryRuntime.provider,
+      model: args.summaryRuntime.model,
+      personaName: args.personaName,
+      charIdToName,
+      now: args.nowInstant,
+      rolloverHour,
+      timeZone: args.promptTimeZone,
+      maxMissingDays: 2,
     });
-    args.chatMeta.daySummaries = {
-      ...((args.chatMeta.daySummaries as Record<string, unknown> | undefined) ?? {}),
-      ...summaryRun.newlyGeneratedDays,
-    };
-    args.chatMeta.weekSummaries = {
-      ...((args.chatMeta.weekSummaries as Record<string, unknown> | undefined) ?? {}),
-      ...summaryRun.newlyConsolidatedWeeks,
-    };
-    args.chatMeta.conversationSummaryFailures = summaryRun.summaryFailures;
-  }
 
-  const daySummaries = summaryRun.daySummaries;
-  const weekSummaries = summaryRun.weekSummaries;
+    for (const failure of summaryRun.failedDays) {
+      logger.warn(
+        { chatId: args.chatId, date: failure.date, err: failure.error },
+        "[conversation-summary] failed to generate day summary",
+      );
+    }
+    for (const failure of summaryRun.failedWeeks) {
+      logger.warn(
+        { chatId: args.chatId, weekKey: failure.weekKey, err: failure.error },
+        "[conversation-summary] failed to consolidate week summary",
+      );
+    }
+
+    const hasNewSummaries =
+      Object.keys(summaryRun.newlyGeneratedDays).length > 0 ||
+      Object.keys(summaryRun.newlyConsolidatedWeeks).length > 0;
+    if (hasNewSummaries || summaryRun.summaryFailureMetadataChanged) {
+      await args.chats.patchMetadata(args.chatId, (freshMeta) => {
+        const existingDaySummaries = (freshMeta.daySummaries as Record<string, unknown> | undefined) ?? {};
+        const existingWeekSummaries = (freshMeta.weekSummaries as Record<string, unknown> | undefined) ?? {};
+        return {
+          ...freshMeta,
+          daySummaries: { ...existingDaySummaries, ...summaryRun.newlyGeneratedDays },
+          weekSummaries: { ...existingWeekSummaries, ...summaryRun.newlyConsolidatedWeeks },
+          conversationSummaryFailures: summaryRun.summaryFailures,
+        };
+      });
+      args.chatMeta.daySummaries = {
+        ...((args.chatMeta.daySummaries as Record<string, unknown> | undefined) ?? {}),
+        ...summaryRun.newlyGeneratedDays,
+      };
+      args.chatMeta.weekSummaries = {
+        ...((args.chatMeta.weekSummaries as Record<string, unknown> | undefined) ?? {}),
+        ...summaryRun.newlyConsolidatedWeeks,
+      };
+      args.chatMeta.conversationSummaryFailures = summaryRun.summaryFailures;
+    }
+
+    daySummaries = summaryRun.daySummaries;
+    weekSummaries = summaryRun.weekSummaries;
+  }
   const dayToWeek = new Map<string, string>();
   for (const [weekKey] of Object.entries(weekSummaries)) {
     const monday = parseDateKey(weekKey);
@@ -275,7 +245,9 @@ export async function prepareConversationPromptHistory(args: {
     wrapFormat: args.wrapFormat,
   });
 
-  const importantMemoryBlock = formatConversationImportantMemoryBlock(allKeyDetails, args.wrapFormat);
+  const importantMemoryBlock = shouldIncludeConversationSummaryMemories(args.chatMeta)
+    ? formatConversationImportantMemoryBlock(allKeyDetails, args.wrapFormat)
+    : null;
   return { finalMessages, importantMemoryBlock };
 }
 

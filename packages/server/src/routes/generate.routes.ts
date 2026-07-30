@@ -119,6 +119,7 @@ import { wrapContent } from "../services/prompt/format-engine.js";
 import {
   withLlmRequestTimeout,
   yieldToEventLoop,
+  type BaseLLMProvider,
   type ChatMessage,
   type LLMUsage,
 } from "../services/llm/base-provider.js";
@@ -163,6 +164,7 @@ import {
 } from "../services/conversation/transcript-sanitize.js";
 import { normalizePromptTimeZone, toZonedWallClockDate } from "../services/conversation/timezone.js";
 import { countUserMessagesAfterSummaryAnchor } from "../services/conversation/auto-summary.service.js";
+import { resolveConversationSummaryConnection } from "../services/conversation/summary-connection.js";
 import {
   buildCompletedDailyMemoryBuckets,
   buildDailyMemoriesContextBlock,
@@ -2151,7 +2153,41 @@ export async function generateRoutes(app: FastifyInstance) {
           );
 
           const nowInstant = new Date();
-          const conversationSummaryFallback = await connections.getFallbackForAgents();
+          let conversationSummaryRuntime: {
+            provider: BaseLLMProvider;
+            model: string;
+          } | null = null;
+          try {
+            const resolvedConversationSummary = await resolveConversationSummaryConnection({
+              summaryConnectionId: chatMeta.conversationSummaryConnectionId,
+              activeConnection: conn,
+              activeBaseUrl: baseUrl,
+              connections,
+              resolveBaseUrl,
+              onFallback,
+            });
+            if (resolvedConversationSummary.ok) {
+              conversationSummaryRuntime = {
+                provider: resolvedConversationSummary.provider,
+                model: resolvedConversationSummary.model,
+              };
+            } else {
+              logger.warn(
+                {
+                  chatId: input.chatId,
+                  connectionId: resolvedConversationSummary.connectionId,
+                  source: resolvedConversationSummary.source,
+                  error: resolvedConversationSummary.error,
+                },
+                "[conversation-summary] Skipping automatic summaries because the configured connection is unusable",
+              );
+            }
+          } catch (err) {
+            logger.warn(
+              err,
+              "[conversation-summary] Connection resolution failed; automatic summaries will be skipped",
+            );
+          }
           const preparedHistory = await prepareConversationPromptHistory({
             finalMessages,
             chatMessages,
@@ -2169,18 +2205,7 @@ export async function generateRoutes(app: FastifyInstance) {
             nowInstant,
             promptTimeZone,
             wrapFormat,
-            connection: {
-              provider: conn.provider,
-              apiKey: conn.apiKey,
-              model: conn.model,
-              maxContext: conn.maxContext,
-              openrouterProvider: conn.openrouterProvider,
-              maxTokensOverride: conn.maxTokensOverride,
-            },
-            connectionId: conn.id,
-            baseUrl,
-            fallbackConnection: conversationSummaryFallback,
-            fallbackBaseUrl: conversationSummaryFallback ? resolveBaseUrl(conversationSummaryFallback) : "",
+            summaryRuntime: conversationSummaryRuntime,
           });
           finalMessages = preparedHistory.finalMessages;
 

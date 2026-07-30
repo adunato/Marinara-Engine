@@ -1,4 +1,4 @@
-import { normalizeSummaryTailMessages } from "@marinara-engine/shared";
+import { normalizeSummaryTailMessages, shouldIncludeConversationSummaryMemories } from "@marinara-engine/shared";
 
 import {
   formatConversationDateKey,
@@ -172,6 +172,7 @@ export function buildSceneConversationContext(options: SceneConversationContextO
     .sort((left, right) => parseConversationDateKey(left).getTime() - parseConversationDateKey(right).getTime());
   const summarizedDays = new Set([...weekCoveredDays, ...Object.keys(daySummaries)]);
   const turns = buildTurns(options, rolloverHour);
+  const includeSummaryMemories = shouldIncludeConversationSummaryMemories(options.metadata);
 
   const lines = [
     `<conversation_history>`,
@@ -179,13 +180,15 @@ export function buildSceneConversationContext(options: SceneConversationContextO
   ];
 
   const memoryLines: string[] = [];
-  for (const weekKey of sortedWeekKeys) {
-    const details = weekSummaries[weekKey]!.keyDetails;
-    if (details.length) memoryLines.push(`[Week of ${weekKey}]`, ...details.map((detail) => `- ${detail}`));
-  }
-  for (const dayKey of uncoveredDayKeys) {
-    const details = daySummaries[dayKey]!.keyDetails;
-    if (details.length) memoryLines.push(`[${dayKey}]`, ...details.map((detail) => `- ${detail}`));
+  if (includeSummaryMemories) {
+    for (const weekKey of sortedWeekKeys) {
+      const details = weekSummaries[weekKey]!.keyDetails;
+      if (details.length) memoryLines.push(`[Week of ${weekKey}]`, ...details.map((detail) => `- ${detail}`));
+    }
+    for (const dayKey of uncoveredDayKeys) {
+      const details = daySummaries[dayKey]!.keyDetails;
+      if (details.length) memoryLines.push(`[${dayKey}]`, ...details.map((detail) => `- ${detail}`));
+    }
   }
   if (memoryLines.length) lines.push(`<important_memories>`, ...memoryLines, `</important_memories>`);
 

@@ -1070,6 +1070,14 @@ export function ChatSettingsDrawer({
       ),
     [isGame, sidecarModelDisplayName, sidecarModelDownloaded, textConnectionsList],
   );
+  const conversationSummaryConnectionId =
+    typeof metadata.conversationSummaryConnectionId === "string" && metadata.conversationSummaryConnectionId.trim()
+      ? metadata.conversationSummaryConnectionId.trim()
+      : "";
+  const conversationSummaryConnectionMissing =
+    !!conversationSummaryConnectionId &&
+    !chatGenerationConnectionsList.some((connection) => connection.id === conversationSummaryConnectionId);
+  const includeConversationSummaryMemories = metadata.includeConversationSummaryMemoriesInPrompt !== false;
   const illustratorPromptConnectionsList = useMemo(() => {
     const options: Array<{ id: string; name: string; model?: string | null }> = [];
     for (const connection of chatGenerationConnectionsList) {
@@ -9002,6 +9010,75 @@ export function ChatSettingsDrawer({
                     </p>
                   </div>
                   <Pencil size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                </button>
+
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium">Summary Connection</span>
+                  <select
+                    value={conversationSummaryConnectionId}
+                    onChange={(event) =>
+                      updateMeta.mutate({
+                        id: chat.id,
+                        conversationSummaryConnectionId: event.target.value || null,
+                      })
+                    }
+                    disabled={updateMeta.isPending}
+                    className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <option value="">Use chat connection</option>
+                    {conversationSummaryConnectionMissing && (
+                      <option value={conversationSummaryConnectionId}>
+                        Missing connection ({conversationSummaryConnectionId})
+                      </option>
+                    )}
+                    {chatGenerationConnectionsList.map((connection) => (
+                      <option key={connection.id} value={connection.id ?? ""}>
+                        {connection.name || "Connection"}
+                        {connection.model ? ` (${connection.model})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    Used for automatic day and week summaries and manual summary backfill. This does not change the
+                    connection used for chat replies.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  aria-pressed={includeConversationSummaryMemories}
+                  onClick={() =>
+                    updateMeta.mutate({
+                      id: chat.id,
+                      includeConversationSummaryMemoriesInPrompt: !includeConversationSummaryMemories,
+                    })
+                  }
+                  disabled={updateMeta.isPending}
+                  className={cn(
+                    "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60",
+                    includeConversationSummaryMemories && "mari-chat-option-field--active",
+                  )}
+                >
+                  <div className="flex-1 min-w-0 pr-3">
+                    <span className="text-[0.6875rem] font-medium">Include Summary Memories in Prompts</span>
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Keep generating and storing important details, but choose whether models receive them. Summary
+                      prose is always included.
+                    </p>
+                  </div>
+                  <div
+                    className={cn(
+                      "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                      includeConversationSummaryMemories && "mari-chat-option-switch--active",
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                        includeConversationSummaryMemories && "translate-x-3.5",
+                      )}
+                    />
+                  </div>
                 </button>
 
                 {/* Day rollover hour */}

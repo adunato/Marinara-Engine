@@ -1,4 +1,9 @@
-import { compileChatSummaryEntries, normalizeChatSummaryEntries, type WrapFormat } from "@marinara-engine/shared";
+import {
+  compileChatSummaryEntries,
+  normalizeChatSummaryEntries,
+  shouldIncludeConversationSummaryMemories,
+  type WrapFormat,
+} from "@marinara-engine/shared";
 
 import { eq } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
@@ -93,6 +98,7 @@ export function selectCrossChatSourceChats<T extends { id: string; characterIds:
 
 function formatConversationSummaries(metadata: Record<string, unknown>, wrapFormat: WrapFormat): string {
   const sections: string[] = [];
+  const includeSummaryMemories = shouldIncludeConversationSummaryMemories(metadata);
   const rollingEntries = normalizeChatSummaryEntries(metadata.summaryEntries, {
     legacySummary: typeof metadata.summary === "string" ? metadata.summary : null,
   });
@@ -109,7 +115,9 @@ function formatConversationSummaries(metadata: Record<string, unknown>, wrapForm
     const content = [
       `Week beginning: ${sanitizePromptLeaf(weekKey, wrapFormat)}`,
       sanitizePromptLeaf(entry.summary, wrapFormat),
-      ...entry.keyDetails.map((detail) => `- ${sanitizePromptLeaf(detail, wrapFormat)}`),
+      ...(includeSummaryMemories
+        ? entry.keyDetails.map((detail) => `- ${sanitizePromptLeaf(detail, wrapFormat)}`)
+        : []),
     ]
       .filter(Boolean)
       .join("\n");
@@ -124,7 +132,9 @@ function formatConversationSummaries(metadata: Record<string, unknown>, wrapForm
     const content = [
       `Date: ${sanitizePromptLeaf(dayKey, wrapFormat)}`,
       sanitizePromptLeaf(entry.summary, wrapFormat),
-      ...entry.keyDetails.map((detail) => `- ${sanitizePromptLeaf(detail, wrapFormat)}`),
+      ...(includeSummaryMemories
+        ? entry.keyDetails.map((detail) => `- ${sanitizePromptLeaf(detail, wrapFormat)}`)
+        : []),
     ]
       .filter(Boolean)
       .join("\n");
@@ -157,8 +167,7 @@ export function formatAwarenessConversation(input: AwarenessConversationInput): 
       if (isMessageHiddenFromAI(message) || !message.content.trim()) return false;
       const createdAt = new Date(message.createdAt);
       return (
-        Number.isFinite(createdAt.getTime()) &&
-        isSameZonedLogicalDay(createdAt, now, input.timeZone, rolloverHour)
+        Number.isFinite(createdAt.getTime()) && isSameZonedLogicalDay(createdAt, now, input.timeZone, rolloverHour)
       );
     })
     .map((message) => {

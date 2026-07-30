@@ -1,4 +1,8 @@
-import { compileChatSummaryEntries, normalizeChatSummaryEntries } from "@marinara-engine/shared";
+import {
+  compileChatSummaryEntries,
+  normalizeChatSummaryEntries,
+  shouldIncludeConversationSummaryMemories,
+} from "@marinara-engine/shared";
 
 import {
   formatConversationDateKey,
@@ -139,6 +143,7 @@ function formatRecentMessages(
 function formatConversationSummaries(metadata: Record<string, unknown>): string[] {
   const daySummaries = normalizeDaySummaries(metadata.daySummaries);
   const weekSummaries = normalizeWeekSummaries(metadata.weekSummaries);
+  const includeSummaryMemories = shouldIncludeConversationSummaryMemories(metadata);
   const lines: string[] = [];
   const weekKeys = Object.keys(weekSummaries).sort(
     (left, right) => parseConversationDateKey(left).getTime() - parseConversationDateKey(right).getTime(),
@@ -148,7 +153,9 @@ function formatConversationSummaries(metadata: Record<string, unknown>): string[
     const entry = weekSummaries[weekKey]!;
     lines.push(`<weekly_summary week="${escapeXml(weekKey)}">`);
     if (entry.summary.trim()) lines.push(escapeXml(entry.summary.trim()));
-    for (const detail of entry.keyDetails) lines.push(`- ${escapeXml(detail)}`);
+    if (includeSummaryMemories) {
+      for (const detail of entry.keyDetails) lines.push(`- ${escapeXml(detail)}`);
+    }
     lines.push("</weekly_summary>");
   }
 
@@ -161,7 +168,9 @@ function formatConversationSummaries(metadata: Record<string, unknown>): string[
     const entry = daySummaries[dayKey]!;
     lines.push(`<daily_summary date="${escapeXml(dayKey)}">`);
     if (entry.summary.trim()) lines.push(escapeXml(entry.summary.trim()));
-    for (const detail of entry.keyDetails) lines.push(`- ${escapeXml(detail)}`);
+    if (includeSummaryMemories) {
+      for (const detail of entry.keyDetails) lines.push(`- ${escapeXml(detail)}`);
+    }
     lines.push("</daily_summary>");
   }
 
