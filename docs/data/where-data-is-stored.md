@@ -30,11 +30,14 @@ Your images, audio, and other media files live in their own folders, each named 
 | `gallery` | Gallery images |
 | `fonts` | Custom fonts you added |
 | `knowledge-sources` | Files you uploaded for knowledge agents |
+| `character-minds` | Per-Conversation character Markdown wikis and their immutable raw snapshots |
 | `game-assets` | Game Mode assets |
 | `custom-emojis` | Custom emoji images |
 | `custom-stickers` | Custom sticker images |
 
 For a deeper technical explanation of how the `storage` folder works, developers can read [File-Native Storage](../development/file-storage.md).
+
+Character Minds are stored as ordinary Markdown below `character-minds/<chatId>/<characterId>`. Desktop users can open that directory in Obsidian to inspect the pages and wikilinks or edit `SCHEMA.md` and wiki pages manually. Marinara treats files below `raw/` as immutable evidence; editing one makes its integrity check fail. Docker users must bind-mount the data folder to access these files. Android app storage is normally not directly accessible, and this release does not include a Character Mind browser or editor.
 
 ## The encryption key file
 

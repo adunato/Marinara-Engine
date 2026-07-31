@@ -182,6 +182,7 @@ The full guide library is browsable inside the app: open **Documentation** from 
 | [docs/INSTALLATION.md](docs/INSTALLATION.md)                                         | Installation guide index (all platforms)                                                                           |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)                                       | Environment variables and `.env` reference                                                                         |
 | [docs/conversation/getting-started.md](docs/conversation/getting-started.md)         | Conversation Mode setup, DMs, groups, profiles (display name, about me, behavior), calls, selfies, and table games |
+| [docs/conversation/character-minds.md](docs/conversation/character-minds.md)         | Experimental per-character Markdown wiki agent, manual API operations, and Obsidian access                        |
 | [docs/roleplay/getting-started.md](docs/roleplay/getting-started.md)                 | Roleplay Mode setup, sprites, HUD, agents, and connected chats                                                     |
 | [docs/game/getting-started.md](docs/game/getting-started.md)                         | Game Mode setup, world-gen, party play, storyboards, and troubleshooting                                           |
 | [docs/agents/built-in-agents.md](docs/agents/built-in-agents.md)                     | Complete reference for all 29 downloadable first-party agents and feature packages                                 |

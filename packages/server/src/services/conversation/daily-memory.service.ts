@@ -6,6 +6,7 @@ import {
 } from "@marinara-engine/shared";
 import { and, eq, isNotNull } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
+import { emitDailyMemoryDayReplaced } from "./daily-memory-events.js";
 import { dailyMemories, dailyMemoryDays } from "../../db/schema/index.js";
 import { logger } from "../../lib/logger.js";
 import { newId, now as nowIso } from "../../utils/id-generator.js";
@@ -330,7 +331,9 @@ export async function replaceDailyMemoryDay(options: {
       );
     }
   });
-  return listDailyMemoriesForDate(options.db, options.chatId, options.date);
+  const result = await listDailyMemoriesForDate(options.db, options.chatId, options.date);
+  emitDailyMemoryDayReplaced(options.chatId, options.date);
+  return result;
 }
 
 export async function listDailyMemoriesForDate(db: DB, chatId: string, date: string): Promise<DailyMemory[]> {

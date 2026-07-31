@@ -38,6 +38,7 @@ import {
 import { scheduleNeedsRefresh, type CharacterSchedules, type WeekSchedule } from "../conversation/schedule.service.js";
 import { resolveConversationTimeZone, toZonedWallClockDate } from "../conversation/timezone.js";
 import { logger } from "../../lib/logger.js";
+import { removeChatMinds } from "../character-mind/character-mind.files.js";
 
 const GALLERY_DIR = join(DATA_DIR, "gallery");
 const GAME_SCENE_VIDEOS_DIR = join(DATA_DIR, "game-scene-videos");
@@ -761,6 +762,7 @@ export function createChatsStorage(db: DB) {
       if (existsSync(videoDir)) rmSync(videoDir, { recursive: true, force: true });
 
       await db.delete(chats).where(eq(chats.id, id));
+      await removeChatMinds(id);
     },
 
     /** Delete all chats in a group (all branches). */
@@ -788,6 +790,7 @@ export function createChatsStorage(db: DB) {
         await db.delete(gameTurnStoryboards).where(eq(gameTurnStoryboards.chatId, chat.id));
         await db.delete(gameSceneVideos).where(eq(gameSceneVideos.chatId, chat.id));
         await db.delete(chatImages).where(eq(chatImages.chatId, chat.id));
+        await removeChatMinds(chat.id);
         const galleryDir = join(GALLERY_DIR, chat.id);
         if (existsSync(galleryDir)) rmSync(galleryDir, { recursive: true, force: true });
         const videoDir = join(GAME_SCENE_VIDEOS_DIR, chat.id);

@@ -2,6 +2,7 @@ import type { BuiltInAgentManifest } from "./agent-manifest.types.js";
 
 export const DAILY_MEMORY_AGENT_ID = "daily-memory";
 export const DAILY_INTENTIONS_AGENT_ID = "daily-intentions";
+export const CHARACTER_MIND_AGENT_ID = "character-mind";
 
 const DAILY_INTENTION_PROMPT_SUFFIX = `
 
@@ -88,6 +89,19 @@ export const CORE_BUILT_IN_AGENT_MANIFESTS: readonly BuiltInAgentManifest[] = [
     name: "Daily Intentions",
     description:
       "Creates editable first-person intentions across four focused life areas for a single-character Conversation.",
+    author: "Pasta Devs",
+    phase: "pre_generation",
+    enabledByDefault: false,
+    category: "misc",
+    modeAllowlist: ["conversation"],
+    execution: "managed",
+    defaultSettings: {},
+  },
+  {
+    id: CHARACTER_MIND_AGENT_ID,
+    name: "Character Mind",
+    description:
+      "Maintains a per-character Markdown wiki from Character Cards and Daily Memories, and queries it as a cited briefing.",
     author: "Pasta Devs",
     phase: "pre_generation",
     enabledByDefault: false,

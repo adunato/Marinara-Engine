@@ -11,6 +11,7 @@ export * from "./types/lorebook.js";
 export * from "./types/prompt.js";
 export * from "./types/connection.js";
 export * from "./types/agent.js";
+export * from "./types/character-mind.js";
 export * from "./types/game-state.js";
 export * from "./types/combat-encounter.js";
 export * from "./types/scene.js";

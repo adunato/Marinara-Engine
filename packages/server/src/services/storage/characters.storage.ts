@@ -22,6 +22,7 @@ import {
 } from "@marinara-engine/shared";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "../import/import-timestamps.js";
 import { toPaginatedList } from "../../utils/list-pagination.js";
+import { removeCharacterMinds } from "../character-mind/character-mind.files.js";
 
 function resolveTimestamps(overrides?: TimestampOverrides | null) {
   const normalized = normalizeTimestampOverrides(overrides);
@@ -510,6 +511,7 @@ export function createCharactersStorage(db: DB) {
             .where(eq(characterGroups.id, group.id));
         }
       });
+      await removeCharacterMinds(id);
     },
 
     async duplicateCharacter(id: string) {
