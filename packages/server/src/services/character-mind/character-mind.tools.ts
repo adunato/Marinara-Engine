@@ -9,7 +9,7 @@ import {
   verifyRawMarkdown,
 } from "./character-mind.files.js";
 
-type MindOperation = "ingest" | "query" | "lint";
+type MindOperation = "plan" | "build" | "ingest" | "query" | "lint";
 
 export interface CharacterMindTrace {
   listed: string[];
@@ -70,9 +70,12 @@ const ALL_TOOLS: LLMToolDefinition[] = [
     type: "function",
     function: {
       name: "mind_read_markdown",
-      description: "Read one or more Markdown files or line ranges from the selected Character Mind.",
+      description: "Read one Markdown file with path, or batch-read files with reads.",
       parameters: objectSchema(
         {
+          path: { type: "string" },
+          startLine: { type: "integer", minimum: 1 },
+          maxLines: { type: "integer", minimum: 1, maximum: 2000 },
           reads: {
             type: "array",
             minItems: 1,
@@ -87,7 +90,6 @@ const ALL_TOOLS: LLMToolDefinition[] = [
             ),
           },
         },
-        ["reads"],
       ),
     },
   },
@@ -221,8 +223,20 @@ export async function deterministicMindFindings(root: string): Promise<string[]>
   return [...new Set(findings)].sort();
 }
 
-export function createCharacterMindTools(root: string, operation: MindOperation, trace: CharacterMindTrace) {
-  const writable = operation !== "query";
+export function createCharacterMindTools(
+  root: string,
+  operation: MindOperation,
+  trace: CharacterMindTrace,
+  options: { plannedWikiPaths?: string[]; plannedSourcesByPage?: Record<string, string[]> } = {},
+) {
+  const writable = operation === "build" || operation === "ingest" || operation === "lint";
+  const plannedWikiPaths = new Set((options.plannedWikiPaths ?? []).map((path) => path.toLowerCase()));
+  const plannedSourcesByPage = new Map(
+    Object.entries(options.plannedSourcesByPage ?? {}).map(([path, sources]) => [
+      path.toLowerCase(),
+      new Set(sources),
+    ]),
+  );
   const toolNames = new Set([
     "mind_list_markdown",
     "mind_search_markdown",
@@ -273,11 +287,12 @@ export function createCharacterMindTools(root: string, operation: MindOperation,
     }
 
     if (call.function.name === "mind_read_markdown") {
-      if (!Array.isArray(args.reads) || args.reads.length < 1 || args.reads.length > 12)
+      const requestedReads = typeof args.path === "string" ? [args] : args.reads;
+      if (!Array.isArray(requestedReads) || requestedReads.length < 1 || requestedReads.length > 12)
         throw new Error("reads must contain 1 to 12 files");
       let bytes = 0;
       const reads = [];
-      for (const item of args.reads as Array<Record<string, unknown>>) {
+      for (const item of requestedReads as Array<Record<string, unknown>>) {
         const relativePath = normalizeMindPath(requireString(item.path, "path"));
         const resolved = await resolveMindMarkdown(root, relativePath);
         if (relativePath.startsWith("raw/")) {
@@ -322,14 +337,30 @@ export function createCharacterMindTools(root: string, operation: MindOperation,
           throw new Error(`${file.relativePath} must contain exactly one ## Sources section`);
         if (!hasRawSourceCitation(file.content))
           throw new Error(`${file.relativePath} must cite at least one raw source under ## Sources`);
-        for (const link of extractWikilinks(file.content)) {
+        const links = extractWikilinks(file.content);
+        const citedRawSources = new Set<string>();
+        for (const link of links) {
           const normalized = wikilinkPath(file.relativePath, link);
+          if (normalized.startsWith("raw/")) citedRawSources.add(normalized);
           if (normalized.startsWith("raw/") && !trace.verifiedRaw.has(normalized)) {
             throw new Error(`${file.relativePath} cites a raw source that was not read: ${normalized}`);
           }
           const target = await resolveMindMarkdown(root, normalized);
-          if (!(await pathExists(target.path)) && !batchPaths.has(normalized.toLowerCase()))
+          if (
+            !(await pathExists(target.path)) &&
+            !batchPaths.has(normalized.toLowerCase()) &&
+            !(operation === "build" && plannedWikiPaths.has(normalized.toLowerCase()))
+          )
             throw new Error(`${file.relativePath} has unresolved wikilink: ${link}`);
+        }
+        const assignedSources = plannedSourcesByPage.get(file.relativePath.toLowerCase());
+        if (operation === "build" && assignedSources) {
+          const missing = [...assignedSources].filter((path) => !citedRawSources.has(path));
+          const unexpected = [...citedRawSources].filter((path) => !assignedSources.has(path));
+          if (missing.length)
+            throw new Error(`${file.relativePath} does not cite assigned sources: ${missing.join(", ")}`);
+          if (unexpected.length)
+            throw new Error(`${file.relativePath} cites sources outside its map: ${unexpected.join(", ")}`);
         }
       }
       for (const file of staged) {

@@ -2,8 +2,7 @@ export const CHARACTER_MIND_DIR = "character-minds";
 export const CHARACTER_MIND_RAW_MAX_BYTES = 4 * 1024 * 1024;
 export const CHARACTER_MIND_QUERY_MAX_CHARS = 32 * 1024;
 export const CHARACTER_MIND_OPERATION_TIMEOUT_MS = 5 * 60 * 1000;
-export const CHARACTER_MIND_MAX_TOOL_ROUNDS = { ingest: 16, query: 8, lint: 24 } as const;
-export const CHARACTER_MIND_MAX_OUTPUT_TOKENS = { ingest: 1500, query: 4000, lint: 1500 } as const;
+export const CHARACTER_MIND_MAX_TOOL_ROUNDS = { plan: 24, build: 32, ingest: 16, query: 8, lint: 24 } as const;
 
 export const CHARACTER_MIND_INDEX = `# Index
 
@@ -12,7 +11,7 @@ No wiki pages have been created yet.
 
 export const CHARACTER_MIND_LOG = `# Log
 
-Append-only history of ingest, query, and lint operations.
+Append-only history of build-map, build, ingest, query, and lint operations.
 `;
 
 export const CHARACTER_MIND_SCHEMA = `# Character Mind Schema
@@ -41,6 +40,23 @@ export const CHARACTER_MIND_SCHEMA = `# Character Mind Schema
 8. Keep filenames as stable, filesystem-safe slugs. Update every inbound link
    when lint renames or merges a page.
 9. Keep \`index.md\` current. Each entry has a wikilink and one-line description.
+
+## Initial Build
+
+Build is deliberately corpus-first and has two passes. It is not a sequence of
+ordinary ingest operations.
+
+1. Map: read every current raw source before proposing any page. Assess the
+   corpus as a whole and define a coherent set of reusable subjects.
+2. Materialize: write the mapped pages, then finalize \`index.md\`.
+3. A page is a synthesis of a subject, not a summary of one source. A page may
+   combine Character Cards, auto-summaries, and Daily Memories.
+4. Do not create one page per source or default to one catch-all character page.
+5. Do not impose a fixed taxonomy or target page count. Let recurring entities,
+   relationships, situations, commitments, self-understanding, tensions, and
+   other subjects emerge only where the actual corpus supports them.
+6. Account explicitly for every current source in the map. Evidence that adds no
+   distinct value may be excluded with a reason instead of forcing a page.
 
 ## Ingest
 
@@ -83,7 +99,35 @@ export const CHARACTER_MIND_SCHEMA = `# Character Mind Schema
    calls and writes the log itself.
 `;
 
-export function characterMindPrompt(operation: "ingest" | "query" | "lint", value?: string): string {
+export function characterMindPrompt(operation: "plan" | "build" | "ingest" | "query" | "lint", value?: string): string {
+  if (operation === "plan") {
+    return `You are performing the Karpathy LLM Wiki initial Build, pass 1: map.
+Operate only on the selected Character Mind. Read SCHEMA.md, index.md, and EVERY
+raw source in the manifest below. Do not write files. Assess the complete corpus
+before choosing pages. Design subjects that organize and connect the corpus;
+never create one page per source and do not default to a catch-all character page.
+Every source must either appear in at least one page's sources or in
+excludedSources with a specific reason. Return only this JSON object, with no
+Markdown fence:
+{"summary":"...","pages":[{"path":"wiki/stable-slug.md","title":"...","purpose":"...","sources":["raw/source.md"]}],"excludedSources":[{"path":"raw/source.md","reason":"..."}]}
+
+CURRENT RAW SOURCE MANIFEST:
+${value ?? "[]"}`;
+  }
+  if (operation === "build") {
+    return `You are performing the Karpathy LLM Wiki initial Build, pass 2: materialize.
+Operate only on the selected Character Mind. Read SCHEMA.md and index.md, then
+read every raw source assigned by the frozen page map below. Write EVERY mapped
+wiki page using mind_write_wiki({"files":[...]}). Pages synthesize their subject
+from the assigned evidence; they are not source recaps. Keep concrete details,
+uncertainty, contradictions, citations, and useful cross-links. Do not invent,
+omit, rename, or add mapped pages. After every page exists, finalize index.md
+using mind_write_index({"content":"..."}). Return only this JSON object, with no
+Markdown fence: {"summary":"concise description of the corpus build"}
+
+FROZEN PAGE MAP:
+${value ?? "{}"}`;
+  }
   if (operation === "ingest") {
     return `You are performing the Karpathy LLM Wiki operation: ingest.
 Operate only on the selected Character Mind. First read SCHEMA.md, index.md,

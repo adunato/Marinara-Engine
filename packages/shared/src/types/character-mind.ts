@@ -1,5 +1,23 @@
 export type CharacterMindOperationName = "build" | "sync" | "ingest" | "query" | "lint";
 
+export interface CharacterMindPagePlan {
+  path: string;
+  title: string;
+  purpose: string;
+  sources: string[];
+}
+
+export interface CharacterMindExcludedSource {
+  path: string;
+  reason: string;
+}
+
+export interface CharacterMindPlanResult {
+  summary: string;
+  pages: CharacterMindPagePlan[];
+  excludedSources: CharacterMindExcludedSource[];
+}
+
 export interface CharacterMindIngestResult {
   summary: string;
   created: string[];
@@ -20,6 +38,7 @@ export interface CharacterMindLintResult {
 
 export interface CharacterMindStatus {
   initialized: boolean;
+  built: boolean;
   path: string | null;
   currentRevisions: string[];
   pendingSources: string[];

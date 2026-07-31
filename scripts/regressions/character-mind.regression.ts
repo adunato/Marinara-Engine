@@ -5,6 +5,7 @@ import type { CharacterData } from "@marinara-engine/shared";
 import {
   initializeMind,
   revisionForPayload,
+  snapshotAutoSummary,
   snapshotCharacterCard,
   snapshotDailyMemories,
   stableJson,
@@ -12,9 +13,11 @@ import {
 } from "../../packages/server/src/services/character-mind/character-mind.files.js";
 import {
   appendMindLog,
+  hasSuccessfulBuild,
   parseMindLog,
   successfulIngestRevisions,
 } from "../../packages/server/src/services/character-mind/character-mind.log.js";
+import { validateCharacterMindPlanResult } from "../../packages/server/src/services/character-mind/character-mind.runtime.js";
 import {
   createCharacterMindTools,
   createCharacterMindTrace,
@@ -70,6 +73,70 @@ async function main() {
     });
     assert.match(day.path, /^raw\/daily-memories\/2026-07-30--[0-9a-f]{16}\.md$/);
 
+    const autoSummary = await snapshotAutoSummary(root, {
+      chatId: "chat-1",
+      period: "day",
+      date: "30.07.2026",
+      summary: "Mira and Alex planned to see Interstellar, but Alex did not arrive.",
+      keyDetails: ["Alex missed the screening."],
+    });
+    assert.match(autoSummary.path, /^raw\/auto-summaries\/day\/30.07.2026--[0-9a-f]{16}\.md$/);
+    assert.equal((await snapshotAutoSummary(root, {
+      chatId: "chat-1",
+      period: "day",
+      date: "30.07.2026",
+      summary: "Mira and Alex planned to see Interstellar, but Alex did not arrive.",
+      keyDetails: ["Alex missed the screening."],
+    })).created, false);
+
+    const planTrace = createCharacterMindTrace();
+    const planTools = createCharacterMindTools(root, "plan", planTrace);
+    await planTools.execute({
+      id: "read-corpus",
+      type: "function",
+      function: {
+        name: "mind_read_markdown",
+        arguments: JSON.stringify({ reads: [{ path: "SCHEMA.md" }, { path: "index.md" }, { path: day.path }, { path: autoSummary.path }] }),
+      },
+    });
+    const plan = validateCharacterMindPlanResult(
+      {
+        summary: "Mapped the corpus.",
+        pages: [
+          {
+            path: "wiki/relationship-with-alex.md",
+            title: "Relationship with Alex",
+            purpose: "Tracks the relationship and recurring disappointments.",
+            sources: [day.path, autoSummary.path],
+          },
+        ],
+        excludedSources: [],
+      },
+      planTrace,
+      [day.path, autoSummary.path],
+    );
+    assert.equal(plan.pages.length, 1);
+    assert.throws(
+      () =>
+        validateCharacterMindPlanResult(
+          {
+            summary: "Incomplete map.",
+            pages: [
+              {
+                path: "wiki/relationship-with-alex.md",
+                title: "Relationship with Alex",
+                purpose: "Relationship evidence.",
+                sources: [day.path],
+              },
+            ],
+            excludedSources: [],
+          },
+          planTrace,
+          [day.path, autoSummary.path],
+        ),
+      /did not account for sources/,
+    );
+
     const trace = createCharacterMindTrace();
     const ingestTools = createCharacterMindTools(root, "ingest", trace);
     await ingestTools.execute({
@@ -114,6 +181,12 @@ async function main() {
       queryTools.tools.some((tool) => tool.function.name.startsWith("mind_write")),
       false,
     );
+    await queryTools.execute({
+      id: "single-read",
+      type: "function",
+      function: { name: "mind_read_markdown", arguments: JSON.stringify({ path: "index.md" }) },
+    });
+    assert.equal(queryTrace.read.has("index.md"), true);
     await assert.rejects(
       queryTools.execute({
         id: "forbidden",
@@ -128,6 +201,8 @@ async function main() {
     assert.match(ingestPrompt, /mind_write_index\(\{"content":"\.\.\."\}\)/);
     assert.match(ingestPrompt, /\{"summary":"concise description of what was integrated"\}/);
     assert.doesNotMatch(ingestPrompt, /required ingest JSON/);
+    assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /Assess the complete corpus/);
+    assert.match(characterMindPrompt("build", JSON.stringify(plan)), /FROZEN PAGE MAP/);
     await assert.rejects(
       ingestTools.execute({
         id: "hallucinated-alias",
@@ -149,6 +224,19 @@ async function main() {
     const entries = parseMindLog(await readFile(join(root, "log.md"), "utf8"));
     assert.equal(entries.at(-1)?.revision, day.revision);
     assert.equal(successfulIngestRevisions(entries).has(day.revision), true);
+    assert.equal(hasSuccessfulBuild(entries), false);
+    await appendMindLog({
+      root,
+      operation: "build",
+      subject: "1 mapped page",
+      status: "success",
+      revisions: [day.revision, autoSummary.revision],
+      trace,
+      summary: "Built.",
+    });
+    const builtEntries = parseMindLog(await readFile(join(root, "log.md"), "utf8"));
+    assert.equal(hasSuccessfulBuild(builtEntries), true);
+    assert.equal(successfulIngestRevisions(builtEntries).has(autoSummary.revision), true);
 
     const corruptedPath = join(root, ...first.path.split("/"));
     await writeFile(corruptedPath, (await readFile(corruptedPath, "utf8")).replace("Observant", "Corrupted"), "utf8");

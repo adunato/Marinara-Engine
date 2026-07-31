@@ -101,7 +101,7 @@ export const CORE_BUILT_IN_AGENT_MANIFESTS: readonly BuiltInAgentManifest[] = [
     id: CHARACTER_MIND_AGENT_ID,
     name: "Character Mind",
     description:
-      "Maintains a per-character Markdown wiki from Character Cards and Daily Memories, and queries it as a cited briefing.",
+      "Builds a per-character Markdown wiki from Character Cards, auto-summaries, and Daily Memories, and queries it as a cited briefing.",
     author: "Pasta Devs",
     phase: "pre_generation",
     enabledByDefault: false,

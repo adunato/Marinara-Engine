@@ -25,6 +25,17 @@ export interface DailyMemoryRawPayload {
   memories: Array<Pick<DailyMemory, "id" | "memory" | "importance" | "createdAt" | "updatedAt">>;
 }
 
+export interface AutoSummaryRawPayload {
+  chatId: string;
+  period: "day" | "week";
+  date: string;
+  summary: string;
+  keyDetails: string[];
+}
+
+type RawSourceType = "character-card" | "auto-summary" | "daily-memories";
+type RawArea = "character-card" | "auto-summaries/day" | "auto-summaries/week" | "daily-memories";
+
 export interface RawSnapshot {
   path: string;
   revision: string;
@@ -148,6 +159,8 @@ async function createOnly(path: string, content: string): Promise<boolean> {
 
 export async function initializeMind(root: string): Promise<void> {
   await mkdir(join(root, "raw", "character-card"), { recursive: true });
+  await mkdir(join(root, "raw", "auto-summaries", "day"), { recursive: true });
+  await mkdir(join(root, "raw", "auto-summaries", "week"), { recursive: true });
   await mkdir(join(root, "raw", "daily-memories"), { recursive: true });
   await mkdir(join(root, "wiki"), { recursive: true });
   await createOnly(join(root, "SCHEMA.md"), CHARACTER_MIND_SCHEMA);
@@ -161,7 +174,7 @@ function capturedAtFilename(date = new Date()): string {
 
 async function newestRawPath(
   root: string,
-  area: "character-card" | "daily-memories",
+  area: RawArea,
   prefix = "",
 ): Promise<string | null> {
   const dir = join(root, "raw", area);
@@ -177,7 +190,7 @@ async function newestRawPath(
 }
 
 function rawMarkdown(input: {
-  sourceType: "character-card" | "daily-memories";
+  sourceType: RawSourceType;
   sourceKey: string;
   revision: string;
   capturedAt: string;
@@ -190,9 +203,9 @@ function rawMarkdown(input: {
 
 async function writeRawSnapshot(input: {
   root: string;
-  area: "character-card" | "daily-memories";
+  area: RawArea;
   filenamePrefix: string;
-  sourceType: "character-card" | "daily-memories";
+  sourceType: RawSourceType;
   sourceKey: string;
   title: string;
   payload: unknown;
@@ -207,9 +220,9 @@ async function writeRawSnapshot(input: {
   const capturedAt = new Date().toISOString();
   const previous = await newestRawPath(input.root, input.area, input.filenamePrefix);
   const filename =
-    input.area === "daily-memories"
-      ? `${input.filenamePrefix}${revision}.md`
-      : `${input.filenamePrefix}${capturedAtFilename()}--${revision}.md`;
+    input.area === "character-card"
+      ? `${input.filenamePrefix}${capturedAtFilename()}--${revision}.md`
+      : `${input.filenamePrefix}${revision}.md`;
   const relativePath = `raw/${input.area}/${filename}`;
   const content = rawMarkdown({ ...input, revision, capturedAt, supersedes: previous });
   if (Buffer.byteLength(content, "utf8") > CHARACTER_MIND_RAW_MAX_BYTES)
@@ -241,6 +254,29 @@ export async function snapshotDailyMemories(root: string, payload: DailyMemoryRa
     title: `Daily Memories — ${payload.date}`,
     payload,
   });
+}
+
+export async function snapshotAutoSummary(root: string, payload: AutoSummaryRawPayload): Promise<RawSnapshot> {
+  const safeDate = payload.date.replace(/[^0-9A-Za-z.-]/g, "-");
+  return writeRawSnapshot({
+    root,
+    area: `auto-summaries/${payload.period}`,
+    filenamePrefix: `${safeDate}--`,
+    sourceType: "auto-summary",
+    sourceKey: `auto-summary:${payload.chatId}:${payload.period}:${payload.date}`,
+    title: `${payload.period === "day" ? "Daily" : "Weekly"} Auto-Summary — ${payload.date}`,
+    payload,
+  });
+}
+
+export async function resetMindSynthesis(root: string): Promise<void> {
+  await rm(join(root, "wiki"), { recursive: true, force: true });
+  await mkdir(join(root, "wiki"), { recursive: true });
+  await atomicWrite(join(root, "index.md"), CHARACTER_MIND_INDEX);
+}
+
+export async function writeMindIndex(root: string, content: string): Promise<void> {
+  await atomicWrite((await resolveMindMarkdown(root, "index.md")).path, content);
 }
 
 export async function verifyRawMarkdown(

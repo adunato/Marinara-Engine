@@ -152,7 +152,7 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
   const runBuild = async () => {
     if (
       !window.confirm(
-        "Build this Character Mind now? Marinara will run one sequential agent operation for the character card and every formed Daily Memory.",
+        "Build this Character Mind now? Marinara will first map the complete Character Card, auto-summary, and Daily Memory corpus, then generate the mapped wiki pages.",
       )
     )
       return;
@@ -228,7 +228,7 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
           <div>
             <p className="text-xs font-semibold text-[var(--foreground)]">Agent connection</p>
             <p className="mt-1 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-              Global for every Character Mind. The same connection runs ingest, query, and lint.
+              Global for every Character Mind. The same connection runs mapping, build, sync, query, and lint.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -310,10 +310,14 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
                       <p className="mt-1 text-[0.625rem] text-red-400">Could not load Character Mind status.</p>
                     ) : (
                       <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                        {status.data?.initialized ? "Initialized" : "Not built"}
+                        {status.data?.built
+                          ? "Built"
+                          : status.data?.initialized
+                            ? "Build incomplete"
+                            : "Not built"}
                         {status.data?.pendingSources.length
                           ? ` · ${status.data.pendingSources.length} source${status.data.pendingSources.length === 1 ? "" : "s"} pending`
-                          : status.data?.initialized
+                          : status.data?.built
                             ? " · Up to date"
                             : ""}
                       </p>
@@ -335,7 +339,7 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
               )}
 
               <div className="flex flex-wrap gap-2">
-                {!status.data?.initialized ? (
+                {!status.data?.built ? (
                   <button
                     type="button"
                     data-testid="build-character-mind"
@@ -449,7 +453,7 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
               </section>
             )}
 
-            {status.data?.initialized && (
+            {status.data?.built && (
               <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/45 p-3">
                 <div>
                   <p className="flex items-center gap-1.5 text-xs font-semibold">

@@ -2,8 +2,11 @@ import { jsonrepair } from "jsonrepair";
 import {
   CHARACTER_MIND_AGENT_ID,
   isAgentConfigDeleted,
+  parseAgentSettingsRecord,
   type CharacterMindIngestResult,
   type CharacterMindLintResult,
+  type CharacterMindPagePlan,
+  type CharacterMindPlanResult,
   type CharacterMindQueryResult,
 } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
@@ -15,7 +18,6 @@ import { withLlmRequestTimeout } from "../llm/base-provider.js";
 import { createAgentsStorage } from "../storage/agents.storage.js";
 import { createConnectionsStorage } from "../storage/connections.storage.js";
 import {
-  CHARACTER_MIND_MAX_OUTPUT_TOKENS,
   CHARACTER_MIND_MAX_TOOL_ROUNDS,
   CHARACTER_MIND_OPERATION_TIMEOUT_MS,
   characterMindPrompt,
@@ -23,7 +25,7 @@ import {
 import { listMarkdown, normalizeMindPath } from "./character-mind.files.js";
 import { createCharacterMindTools, createCharacterMindTrace, type CharacterMindTrace } from "./character-mind.tools.js";
 
-type RuntimeOperation = "ingest" | "query" | "lint";
+type RuntimeOperation = "plan" | "build" | "ingest" | "query" | "lint";
 type MutationTarget = "index" | "wiki";
 
 export interface CharacterMindRuntime {
@@ -31,6 +33,7 @@ export interface CharacterMindRuntime {
   model: string;
   prompt: string;
   enableCaching: boolean;
+  maxTokens: number;
 }
 
 export function isCharacterMindAgentEnabled(metadata: Record<string, unknown>): boolean {
@@ -70,6 +73,7 @@ export async function resolveCharacterMindRuntime(
     connection.defaultParameters,
   );
   const fallback = await connections.getFallbackForAgents();
+  const configuredMaxTokens = Number(parseAgentSettingsRecord(config.settings).maxTokens);
   return {
     provider: withConnectionFallbackProvider({
       primary,
@@ -81,6 +85,9 @@ export async function resolveCharacterMindRuntime(
     model: connection.model,
     prompt: typeof config.promptTemplate === "string" ? config.promptTemplate.trim() : "",
     enableCaching: connection.enableCaching === "true",
+    maxTokens: Number.isFinite(configuredMaxTokens)
+      ? Math.max(256, Math.min(32_768, Math.floor(configuredMaxTokens)))
+      : 4096,
   };
 }
 
@@ -130,8 +137,75 @@ function mutationTarget(toolName: string): MutationTarget | null {
   return /write|move|delete/i.test(toolName) ? "wiki" : null;
 }
 
-function validateResult(operation: RuntimeOperation, value: Record<string, unknown>, trace: CharacterMindTrace) {
-  if (operation === "ingest") {
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`Character Mind plan ${field} is required`);
+  return value.trim();
+}
+
+export function validateCharacterMindPlanResult(
+  value: Record<string, unknown>,
+  trace: CharacterMindTrace,
+  sourcePaths: string[],
+): CharacterMindPlanResult {
+  const summary = requiredString(value.summary, "summary");
+  if (!Array.isArray(value.pages) || value.pages.length < 1 || value.pages.length > 100)
+    throw new Error("Character Mind plan must contain 1 to 100 pages");
+  const allowedSources = new Set(sourcePaths);
+  const seenPages = new Set<string>();
+  const usedSources = new Set<string>();
+  const pages: CharacterMindPagePlan[] = value.pages.map((candidate, index) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+      throw new Error(`Character Mind plan page ${index + 1} is invalid`);
+    const item = candidate as Record<string, unknown>;
+    const path = normalizeMindPath(requiredString(item.path, `page ${index + 1} path`));
+    if (!/^wiki\/[^/]+\.md$/i.test(path)) throw new Error(`Character Mind plan page path is not flat wiki Markdown: ${path}`);
+    if (seenPages.has(path.toLowerCase())) throw new Error(`Character Mind plan contains duplicate page: ${path}`);
+    seenPages.add(path.toLowerCase());
+    const requestedSources = strings(item.sources);
+    const sources = groundedPaths(item.sources, allowedSources, "raw");
+    if (requestedSources.length !== sources.length)
+      throw new Error(`Character Mind plan page has duplicate, unknown, or invalid sources: ${path}`);
+    if (sources.length === 0) throw new Error(`Character Mind plan page has no valid sources: ${path}`);
+    for (const source of sources) usedSources.add(source);
+    return {
+      path,
+      title: requiredString(item.title, `page ${path} title`),
+      purpose: requiredString(item.purpose, `page ${path} purpose`),
+      sources,
+    };
+  });
+  const excludedSources: CharacterMindPlanResult["excludedSources"] = [];
+  if (value.excludedSources !== undefined && !Array.isArray(value.excludedSources))
+    throw new Error("Character Mind plan excludedSources must be an array");
+  const excludedCandidates = Array.isArray(value.excludedSources) ? value.excludedSources : [];
+  const excludedPaths = new Set<string>();
+  for (const [index, candidate] of excludedCandidates.entries()) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+      throw new Error(`Character Mind excluded source ${index + 1} is invalid`);
+    const item = candidate as Record<string, unknown>;
+    const path = normalizeMindPath(requiredString(item.path, `excluded source ${index + 1} path`));
+    if (!allowedSources.has(path)) throw new Error(`Character Mind plan excluded an unknown source: ${path}`);
+    if (usedSources.has(path)) throw new Error(`Character Mind plan both used and excluded source: ${path}`);
+    if (excludedPaths.has(path)) throw new Error(`Character Mind plan excluded a source more than once: ${path}`);
+    excludedPaths.add(path);
+    excludedSources.push({ path, reason: requiredString(item.reason, `excluded source ${path} reason`) });
+  }
+  const accounted = new Set([...usedSources, ...excludedSources.map((item) => item.path)]);
+  const missing = sourcePaths.filter((path) => !accounted.has(path));
+  if (missing.length) throw new Error(`Character Mind plan did not account for sources: ${missing.join(", ")}`);
+  const unread = sourcePaths.filter((path) => !trace.verifiedRaw.has(path));
+  if (unread.length) throw new Error(`Character Mind planner did not read sources: ${unread.join(", ")}`);
+  return { summary, pages, excludedSources };
+}
+
+function validateResult(
+  operation: RuntimeOperation,
+  value: Record<string, unknown>,
+  trace: CharacterMindTrace,
+  sourcePaths: string[],
+) {
+  if (operation === "plan") return validateCharacterMindPlanResult(value, trace, sourcePaths);
+  if (operation === "build" || operation === "ingest") {
     const summary = typeof value.summary === "string" ? value.summary.trim() : "";
     if (!summary) throw new Error("Character Mind ingest result has no summary");
     return {
@@ -163,14 +237,22 @@ export async function runCharacterMindOperation(input: {
   root: string;
   operation: RuntimeOperation;
   value?: string;
+  sourcePaths?: string[];
+  plan?: CharacterMindPlanResult;
   runtime: CharacterMindRuntime;
   signal: AbortSignal;
 }): Promise<{
-  result: CharacterMindIngestResult | CharacterMindQueryResult | CharacterMindLintResult;
+  result: CharacterMindPlanResult | CharacterMindIngestResult | CharacterMindQueryResult | CharacterMindLintResult;
   trace: CharacterMindTrace;
 }> {
   const trace = createCharacterMindTrace();
-  const toolContext = createCharacterMindTools(input.root, input.operation, trace);
+  const sourcePaths = input.sourcePaths ?? [];
+  const toolContext = createCharacterMindTools(input.root, input.operation, trace, {
+    plannedWikiPaths: input.plan?.pages.map((page) => page.path),
+    plannedSourcesByPage: input.plan
+      ? Object.fromEntries(input.plan.pages.map((page) => [page.path, page.sources]))
+      : undefined,
+  });
   const messages: ChatMessage[] = [
     {
       role: "system",
@@ -187,7 +269,7 @@ export async function runCharacterMindOperation(input: {
         const response = await input.runtime.provider.chatComplete(messages, {
           model: input.runtime.model,
           temperature: 0.2,
-          maxTokens: CHARACTER_MIND_MAX_OUTPUT_TOKENS[input.operation],
+          maxTokens: input.runtime.maxTokens,
           tools: toolContext.tools,
           stream: false,
           enableCaching: input.runtime.enableCaching,
@@ -224,7 +306,7 @@ export async function runCharacterMindOperation(input: {
         const response = await input.runtime.provider.chatComplete(messages, {
           model: input.runtime.model,
           temperature: 0.2,
-          maxTokens: CHARACTER_MIND_MAX_OUTPUT_TOKENS[input.operation],
+          maxTokens: input.runtime.maxTokens,
           stream: false,
           enableCaching: input.runtime.enableCaching,
           signal: input.signal,
@@ -236,6 +318,21 @@ export async function runCharacterMindOperation(input: {
       throw new Error("Character Mind operation did not read SCHEMA.md and index.md");
     if (input.operation === "ingest" && input.value && !trace.read.has(input.value))
       throw new Error("Character Mind ingest did not read its raw source");
+    if (input.operation === "build" && input.plan) {
+      const plannedPaths = new Set(input.plan.pages.map((page) => page.path));
+      const requiredSources = [...new Set(input.plan.pages.flatMap((page) => page.sources))];
+      const unread = requiredSources.filter((path) => !trace.verifiedRaw.has(path));
+      if (unread.length) throw new Error(`Character Mind builder did not read mapped sources: ${unread.join(", ")}`);
+      const unwritten = input.plan.pages
+        .map((page) => page.path)
+        .filter((path) => !trace.created.has(path) && !trace.updated.has(path));
+      if (unwritten.length) throw new Error(`Character Mind builder did not write mapped pages: ${unwritten.join(", ")}`);
+      const unexpected = [...trace.created, ...trace.updated].filter(
+        (path) => path.startsWith("wiki/") && !plannedPaths.has(path),
+      );
+      if (unexpected.length) throw new Error(`Character Mind builder wrote pages outside the map: ${unexpected.join(", ")}`);
+      if (!trace.updated.has("index.md")) throw new Error("Character Mind builder did not finalize index.md");
+    }
     if (unresolvedMutationFailures.size > 0)
       throw new Error(
         `Character Mind could not apply its last mutation: ${[...unresolvedMutationFailures.values()].at(-1)}`,
@@ -248,7 +345,7 @@ export async function runCharacterMindOperation(input: {
         throw new Error("Character Mind lint did not read the complete wiki");
     }
     try {
-      return { result: validateResult(input.operation, parseObject(finalContent), trace), trace };
+      return { result: validateResult(input.operation, parseObject(finalContent), trace, sourcePaths), trace };
     } catch (error) {
       if (toolFailures.length === 0) throw error;
       const resultError = error instanceof Error ? error.message : "invalid final result";

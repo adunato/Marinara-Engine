@@ -9,6 +9,7 @@ export interface ParsedMindLogEntry {
   subject: string;
   status: "success" | "failure";
   revision?: string;
+  revisions?: string[];
 }
 
 export async function readMindLog(root: string): Promise<string> {
@@ -25,12 +26,17 @@ export function parseMindLog(content: string): ParsedMindLogEntry[] {
     const status = /^- status:\s*(success|failure)\s*$/m.exec(body)?.[1];
     if (status !== "success" && status !== "failure") continue;
     const revision = /^- revision:\s*([0-9a-f]{16})\s*$/m.exec(body)?.[1];
+    const revisions = /^- revisions:\s*(.+?)\s*$/m.exec(body)?.[1]
+      ?.split(",")
+      .map((value) => value.trim())
+      .filter((value) => /^[0-9a-f]{16}$/.test(value));
     entries.push({
       timestamp: match[1]!,
       operation: match[2]!,
       subject: match[3]!,
       status,
       ...(revision ? { revision } : {}),
+      ...(revisions?.length ? { revisions } : {}),
     });
   }
   return entries;
@@ -46,11 +52,12 @@ function oneLine(value: string): string {
 
 export async function appendMindLog(input: {
   root: string;
-  operation: "ingest" | "query" | "lint";
+  operation: "build-map" | "build" | "ingest" | "query" | "lint";
   subject: string;
   status: "success" | "failure";
   trace: CharacterMindTrace;
   revision?: string;
+  revisions?: string[];
   summary?: string;
   findings?: string[];
   error?: string;
@@ -61,6 +68,7 @@ export async function appendMindLog(input: {
     "",
     `- status: ${input.status}`,
     ...(input.revision ? [`- revision: ${input.revision}`] : []),
+    ...(input.revisions?.length ? [`- revisions: ${input.revisions.join(", ")}`] : []),
     `- read: ${links(input.trace.read)}`,
     `- created: ${links(input.trace.created)}`,
     `- updated: ${links(input.trace.updated)}`,
@@ -77,11 +85,17 @@ export async function appendMindLog(input: {
 }
 
 export function successfulIngestRevisions(entries: ParsedMindLogEntry[]): Set<string> {
-  return new Set(
-    entries
-      .filter((entry) => entry.operation === "ingest" && entry.status === "success" && entry.revision)
-      .map((entry) => entry.revision!),
-  );
+  const revisions = new Set<string>();
+  for (const entry of entries) {
+    if (entry.status !== "success") continue;
+    if (entry.operation === "ingest" && entry.revision) revisions.add(entry.revision);
+    if (entry.operation === "build") for (const revision of entry.revisions ?? []) revisions.add(revision);
+  }
+  return revisions;
+}
+
+export function hasSuccessfulBuild(entries: ParsedMindLogEntry[]): boolean {
+  return entries.some((entry) => entry.operation === "build" && entry.status === "success");
 }
 
 export function ingestsSinceLastLint(entries: ParsedMindLogEntry[]): number {

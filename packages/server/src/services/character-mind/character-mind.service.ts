@@ -5,6 +5,7 @@ import type {
   CharacterMindIngestResult,
   CharacterMindLintResult,
   CharacterMindOperationName,
+  CharacterMindPlanResult,
   CharacterMindQueryResult,
   CharacterMindStatus,
   DailyMemoryDay,
@@ -22,14 +23,19 @@ import {
   mindRoot,
   pathExists,
   revisionForPayload,
+  resetMindSynthesis,
+  snapshotAutoSummary,
   snapshotCharacterCard,
   snapshotDailyMemories,
   verifyRawMarkdown,
+  writeMindIndex,
+  type AutoSummaryRawPayload,
   type CharacterCardRawPayload,
   type DailyMemoryRawPayload,
 } from "./character-mind.files.js";
 import {
   appendMindLog,
+  hasSuccessfulBuild,
   ingestsSinceLastLint,
   parseMindLog,
   queryLogSubject,
@@ -138,24 +144,45 @@ function memoryPayload(chatId: string, day: DailyMemoryDay): DailyMemoryRawPaylo
   };
 }
 
+function autoSummaryPayloads(context: MindContext): AutoSummaryRawPayload[] {
+  const payloads: AutoSummaryRawPayload[] = [];
+  const add = (period: "day" | "week", values: unknown) => {
+    const entries = parseRecord(values);
+    for (const date of Object.keys(entries).sort()) {
+      const entry = parseRecord(entries[date]);
+      const summary = typeof entry.summary === "string" ? entry.summary.trim() : "";
+      const keyDetails = Array.isArray(entry.keyDetails)
+        ? entry.keyDetails.filter((item): item is string => typeof item === "string" && !!item.trim()).map((item) => item.trim())
+        : [];
+      if (!summary && keyDetails.length === 0) continue;
+      payloads.push({ chatId: context.chat.id, period, date, summary, keyDetails });
+    }
+  };
+  add("day", context.metadata.daySummaries);
+  add("week", context.metadata.weekSummaries);
+  return payloads;
+}
+
 async function formedDays(db: DB, chatId: string): Promise<DailyMemoryDay[]> {
   return (await listDailyMemoryDays({ db, chatId, buckets: [] })).filter((day) => day.formed);
 }
 
 async function currentRevisions(db: DB, context: MindContext): Promise<string[]> {
   const revisions = [revisionForPayload(cardPayload(context))];
+  for (const summary of autoSummaryPayloads(context)) revisions.push(revisionForPayload(summary));
   for (const day of await formedDays(db, context.chat.id))
     revisions.push(revisionForPayload(memoryPayload(context.chat.id, day)));
   return revisions;
 }
 
-async function pendingSources(root: string): Promise<string[]> {
+async function pendingSources(root: string, current?: Set<string>): Promise<string[]> {
   if (!(await pathExists(root))) return [];
   const successful = successfulIngestRevisions(parseMindLog(await readMindLog(root)));
   const sources = (await listMarkdown(root, "raw")).filter((path) => path.startsWith("raw/"));
   const pending: Array<{ path: string; revision: string; sourceKey: string }> = [];
   for (const path of sources) {
     const verified = await verifyRawMarkdown(root, path);
+    if (current && !current.has(verified.revision)) continue;
     if (!successful.has(verified.revision)) pending.push({ path, ...verified });
   }
   const dateValue = (sourceKey: string) => {
@@ -168,15 +195,15 @@ async function pendingSources(root: string): Promise<string[]> {
       const aCard = a.path.startsWith("raw/character-card/");
       const bCard = b.path.startsWith("raw/character-card/");
       if (aCard !== bCard) return aCard ? -1 : 1;
-      return aCard
-        ? a.path.localeCompare(b.path)
-        : dateValue(a.sourceKey).localeCompare(dateValue(b.sourceKey)) || a.path.localeCompare(b.path);
+      return dateValue(a.sourceKey).localeCompare(dateValue(b.sourceKey)) || a.path.localeCompare(b.path);
     })
     .map((item) => item.path);
 }
 
 async function snapshotInputs(db: DB, context: MindContext) {
   const snapshots = [await snapshotCharacterCard(context.root, cardPayload(context))];
+  for (const summary of autoSummaryPayloads(context))
+    snapshots.push(await snapshotAutoSummary(context.root, summary));
   for (const day of await formedDays(db, context.chat.id))
     snapshots.push(await snapshotDailyMemories(context.root, memoryPayload(context.chat.id, day)));
   return snapshots;
@@ -223,6 +250,100 @@ function traceFromError(error: unknown): CharacterMindTrace {
   const trace =
     error && typeof error === "object" ? (error as { characterMindTrace?: unknown }).characterMindTrace : null;
   return trace && typeof trace === "object" ? (trace as CharacterMindTrace) : createCharacterMindTrace();
+}
+
+function renderPageMap(plan: CharacterMindPlanResult): string {
+  const indexText = (value: string) => value.replace(/[\r\n\[\]|]+/g, " ").replace(/\s+/g, " ").trim();
+  const lines = [
+    "# Index",
+    "",
+    "Corpus-level page map created before wiki materialization.",
+    "",
+    ...plan.pages.map(
+      (page) =>
+        `- [[${page.path.replace(/\.md$/i, "")}|${indexText(page.title)}]] — ${indexText(page.purpose)}`,
+    ),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+async function buildCorpus(
+  context: MindContext,
+  runtime: Awaited<ReturnType<typeof requireRuntime>>,
+  operation: ActiveOperation,
+  snapshots: Awaited<ReturnType<typeof snapshotInputs>>,
+): Promise<CharacterMindIngestResult> {
+  const sourcePaths = snapshots.map((snapshot) => snapshot.path);
+  let planTrace = createCharacterMindTrace();
+  let plan: CharacterMindPlanResult;
+  try {
+    const run = await runCharacterMindOperation({
+      root: context.root,
+      operation: "plan",
+      value: JSON.stringify(sourcePaths),
+      sourcePaths,
+      runtime,
+      signal: await operationSignal(operation),
+    });
+    planTrace = run.trace;
+    plan = run.result as CharacterMindPlanResult;
+    await writeMindIndex(context.root, renderPageMap(plan));
+    await appendMindLog({
+      root: context.root,
+      operation: "build-map",
+      subject: `${sourcePaths.length} current sources`,
+      status: "success",
+      trace: planTrace,
+      summary: plan.summary,
+    });
+  } catch (error) {
+    planTrace = traceFromError(error);
+    await appendMindLog({
+      root: context.root,
+      operation: "build-map",
+      subject: `${sourcePaths.length} current sources`,
+      status: "failure",
+      trace: planTrace,
+      error: error instanceof Error ? error.message : "Build map failed",
+    });
+    throw error;
+  }
+
+  let buildTrace = createCharacterMindTrace();
+  try {
+    const run = await runCharacterMindOperation({
+      root: context.root,
+      operation: "build",
+      value: JSON.stringify(plan),
+      plan,
+      runtime,
+      signal: await operationSignal(operation),
+    });
+    buildTrace = run.trace;
+    await validateCompleteWiki(context.root);
+    const result = run.result as CharacterMindIngestResult;
+    await appendMindLog({
+      root: context.root,
+      operation: "build",
+      subject: `${plan.pages.length} mapped pages`,
+      status: "success",
+      revisions: snapshots.map((snapshot) => snapshot.revision),
+      trace: buildTrace,
+      summary: result.summary,
+    });
+    return result;
+  } catch (error) {
+    buildTrace = traceFromError(error);
+    await appendMindLog({
+      root: context.root,
+      operation: "build",
+      subject: `${plan.pages.length} mapped pages`,
+      status: "failure",
+      trace: buildTrace,
+      error: error instanceof Error ? error.message : "Build materialization failed",
+    });
+    throw error;
+  }
 }
 
 async function ingestOne(
@@ -288,13 +409,16 @@ export async function getCharacterMindStatus(
   const context = await loadContext(db, chatId, characterId);
   const initialized = await pathExists(context.root);
   const entries = initialized ? parseMindLog(await readMindLog(context.root)) : [];
+  const built = hasSuccessfulBuild(entries);
   const last = entries.at(-1);
   const active = activeOperations.get(key(chatId, characterId));
+  const revisions = await currentRevisions(db, context);
   return {
     initialized,
+    built,
     path: initialized ? await mindDiskPath(context.root) : null,
-    currentRevisions: await currentRevisions(db, context),
-    pendingSources: initialized ? await pendingSources(context.root) : [],
+    currentRevisions: revisions,
+    pendingSources: built ? await pendingSources(context.root, new Set(revisions)) : [],
     activeOperation: active ? { name: active.name, startedAt: active.startedAt } : null,
     lastLogEntry: last ? { operation: last.operation, timestamp: last.timestamp, status: last.status } : null,
   };
@@ -308,17 +432,34 @@ async function buildOrSync(
   maxSources?: number,
 ): Promise<CharacterMindBuildOrSyncResult> {
   const context = await loadContext(db, chatId, characterId);
-  await requireRuntime(db, context);
+  const runtime = await requireRuntime(db, context);
   const initialized = await pathExists(context.root);
-  if (mode === "build" && initialized) throw new CharacterMindError("Character Mind already exists; use Sync", 409);
+  const entries = initialized ? parseMindLog(await readMindLog(context.root)) : [];
+  const built = hasSuccessfulBuild(entries);
+  if (mode === "build" && built) throw new CharacterMindError("Character Mind is already built; use Sync", 409);
   if (mode === "sync" && !initialized)
     throw new CharacterMindError("Character Mind is not initialized; use Build", 409);
+  if (mode === "sync" && !built)
+    throw new CharacterMindError("Character Mind Build is incomplete; retry Build", 409);
   const operation = claimOperation(chatId, characterId, mode);
   try {
-    if (mode === "build") await initializeMind(context.root);
+    if (mode === "build") {
+      await initializeMind(context.root);
+      if (initialized) await resetMindSynthesis(context.root);
+    }
     const snapshots = await snapshotInputs(db, context);
+    const current = new Set(snapshots.map((snapshot) => snapshot.revision));
     const processed: CharacterMindBuildOrSyncResult["processed"] = [];
-    const pending = await pendingSources(context.root);
+    if (mode === "build") {
+      const result = await buildCorpus(context, runtime, operation, snapshots);
+      processed.push(...snapshots.map((snapshot) => ({ source: snapshot.path, result, error: null })));
+      return {
+        snapshotsCreated: snapshots.filter((snapshot) => snapshot.created).map((snapshot) => snapshot.path),
+        processed,
+        pendingSources: await pendingSources(context.root, current),
+      };
+    }
+    const pending = await pendingSources(context.root, current);
     const limit = maxSources === undefined ? pending.length : Math.max(1, Math.min(100, Math.floor(maxSources)));
     for (const source of pending.slice(0, limit)) {
       try {
@@ -331,7 +472,7 @@ async function buildOrSync(
     return {
       snapshotsCreated: snapshots.filter((snapshot) => snapshot.created).map((snapshot) => snapshot.path),
       processed,
-      pendingSources: await pendingSources(context.root),
+      pendingSources: await pendingSources(context.root, current),
     };
   } finally {
     finishOperation(chatId, characterId, operation);
@@ -355,6 +496,8 @@ export async function queryCharacterMind(
 ): Promise<CharacterMindQueryResult> {
   const context = await loadContext(db, chatId, characterId);
   if (!(await pathExists(context.root))) throw new CharacterMindError("Character Mind is not initialized", 409);
+  if (!hasSuccessfulBuild(parseMindLog(await readMindLog(context.root))))
+    throw new CharacterMindError("Character Mind Build is incomplete; retry Build", 409);
   const existing = activeOperations.get(key(chatId, characterId));
   if (existing && existing.name !== "query") await existing.done;
   const runtime = await requireRuntime(db, context);
@@ -395,6 +538,8 @@ export async function queryCharacterMind(
 export async function lintCharacterMind(db: DB, chatId: string, characterId: string): Promise<CharacterMindLintResult> {
   const context = await loadContext(db, chatId, characterId);
   if (!(await pathExists(context.root))) throw new CharacterMindError("Character Mind is not initialized", 409);
+  if (!hasSuccessfulBuild(parseMindLog(await readMindLog(context.root))))
+    throw new CharacterMindError("Character Mind Build is incomplete; retry Build", 409);
   const runtime = await requireRuntime(db, context);
   const operation = claimOperation(chatId, characterId, "lint");
   const findings = await deterministicMindFindings(context.root);
@@ -451,7 +596,13 @@ export async function queueCharacterMindSyncAfterDailyMemory(db: DB, chatId: str
   const metadata = parseRecord(chat.metadata);
   if (!isCharacterMindAgentEnabled(metadata)) return;
   for (const characterId of parseIds(chat.characterIds)) {
-    if (!(await pathExists(mindRoot(chatId, characterId))) || activeOperations.has(key(chatId, characterId))) continue;
+    const root = mindRoot(chatId, characterId);
+    if (
+      !(await pathExists(root)) ||
+      !hasSuccessfulBuild(parseMindLog(await readMindLog(root))) ||
+      activeOperations.has(key(chatId, characterId))
+    )
+      continue;
     void syncCharacterMind(db, chatId, characterId, 1).catch((error) =>
       logger.warn(error, "Automatic Character Mind sync failed"),
     );
