@@ -11,6 +11,8 @@ import {
 } from "../services/character-mind/character-mind.service.js";
 import { CHARACTER_MIND_QUERY_MAX_CHARS } from "../services/character-mind/character-mind.constants.js";
 import { onDailyMemoryDayReplaced } from "../services/conversation/daily-memory-events.js";
+import { openFolderInFileManager } from "../lib/open-folder-in-file-manager.js";
+import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 
 type Params = { chatId: string; characterId: string };
 
@@ -74,6 +76,23 @@ export async function characterMindsRoutes(app: FastifyInstance) {
       return await lintCharacterMind(app.db, request.params.chatId, request.params.characterId);
     } catch (error) {
       return sendError(reply, error);
+    }
+  });
+
+  app.post<{ Params: Params }>("/:chatId/character-minds/:characterId/open-folder", async (request, reply) => {
+    if (!requirePrivilegedAccess(request, reply, { loopbackOnly: true, feature: "Character Mind folder opening" }))
+      return;
+    try {
+      const status = await getCharacterMindStatus(app.db, request.params.chatId, request.params.characterId);
+      if (!status.initialized || !status.path) {
+        return reply.status(409).send({ error: "Character Mind is not initialized; use Build" });
+      }
+      await openFolderInFileManager(status.path);
+      return { ok: true, path: status.path };
+    } catch (error) {
+      if (error instanceof CharacterMindError) return reply.status(error.statusCode).send({ error: error.message });
+      request.log.warn(error, "Could not open Character Mind folder");
+      return reply.status(500).send({ error: "Could not open Character Mind folder" });
     }
   });
 

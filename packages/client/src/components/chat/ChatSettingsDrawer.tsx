@@ -92,6 +92,7 @@ import { DailyMemoriesEditorModal } from "./DailyMemoriesEditorModal";
 import { DailyMemoryRetrievalPreviewModal } from "./DailyMemoryRetrievalPreviewModal";
 import { DailyIntentionsConfigModal } from "./DailyIntentionsConfigModal";
 import { DailyIntentionsEditorModal } from "./DailyIntentionsEditorModal";
+import { CharacterMindModal } from "./CharacterMindModal";
 import { AgentSuiteModal } from "./AgentSuiteModal";
 import { ConversationTimeZoneSelect } from "./ConversationTimeZoneSelect";
 import { ChatContextSourcesPicker } from "./ChatContextSourcesPicker";
@@ -179,7 +180,12 @@ import type {
   SpotifySourceType,
   WeekSchedule,
 } from "@marinara-engine/shared";
-import { DAILY_INTENTIONS_AGENT_ID, DAILY_MEMORY_AGENT_ID, normalizeSpotifySourceType } from "@marinara-engine/shared";
+import {
+  CHARACTER_MIND_AGENT_ID,
+  DAILY_INTENTIONS_AGENT_ID,
+  DAILY_MEMORY_AGENT_ID,
+  normalizeSpotifySourceType,
+} from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
@@ -1318,6 +1324,8 @@ export function ChatSettingsDrawer({
     isConversation && metadata.enableAgents === true && activeAgentIds.includes(DAILY_MEMORY_AGENT_ID);
   const dailyIntentionsAgentActive =
     isConversation && metadata.enableAgents === true && activeAgentIds.includes(DAILY_INTENTIONS_AGENT_ID);
+  const characterMindAgentActive =
+    isConversation && metadata.enableAgents === true && activeAgentIds.includes(CHARACTER_MIND_AGENT_ID);
   const mapsPackage = installedCapabilities.find(
     (item) => item.status === "active" && item.manifest.kind.includes("maps") && item.manifest.entrypoints.client,
   );
@@ -3197,6 +3205,7 @@ export function ChatSettingsDrawer({
   const [showDailyMemoryPreviewModal, setShowDailyMemoryPreviewModal] = useState(false);
   const [showDailyIntentionsConfigModal, setShowDailyIntentionsConfigModal] = useState(false);
   const [showDailyIntentionsModal, setShowDailyIntentionsModal] = useState(false);
+  const [showCharacterMindModal, setShowCharacterMindModal] = useState(false);
   const [showAgentSuiteModal, setShowAgentSuiteModal] = useState(false);
   const [showMemoriesModal, setShowMemoriesModal] = useState(false);
   const handleAgentSuiteCloseGuardChange = useCallback((guard: (() => Promise<boolean>) | null) => {
@@ -4286,6 +4295,30 @@ export function ChatSettingsDrawer({
           className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
         >
           <Settings2 size="0.75rem" /> Configure intention areas
+        </button>
+      </AgentSettingsCard>
+    );
+  };
+
+  const renderCharacterMindAgentSettings = () => {
+    if (!characterMindAgentActive) return null;
+    return (
+      <AgentSettingsCard
+        icon={<Brain size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+        title="Character Mind"
+        description="Build and operate each character's Markdown wiki from this Conversation."
+      >
+        <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+          Configure the shared connection, inspect live status, build or sync sources, lint the wiki, and create a
+          standalone briefing. Markdown editing remains manual.
+        </p>
+        <button
+          type="button"
+          data-testid="manage-character-mind"
+          onClick={() => setShowCharacterMindModal(true)}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
+        >
+          <Settings2 size="0.75rem" /> Manage Character Mind
         </button>
       </AgentSettingsCard>
     );
@@ -6307,6 +6340,7 @@ export function ChatSettingsDrawer({
                 })}
                 {renderDailyMemoryAgentSettings()}
                 {renderDailyIntentionsAgentSettings()}
+                {renderCharacterMindAgentSettings()}
                 {renderCustomAgentPicker()}
                 {renderActiveCustomAgentSettingsCard()}
               </div>
@@ -9308,6 +9342,14 @@ export function ChatSettingsDrawer({
         chatId={chat.id}
         open={showDailyIntentionsModal}
         onClose={() => setShowDailyIntentionsModal(false)}
+      />
+
+      <CharacterMindModal
+        chatId={chat.id}
+        characterIds={chatCharIds}
+        characters={characters}
+        open={showCharacterMindModal}
+        onClose={() => setShowCharacterMindModal(false)}
       />
 
       <AgentSuiteModal
