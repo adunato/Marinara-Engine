@@ -198,6 +198,28 @@ export function validateCharacterMindPlanResult(
   return { summary, pages, excludedSources };
 }
 
+function characterMindPlanCandidateError(
+  content: string,
+  trace: CharacterMindTrace,
+  sourcePaths: string[],
+): string | null {
+  const unread = [
+    ...(!trace.read.has("SCHEMA.md") ? ["SCHEMA.md"] : []),
+    ...(!trace.read.has("index.md") ? ["index.md"] : []),
+    ...sourcePaths.filter((path) => !trace.verifiedRaw.has(path)),
+  ];
+  if (unread.length > 0)
+    return `The candidate map was not accepted because these required files were not successfully read: ${[
+      ...new Set(unread),
+    ].join(", ")}`;
+  try {
+    validateCharacterMindPlanResult(parseObject(content), trace, sourcePaths);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "The candidate map is invalid";
+  }
+}
+
 function validateResult(
   operation: RuntimeOperation,
   value: Record<string, unknown>,
@@ -276,7 +298,24 @@ export async function runCharacterMindOperation(input: {
           signal: input.signal,
         });
         if (!response.toolCalls.length) {
-          finalContent = response.content?.trim() ?? "";
+          const candidateContent = response.content?.trim() ?? "";
+          if (input.operation === "plan") {
+            const validationError = characterMindPlanCandidateError(candidateContent, trace, sourcePaths);
+            if (validationError) {
+              messages.push({
+                role: "assistant",
+                content: response.content ?? "",
+                ...(response.providerMetadata ? { providerMetadata: response.providerMetadata } : {}),
+              });
+              messages.push({
+                role: "user",
+                content: `MARINARA PLAN VALIDATION REJECTED THIS CANDIDATE:\n${validationError}\n\nContinue the same planning operation. Correct every failed or missing read using the exact manifest paths; mind_read_markdown accepts at most 12 files per call. Then return a complete replacement plan that satisfies the original contract.`,
+                contextKind: "prompt",
+              });
+              continue;
+            }
+          }
+          finalContent = candidateContent;
           break;
         }
         messages.push({

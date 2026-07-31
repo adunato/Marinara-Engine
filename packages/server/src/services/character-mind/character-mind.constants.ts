@@ -106,6 +106,9 @@ Operate only on the selected Character Mind. Read SCHEMA.md, index.md, and EVERY
 raw source in the manifest below. Do not write files. Assess the complete corpus
 before choosing pages. Design subjects that organize and connect the corpus;
 never create one page per source and do not default to a catch-all character page.
+mind_read_markdown accepts at most 12 files per call: split larger manifests across
+calls, copy paths exactly from the manifest, and correct any failed read before
+returning the plan.
 Every source must either appear in at least one page's sources or in
 excludedSources with a specific reason. Return only this JSON object, with no
 Markdown fence:

@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CharacterData } from "@marinara-engine/shared";
+import type {
+  BaseLLMProvider,
+  ChatCompletionResult,
+  ChatMessage,
+  ChatOptions,
+  LLMToolCall,
+} from "../../packages/server/src/services/llm/base-provider.js";
 import {
   initializeMind,
   revisionForPayload,
@@ -17,7 +24,10 @@ import {
   parseMindLog,
   successfulIngestRevisions,
 } from "../../packages/server/src/services/character-mind/character-mind.log.js";
-import { validateCharacterMindPlanResult } from "../../packages/server/src/services/character-mind/character-mind.runtime.js";
+import {
+  runCharacterMindOperation,
+  validateCharacterMindPlanResult,
+} from "../../packages/server/src/services/character-mind/character-mind.runtime.js";
 import {
   createCharacterMindTools,
   createCharacterMindTrace,
@@ -202,7 +212,99 @@ async function main() {
     assert.match(ingestPrompt, /\{"summary":"concise description of what was integrated"\}/);
     assert.doesNotMatch(ingestPrompt, /required ingest JSON/);
     assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /Assess the complete corpus/);
+    assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /at most 12 files per call/);
     assert.match(characterMindPrompt("build", JSON.stringify(plan)), /FROZEN PAGE MAP/);
+
+    const toolResponse = (toolCalls: LLMToolCall[]): ChatCompletionResult => ({
+      content: "",
+      toolCalls,
+      finishReason: "tool_calls",
+    });
+    const finalResponse = (content: Record<string, unknown>): ChatCompletionResult => ({
+      content: JSON.stringify(content),
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    let plannerCall = 0;
+    const recoveringProvider = {
+      chatComplete: async (messages: ChatMessage[], _options: ChatOptions): Promise<ChatCompletionResult> => {
+        plannerCall += 1;
+        if (plannerCall === 1) {
+          return toolResponse([
+            {
+              id: "initial-partial-read",
+              type: "function",
+              function: {
+                name: "mind_read_markdown",
+                arguments: JSON.stringify({
+                  reads: [{ path: "SCHEMA.md" }, { path: "index.md" }, { path: day.path }],
+                }),
+              },
+            },
+          ]);
+        }
+        if (plannerCall === 2) {
+          return finalResponse({
+            summary: "Premature plan.",
+            pages: [
+              {
+                path: "wiki/relationship-with-alex.md",
+                title: "Relationship with Alex",
+                purpose: "Relationship evidence.",
+                sources: [day.path],
+              },
+            ],
+            excludedSources: [],
+          });
+        }
+        if (plannerCall === 3) {
+          const correction = messages.at(-1);
+          assert.equal(correction?.role, "user");
+          assert.match(correction?.content ?? "", /PLAN VALIDATION REJECTED/);
+          assert.match(correction?.content ?? "", new RegExp(autoSummary.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+          assert.match(correction?.content ?? "", /at most 12 files per call/);
+          return toolResponse([
+            {
+              id: "corrective-read",
+              type: "function",
+              function: {
+                name: "mind_read_markdown",
+                arguments: JSON.stringify({ reads: [{ path: autoSummary.path }] }),
+              },
+            },
+          ]);
+        }
+        return finalResponse({
+          summary: "Mapped the complete corpus.",
+          pages: [
+            {
+              path: "wiki/relationship-with-alex.md",
+              title: "Relationship with Alex",
+              purpose: "Tracks the relationship and recurring disappointments.",
+              sources: [day.path, autoSummary.path],
+            },
+          ],
+          excludedSources: [],
+        });
+      },
+    } as unknown as BaseLLMProvider;
+    const recoveredPlan = await runCharacterMindOperation({
+      root,
+      operation: "plan",
+      value: JSON.stringify([day.path, autoSummary.path]),
+      sourcePaths: [day.path, autoSummary.path],
+      runtime: {
+        provider: recoveringProvider,
+        model: "regression-model",
+        prompt: "",
+        enableCaching: false,
+        maxTokens: 4096,
+      },
+      signal: new AbortController().signal,
+    });
+    assert.equal(plannerCall, 4);
+    assert.equal("summary" in recoveredPlan.result ? recoveredPlan.result.summary : null, "Mapped the complete corpus.");
+    assert.equal(recoveredPlan.trace.verifiedRaw.has(autoSummary.path), true);
     await assert.rejects(
       ingestTools.execute({
         id: "hallucinated-alias",
