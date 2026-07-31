@@ -233,7 +233,12 @@ export function createCharacterMindTools(root: string, operation: MindOperation,
   const tools = ALL_TOOLS.filter((tool) => toolNames.has(tool.function.name));
 
   async function execute(call: LLMToolCall): Promise<string> {
-    if (!toolNames.has(call.function.name)) throw new Error(`Tool is not permitted during ${operation}`);
+    if (!toolNames.has(call.function.name))
+      throw new Error(
+        `Tool "${call.function.name}" is not permitted during ${operation}. Use only these exact tool names: ${[
+          ...toolNames,
+        ].join(", ")}`,
+      );
     const args = parseArguments(call);
 
     if (call.function.name === "mind_list_markdown") {

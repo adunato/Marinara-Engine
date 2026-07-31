@@ -24,6 +24,7 @@ import { listMarkdown, normalizeMindPath } from "./character-mind.files.js";
 import { createCharacterMindTools, createCharacterMindTrace, type CharacterMindTrace } from "./character-mind.tools.js";
 
 type RuntimeOperation = "ingest" | "query" | "lint";
+type MutationTarget = "index" | "wiki";
 
 export interface CharacterMindRuntime {
   provider: BaseLLMProvider;
@@ -124,6 +125,11 @@ function groundedPaths(value: unknown, allowed: Set<string>, area?: "wiki" | "ra
   return [...new Set(result)];
 }
 
+function mutationTarget(toolName: string): MutationTarget | null {
+  if (/write/i.test(toolName) && /index/i.test(toolName)) return "index";
+  return /write|move|delete/i.test(toolName) ? "wiki" : null;
+}
+
 function validateResult(operation: RuntimeOperation, value: Record<string, unknown>, trace: CharacterMindTrace) {
   if (operation === "ingest") {
     const summary = typeof value.summary === "string" ? value.summary.trim() : "";
@@ -173,6 +179,8 @@ export async function runCharacterMindOperation(input: {
     },
   ];
   let finalContent = "";
+  const toolFailures: string[] = [];
+  const unresolvedMutationFailures = new Map<MutationTarget, string>();
   try {
     await withLlmRequestTimeout(CHARACTER_MIND_OPERATION_TIMEOUT_MS, async () => {
       for (let round = 0; round < CHARACTER_MIND_MAX_TOOL_ROUNDS[input.operation]; round += 1) {
@@ -199,8 +207,15 @@ export async function runCharacterMindOperation(input: {
           let content: string;
           try {
             content = await toolContext.execute(call);
+            const target = mutationTarget(call.function.name);
+            if (target) unresolvedMutationFailures.delete(target);
           } catch (error) {
-            content = JSON.stringify({ error: error instanceof Error ? error.message : "Tool failed" });
+            const message = error instanceof Error ? error.message : "Tool failed";
+            const failure = `${call.function.name}: ${message}`;
+            toolFailures.push(failure);
+            const target = mutationTarget(call.function.name);
+            if (target) unresolvedMutationFailures.set(target, failure);
+            content = JSON.stringify({ error: message });
           }
           messages.push({ role: "tool", content, tool_call_id: call.id });
         }
@@ -221,6 +236,10 @@ export async function runCharacterMindOperation(input: {
       throw new Error("Character Mind operation did not read SCHEMA.md and index.md");
     if (input.operation === "ingest" && input.value && !trace.read.has(input.value))
       throw new Error("Character Mind ingest did not read its raw source");
+    if (unresolvedMutationFailures.size > 0)
+      throw new Error(
+        `Character Mind could not apply its last mutation: ${[...unresolvedMutationFailures.values()].at(-1)}`,
+      );
     if (input.operation === "lint") {
       const wikiPages = (await listMarkdown(input.root, "wiki")).filter((path) => path.startsWith("wiki/"));
       if (!trace.listed.some((path) => path === "wiki" || path === ""))
@@ -228,7 +247,13 @@ export async function runCharacterMindOperation(input: {
       if (wikiPages.some((path) => !trace.read.has(path)))
         throw new Error("Character Mind lint did not read the complete wiki");
     }
-    return { result: validateResult(input.operation, parseObject(finalContent), trace), trace };
+    try {
+      return { result: validateResult(input.operation, parseObject(finalContent), trace), trace };
+    } catch (error) {
+      if (toolFailures.length === 0) throw error;
+      const resultError = error instanceof Error ? error.message : "invalid final result";
+      throw new Error(`Character Mind final result failed after tool error (${toolFailures.at(-1)}): ${resultError}`);
+    }
   } catch (error) {
     if (error && typeof error === "object") Object.assign(error, { characterMindTrace: trace });
     throw error;

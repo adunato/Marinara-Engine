@@ -20,6 +20,7 @@ import {
   createCharacterMindTrace,
   deterministicMindFindings,
 } from "../../packages/server/src/services/character-mind/character-mind.tools.js";
+import { characterMindPrompt } from "../../packages/server/src/services/character-mind/character-mind.constants.js";
 
 const root = join(process.cwd(), ".tmp-character-mind-regression");
 
@@ -120,6 +121,20 @@ async function main() {
         function: { name: "mind_write_index", arguments: JSON.stringify({ content: "# No" }) },
       }),
       /not permitted/,
+    );
+
+    const ingestPrompt = characterMindPrompt("ingest", day.path);
+    assert.match(ingestPrompt, /mind_write_wiki\(\{"files":\[\.\.\.\]\}\)/);
+    assert.match(ingestPrompt, /mind_write_index\(\{"content":"\.\.\."\}\)/);
+    assert.match(ingestPrompt, /\{"summary":"concise description of what was integrated"\}/);
+    assert.doesNotMatch(ingestPrompt, /required ingest JSON/);
+    await assert.rejects(
+      ingestTools.execute({
+        id: "hallucinated-alias",
+        type: "function",
+        function: { name: "wiki_write", arguments: JSON.stringify({ writes: [] }) },
+      }),
+      /Use only these exact tool names:.*mind_write_wiki.*mind_write_index/,
     );
 
     await appendMindLog({
