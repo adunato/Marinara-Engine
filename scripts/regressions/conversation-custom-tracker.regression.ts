@@ -10,7 +10,12 @@ import {
 } from "../../packages/client/src/features/tracker-panel/lib/tracker-panel-availability.js";
 import { createEmptyGameState } from "../../packages/client/src/hooks/use-game-state-patcher.js";
 
-assert.deepEqual(CONVERSATION_ALLOWED_AGENT_IDS, ["custom-tracker"]);
+assert.deepEqual(CONVERSATION_ALLOWED_AGENT_IDS, [
+  "custom-tracker",
+  "daily-memory",
+  "daily-intentions",
+  "character-mind",
+]);
 assert.equal(
   isAgentManifestAvailableInChatMode("conversation", {
     id: "custom-tracker",
@@ -32,6 +37,14 @@ assert.equal(
     execution: "pipeline",
   }),
   false,
+);
+assert.equal(
+  isAgentManifestAvailableInChatMode("conversation", {
+    id: "character-mind",
+    execution: "managed",
+    modeAllowlist: ["conversation"],
+  }),
+  true,
 );
 
 const activeMetadata = { enableAgents: true, activeAgentIds: ["custom-tracker"] };
