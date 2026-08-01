@@ -61,6 +61,9 @@ export async function appendMindLog(input: {
   revisions?: string[];
   summary?: string;
   findings?: string[];
+  validationAttempts?: number;
+  validationFindings?: string[];
+  providerError?: string;
   error?: string;
 }): Promise<void> {
   const timestamp = new Date().toISOString();
@@ -76,7 +79,12 @@ export async function appendMindLog(input: {
     ...(input.trace.moved.size ? [`- moved: ${oneLine([...input.trace.moved].join(", "))}`] : []),
     ...(input.trace.deleted.size ? [`- deleted: ${links(input.trace.deleted)}`] : []),
     ...(input.findings?.length ? [`- findings: ${oneLine(input.findings.join(" | "))}`] : []),
+    ...(input.validationAttempts !== undefined ? [`- validation-attempts: ${input.validationAttempts}`] : []),
+    ...(input.validationFindings?.length
+      ? [`- validation-findings: ${oneLine(input.validationFindings.join(" | "))}`]
+      : []),
     ...(input.summary ? [`- summary: ${oneLine(input.summary)}`] : []),
+    ...(input.providerError ? [`- provider-error: ${oneLine(input.providerError)}`] : []),
     ...(input.error ? [`- error: ${oneLine(input.error)}`] : []),
     "",
   ];

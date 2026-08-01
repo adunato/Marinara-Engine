@@ -42,6 +42,7 @@ import {
   createCharacterMindTrace,
   deterministicMindFindings,
   validateCompleteWiki,
+  validateWikiPageCandidate,
 } from "../../packages/server/src/services/character-mind/character-mind.tools.js";
 import { characterMindPrompt } from "../../packages/server/src/services/character-mind/character-mind.constants.js";
 import { CharacterMindCandidateSet } from "../../packages/server/src/services/character-mind/character-mind.candidate.js";
@@ -256,6 +257,8 @@ async function main() {
     assert.doesNotMatch(ingestPrompt, /mind_write_wiki|mind_write_index/);
     assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /Assess the complete corpus/);
     assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /at most 12 files per call/);
+    assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /disjoint/);
+    assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /account for every manifest source/);
     assert.match(
       characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
       /materialize one page/,
@@ -267,6 +270,22 @@ async function main() {
     assert.match(
       characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
       /complete page as\s+raw Markdown ordinary response text/,
+    );
+    assert.match(
+      characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
+      /first non-empty line must be\s+exactly the mapped `# Title`/,
+    );
+    assert.match(
+      characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
+      /exactly one unformatted, case-sensitive `## Sources` heading/,
+    );
+    assert.match(
+      characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
+      /EXACT REQUIRED FIRST LINE:\s+# Relationship with Alex/,
+    );
+    assert.match(
+      characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
+      new RegExp(`EXACT ALLOWED RAW-SOURCE WHITELIST:[\\s\\S]*${day.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
     );
 
     const toolResponse = (toolCalls: LLMToolCall[]): ChatCompletionResult => ({
@@ -374,6 +393,82 @@ async function main() {
     );
     assert.equal(recoveredPlan.trace.verifiedRaw.has(autoSummary.path), true);
 
+    let partitionCall = 0;
+    const partitionProvider = {
+      chatComplete: async (messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> => {
+        partitionCall += 1;
+        if (partitionCall === 1) {
+          return toolResponse([
+            {
+              id: "read-complete-corpus",
+              type: "function",
+              function: {
+                name: "mind_read_markdown",
+                arguments: JSON.stringify({
+                  reads: [{ path: first.path }, { path: day.path }, { path: autoSummary.path }],
+                }),
+              },
+            },
+          ]);
+        }
+        if (partitionCall === 2) {
+          return finalResponse({
+            summary: "Invalid partition.",
+            pages: [
+              {
+                path: "wiki/relationship-with-alex.md",
+                title: "Relationship with Alex",
+                purpose: "Relationship evidence.",
+                sources: [first.path, day.path],
+              },
+            ],
+            excludedSources: [
+              { path: first.path, reason: "Incorrect overlap." },
+              { path: day.path, reason: "Incorrect overlap." },
+            ],
+          });
+        }
+        assert.equal(options.tools, undefined, "partition-only correction cannot reread the corpus");
+        const correction = messages.at(-1)?.content ?? "";
+        assert.match(correction, /complete corpus is already read/i);
+        assert.match(correction, /both assigned and excluded sources/);
+        assert.match(correction, new RegExp(first.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        assert.match(correction, new RegExp(day.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        assert.match(correction, /did not account for sources/);
+        assert.match(correction, new RegExp(autoSummary.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        return finalResponse({
+          summary: "Corrected complete partition.",
+          pages: [
+            {
+              path: "wiki/relationship-with-alex.md",
+              title: "Relationship with Alex",
+              purpose: "Relationship evidence.",
+              sources: [first.path, day.path, autoSummary.path],
+            },
+          ],
+          excludedSources: [],
+        });
+      },
+    } as unknown as BaseLLMProvider;
+    const partitionRun = await runCharacterMindOperation({
+      root,
+      operation: "plan",
+      value: JSON.stringify([first.path, day.path, autoSummary.path]),
+      sourcePaths: [first.path, day.path, autoSummary.path],
+      runtime: {
+        provider: partitionProvider,
+        model: "regression-model",
+        prompt: "",
+        enableCaching: false,
+        maxTokens: 4096,
+      },
+      signal: new AbortController().signal,
+    });
+    assert.equal(partitionCall, 3);
+    assert.equal(partitionRun.diagnostics.validationAttempts, 2);
+    assert.equal(partitionRun.diagnostics.validationFindings.length, 1);
+    assert.match(partitionRun.diagnostics.validationFindings[0] ?? "", /^map-partition:/);
+
     const splitPlan = {
       summary: "Two-page map.",
       pages: [
@@ -459,6 +554,192 @@ async function main() {
       assert.match("content" in pageRun.result ? pageRun.result.content : "", new RegExp(`^# ${page.title}`));
     }
     assert.deepEqual(pageSessionCalls, [3, 2]);
+
+    const scopeTrace = createCharacterMindTrace();
+    const scopedBuildTools = createCharacterMindTools(root, "build-page", scopeTrace, {
+      allowedRawPaths: [day.path],
+    });
+    await assert.rejects(
+      scopedBuildTools.execute({
+        id: "outside-assignment-read",
+        type: "function",
+        function: { name: "mind_read_markdown", arguments: JSON.stringify({ path: autoSummary.path }) },
+      }),
+      /may not read unassigned raw source.*Remove or replace/,
+    );
+    assert.equal(scopeTrace.verifiedRaw.has(autoSummary.path), false);
+    await assert.rejects(
+      validateWikiPageCandidate(
+        root,
+        "wiki/relationship-with-alex.md",
+        `# Relationship with Alex\n\nInline outside citation [[${autoSummary.path}]].\n\n## Sources\n\n- [[${day.path}]]\n`,
+        {
+          knownPaths: new Set(splitPlan.pages.map((page) => page.path)),
+          requiredSources: new Set([day.path]),
+          verifiedRaw: new Set([day.path]),
+          expectedTitle: "Relationship with Alex",
+        },
+      ),
+      /outside its frozen assignment.*Remove or replace.*do not read/,
+    );
+
+    const repairPage = splitPlan.pages[0]!;
+    const repairCandidates = await CharacterMindCandidateSet.create(root);
+    try {
+      await repairCandidates.requireExisting(repairPage.path);
+      let repairCall = 0;
+      let completePageResponses = 0;
+      const repairProvider = {
+        chatComplete: async (messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> => {
+          repairCall += 1;
+          assert.equal(options.stream, true);
+          if (repairCall === 1) {
+            return toolResponse([
+              {
+                id: "repair-read-source",
+                type: "function",
+                function: {
+                  name: "mind_read_markdown",
+                  arguments: JSON.stringify({ reads: [{ path: day.path }] }),
+                },
+              },
+            ]);
+          }
+          if (repairCall === 2) {
+            completePageResponses += 1;
+            return textResponse(
+              `Relationship with Alex\n======================\n\nGrounded synthesis.\n\n## **Sources**\n\n- [[${day.path}]]\n`,
+            );
+          }
+          if (repairCall === 3) {
+            assert.match(messages.at(-1)?.content ?? "", /retained.*unpublished temporary area/i);
+            assert.match(messages.at(-1)?.content ?? "", /mind_edit_candidate/);
+            return toolResponse([
+              {
+                id: "repair-setext-heading",
+                type: "function",
+                function: {
+                  name: "mind_edit_candidate",
+                  arguments: JSON.stringify({
+                    path: repairPage.path,
+                    oldText: "Relationship with Alex\n======================",
+                    newText: "# Relationship with Alex",
+                  }),
+                },
+              },
+            ]);
+          }
+          if (repairCall === 4) return textResponse("Heading repaired.");
+          if (repairCall === 5) {
+            assert.match(messages.at(-1)?.content ?? "", /literal, unformatted ## Sources/);
+            return toolResponse([
+              {
+                id: "repair-sources-heading",
+                type: "function",
+                function: {
+                  name: "mind_edit_candidate",
+                  arguments: JSON.stringify({
+                    path: repairPage.path,
+                    oldText: "## **Sources**",
+                    newText: "## Sources",
+                  }),
+                },
+              },
+            ]);
+          }
+          if (repairCall === 6) return textResponse("Sources heading repaired.");
+          throw new Error(`Unexpected repair provider call ${repairCall}`);
+        },
+      } as unknown as BaseLLMProvider;
+      const repairedPage = await runCharacterMindOperation({
+        root,
+        operation: "build-page",
+        value: JSON.stringify({
+          targetPage: repairPage,
+          pageMap: splitPlan.pages,
+          allowedRawSources: repairPage.sources,
+        }),
+        plan: splitPlan,
+        page: repairPage,
+        candidate: repairCandidates,
+        runtime: {
+          provider: repairProvider,
+          model: "regression-model",
+          prompt: "",
+          enableCaching: false,
+          maxTokens: 4096,
+        },
+        signal: new AbortController().signal,
+      });
+      assert.equal(repairCall, 6);
+      assert.equal(completePageResponses, 1, "local repairs do not stream another complete page");
+      assert.equal(repairedPage.diagnostics.validationAttempts, 3);
+      assert.deepEqual(
+        repairedPage.diagnostics.validationFindings.map((finding) => finding.split(":", 1)[0]),
+        ["page-format", "page-format"],
+      );
+      assert.match(
+        "content" in repairedPage.result ? repairedPage.result.content : "",
+        /^# Relationship with Alex[\s\S]*^## Sources$/m,
+      );
+    } finally {
+      await repairCandidates.dispose();
+    }
+
+    const replacementPage = splitPlan.pages[1]!;
+    const replacementCandidates = await CharacterMindCandidateSet.create(root);
+    try {
+      await replacementCandidates.requireExisting(replacementPage.path);
+      let replacementCall = 0;
+      const replacementProvider = {
+        chatComplete: async (messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> => {
+          replacementCall += 1;
+          if (replacementCall === 1) {
+            return toolResponse([
+              {
+                id: "replacement-read-source",
+                type: "function",
+                function: {
+                  name: "mind_read_markdown",
+                  arguments: JSON.stringify({ reads: [{ path: autoSummary.path }] }),
+                },
+              },
+            ]);
+          }
+          if (replacementCall === 2)
+            return textResponse(
+              `\`\`\`markdown\n# Alex\n\nInvalid fenced candidate.\n\n## Sources\n\n- [[${autoSummary.path}]]\n\`\`\``,
+            );
+          assert.equal(options.tools, undefined, "an explicit full replacement turn has no content-bearing tools");
+          assert.match(messages.at(-1)?.content ?? "", /cannot be repaired safely.*complete replacement/is);
+          return textResponse(`# Alex\n\nGrounded replacement.\n\n## Sources\n\n- [[${autoSummary.path}]]\n`);
+        },
+      } as unknown as BaseLLMProvider;
+      const replacementRun = await runCharacterMindOperation({
+        root,
+        operation: "build-page",
+        value: JSON.stringify({
+          targetPage: replacementPage,
+          pageMap: splitPlan.pages,
+          allowedRawSources: replacementPage.sources,
+        }),
+        plan: splitPlan,
+        page: replacementPage,
+        candidate: replacementCandidates,
+        runtime: {
+          provider: replacementProvider,
+          model: "regression-model",
+          prompt: "",
+          enableCaching: false,
+          maxTokens: 4096,
+        },
+        signal: new AbortController().signal,
+      });
+      assert.equal(replacementCall, 3);
+      assert.match("content" in replacementRun.result ? replacementRun.result.content : "", /^# Alex/);
+    } finally {
+      await replacementCandidates.dispose();
+    }
 
     const checkpointEntries = parseMindLog(`# Log
 
@@ -593,6 +874,22 @@ async function main() {
     const builtEntries = parseMindLog(await readFile(join(root, "log.md"), "utf8"));
     assert.equal(hasSuccessfulBuild(builtEntries), true);
     assert.equal(successfulIngestRevisions(builtEntries).has(autoSummary.revision), true);
+    await appendMindLog({
+      root,
+      operation: "build-page",
+      subject: "wiki/diagnostic-example.md",
+      status: "failure",
+      trace: createCharacterMindTrace(),
+      validationAttempts: 3,
+      validationFindings: ["page-format: expected exact heading", "page-source-scope: outside assignment"],
+      providerError: "provider transport failed",
+      error: "Page materialization failed",
+    });
+    const diagnosticLog = await readFile(join(root, "log.md"), "utf8");
+    assert.match(diagnosticLog, /- validation-attempts: 3/);
+    assert.match(diagnosticLog, /- validation-findings: page-format: expected exact heading \| page-source-scope:/);
+    assert.match(diagnosticLog, /- provider-error: provider transport failed/);
+    assert.match(diagnosticLog, /- error: Page materialization failed/);
 
     const corruptedPath = join(root, ...first.path.split("/"));
     await writeFile(corruptedPath, (await readFile(corruptedPath, "utf8")).replace("Observant", "Corrupted"), "utf8");

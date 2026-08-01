@@ -11,6 +11,22 @@ import type { CharacterMindCandidateSet } from "./character-mind.candidate.js";
 
 type MindOperation = "plan" | "build-page" | "ingest" | "query" | "lint" | "edit" | "write-page" | "write-index";
 
+export type CharacterMindPageValidationCategory =
+  | "page-format"
+  | "page-source-scope"
+  | "page-source-read"
+  | "page-wikilink";
+
+export class CharacterMindPageValidationError extends Error {
+  constructor(
+    readonly category: CharacterMindPageValidationCategory,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CharacterMindPageValidationError";
+  }
+}
+
 export interface CharacterMindTrace {
   listed: string[];
   searched: string[];
@@ -144,6 +160,14 @@ function rawSourceCitations(content: string): string[] {
   return extractWikilinks(sourceBody).filter((link) => link.startsWith("raw/"));
 }
 
+function rawWikilinks(path: string, content: string): Set<string> {
+  return new Set(
+    extractWikilinks(content)
+      .map((link) => wikilinkPath(path, link))
+      .filter((link) => link.startsWith("raw/")),
+  );
+}
+
 export async function validateWikiPageCandidate(
   root: string,
   path: string,
@@ -152,33 +176,71 @@ export async function validateWikiPageCandidate(
     knownPaths?: ReadonlySet<string>;
     requiredSources?: ReadonlySet<string>;
     verifiedRaw?: ReadonlySet<string>;
+    expectedTitle?: string;
   } = {},
 ): Promise<void> {
-  if (Buffer.byteLength(content, "utf8") > 64 * 1024) throw new Error(`${path} exceeds 64 KiB`);
+  if (Buffer.byteLength(content, "utf8") > 64 * 1024)
+    throw new CharacterMindPageValidationError("page-format", `${path} exceeds 64 KiB`);
+  if (options.expectedTitle) {
+    const firstNonEmptyLine =
+      content
+        .split(/\r?\n/)
+        .find((line) => line.trim().length > 0)
+        ?.trimEnd() ?? "";
+    const expectedHeading = `# ${options.expectedTitle}`;
+    if (firstNonEmptyLine !== expectedHeading)
+      throw new CharacterMindPageValidationError(
+        "page-format",
+        `${path} first non-empty line must be exactly ${JSON.stringify(expectedHeading)}; use ATX H1 syntax`,
+      );
+  }
   const h1s = content.match(/^#\s+\S.+$/gm) ?? [];
-  if (h1s.length !== 1) throw new Error(`${path} must contain exactly one H1`);
-  const sourceSections = content.match(/^##\s+Sources\s*$/gim) ?? [];
-  if (sourceSections.length !== 1) throw new Error(`${path} must contain exactly one ## Sources section`);
+  if (h1s.length !== 1)
+    throw new CharacterMindPageValidationError("page-format", `${path} must contain exactly one H1`);
+  const sourceSections = content.match(/^## Sources\s*$/gm) ?? [];
+  const sourceLikeSections = content.match(/^##\s+(?:[*_]+)?Sources(?:[*_]+)?\s*$/gim) ?? [];
+  if (sourceSections.length !== 1 || sourceLikeSections.length !== 1)
+    throw new CharacterMindPageValidationError(
+      "page-format",
+      `${path} must contain exactly one literal, unformatted ## Sources heading`,
+    );
   const citedRaw = new Set(rawSourceCitations(content).map((source) => normalizeMindPath(source)));
-  if (citedRaw.size === 0) throw new Error(`${path} must cite at least one raw source under ## Sources`);
+  if (citedRaw.size === 0)
+    throw new CharacterMindPageValidationError(
+      "page-source-scope",
+      `${path} must cite at least one raw source under ## Sources`,
+    );
   if (options.requiredSources) {
+    const outsideAssignment = [...rawWikilinks(path, content)].filter(
+      (source) => !options.requiredSources!.has(source),
+    );
+    if (outsideAssignment.length)
+      throw new CharacterMindPageValidationError(
+        "page-source-scope",
+        `${path} cites raw sources outside its frozen assignment: ${outsideAssignment.join(", ")}. Remove or replace these citations; do not read the unassigned sources`,
+      );
     const missing = [...options.requiredSources].filter((source) => !citedRaw.has(source));
-    const unexpected = [...citedRaw].filter((source) => !options.requiredSources!.has(source));
-    if (missing.length) throw new Error(`${path} does not cite assigned sources: ${missing.join(", ")}`);
-    if (unexpected.length) throw new Error(`${path} cites sources outside its map: ${unexpected.join(", ")}`);
+    if (missing.length)
+      throw new CharacterMindPageValidationError(
+        "page-source-scope",
+        `${path} does not cite assigned sources: ${missing.join(", ")}`,
+      );
   }
   for (const link of extractWikilinks(content)) {
     const normalized = wikilinkPath(path, link);
     if (normalized.startsWith("raw/")) {
       await verifyRawMarkdown(root, normalized);
       if (options.verifiedRaw && !options.verifiedRaw.has(normalized))
-        throw new Error(`${path} cites a raw source that was not read: ${normalized}`);
+        throw new CharacterMindPageValidationError(
+          "page-source-read",
+          `${path} cites an assigned raw source that was not read: ${normalized}`,
+        );
       continue;
     }
     if (options.knownPaths?.has(normalized.toLowerCase()) || normalized === path) continue;
     const resolved = await resolveMindMarkdown(root, normalized);
     if (!(await pathExists(resolved.path)) && normalized !== path)
-      throw new Error(`${path} has unresolved wikilink: ${link}`);
+      throw new CharacterMindPageValidationError("page-wikilink", `${path} has unresolved wikilink: ${link}`);
   }
 }
 
@@ -207,14 +269,18 @@ export function createCharacterMindTools(
   options: {
     candidate?: CharacterMindCandidateSet;
     editablePaths?: string[];
+    allowedRawPaths?: string[];
   } = {},
 ) {
   const editablePaths = new Set((options.editablePaths ?? []).map((path) => normalizeMindPath(path).toLowerCase()));
+  const allowedRawPaths = options.allowedRawPaths
+    ? new Set(options.allowedRawPaths.map((path) => normalizeMindPath(path)))
+    : null;
   const toolNames = new Set([
     "mind_list_markdown",
     "mind_search_markdown",
     "mind_read_markdown",
-    ...(operation === "edit" ? ["mind_edit_candidate"] : []),
+    ...(operation === "edit" || (operation === "build-page" && options.candidate) ? ["mind_edit_candidate"] : []),
   ]);
   const tools = ALL_TOOLS.filter((tool) => toolNames.has(tool.function.name));
 
@@ -239,7 +305,11 @@ export function createCharacterMindTools(
       const areas = Array.isArray(args.areas) ? args.areas.filter((area) => area === "wiki" || area === "raw") : [];
       if (areas.length === 0) throw new Error("areas must include wiki or raw");
       const limit = Math.max(1, Math.min(50, Number(args.limit) || 20));
-      const files = (await listMarkdown(root)).filter((path) => areas.some((area) => path.startsWith(`${area}/`)));
+      const files = (await listMarkdown(root)).filter(
+        (path) =>
+          areas.some((area) => path.startsWith(`${area}/`)) &&
+          (!path.startsWith("raw/") || !allowedRawPaths || allowedRawPaths.has(path)),
+      );
       const matches: Array<{ path: string; snippet: string }> = [];
       for (const path of files) {
         const resolved = await resolveMindMarkdown(root, path);
@@ -266,6 +336,10 @@ export function createCharacterMindTools(
       const reads = [];
       for (const item of requestedReads as Array<Record<string, unknown>>) {
         const relativePath = normalizeMindPath(requireString(item.path, "path"));
+        if (relativePath.startsWith("raw/") && allowedRawPaths && !allowedRawPaths.has(relativePath))
+          throw new Error(
+            `Build page may not read unassigned raw source: ${relativePath}. Remove or replace the citation instead`,
+          );
         const resolved = await resolveMindMarkdown(root, relativePath);
         if (relativePath.startsWith("raw/")) {
           await verifyRawMarkdown(root, relativePath);
@@ -301,7 +375,7 @@ export function createCharacterMindTools(
         requireString(args.oldText, "oldText"),
         requireString(args.newText, "newText"),
       );
-      trace.updated.add(relativePath);
+      if (operation !== "build-page") trace.updated.add(relativePath);
       return JSON.stringify({ edited: relativePath });
     }
 

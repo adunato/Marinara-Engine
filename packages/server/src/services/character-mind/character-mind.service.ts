@@ -62,6 +62,7 @@ import {
   resolveCharacterMindRuntime,
   runCharacterMindOperation,
   type CharacterMindMarkdownResult,
+  type CharacterMindOperationDiagnostics,
 } from "./character-mind.runtime.js";
 import { CharacterMindCandidateSet } from "./character-mind.candidate.js";
 
@@ -264,6 +265,29 @@ function traceFromError(error: unknown): CharacterMindTrace {
   return trace && typeof trace === "object" ? (trace as CharacterMindTrace) : createCharacterMindTrace();
 }
 
+function diagnosticsFromError(error: unknown): CharacterMindOperationDiagnostics {
+  const diagnostics =
+    error && typeof error === "object"
+      ? (error as { characterMindDiagnostics?: unknown }).characterMindDiagnostics
+      : null;
+  if (!diagnostics || typeof diagnostics !== "object") return { validationAttempts: 0, validationFindings: [] };
+  const value = diagnostics as Partial<CharacterMindOperationDiagnostics>;
+  return {
+    validationAttempts: Number.isFinite(value.validationAttempts) ? Number(value.validationAttempts) : 0,
+    validationFindings: Array.isArray(value.validationFindings)
+      ? value.validationFindings.filter((finding): finding is string => typeof finding === "string")
+      : [],
+  };
+}
+
+function providerErrorFromError(error: unknown): string | undefined {
+  const value =
+    error && typeof error === "object"
+      ? (error as { characterMindProviderError?: unknown }).characterMindProviderError
+      : undefined;
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
 function mergeMindTrace(target: CharacterMindTrace, source: CharacterMindTrace): void {
   target.listed.push(...source.listed);
   target.searched.push(...source.searched);
@@ -279,6 +303,7 @@ function pageMaterializationInput(
   return JSON.stringify({
     targetPage: page,
     pageMap: plan.pages.map(({ path, title, purpose }) => ({ path, title, purpose })),
+    allowedRawSources: page.sources,
   });
 }
 
@@ -322,15 +347,21 @@ async function buildCorpus(
         status: "success",
         trace: planTrace,
         summary: plan.summary,
+        validationAttempts: run.diagnostics.validationAttempts,
+        validationFindings: run.diagnostics.validationFindings,
       });
     } catch (error) {
       planTrace = traceFromError(error);
+      const diagnostics = diagnosticsFromError(error);
       await appendMindLog({
         root: context.root,
         operation: "build-map",
         subject: `${sourcePaths.length} current sources`,
         status: "failure",
         trace: planTrace,
+        validationAttempts: diagnostics.validationAttempts,
+        validationFindings: diagnostics.validationFindings,
+        providerError: providerErrorFromError(error),
         error: error instanceof Error ? error.message : "Build map failed",
       });
       throw error;
@@ -358,6 +389,7 @@ async function buildCorpus(
         value: pageMaterializationInput(plan, page),
         plan,
         page,
+        candidate: candidates,
         runtime,
         signal: await operationSignal(operation),
       });
@@ -374,9 +406,12 @@ async function buildCorpus(
         status: "success",
         trace: pageTrace,
         summary: result.summary,
+        validationAttempts: run.diagnostics.validationAttempts,
+        validationFindings: run.diagnostics.validationFindings,
       });
     } catch (error) {
       pageTrace = traceFromError(error);
+      const diagnostics = diagnosticsFromError(error);
       mergeMindTrace(buildTrace, pageTrace);
       const message = error instanceof Error ? error.message : "Page materialization failed";
       await appendMindLog({
@@ -385,6 +420,9 @@ async function buildCorpus(
         subject: page.path,
         status: "failure",
         trace: pageTrace,
+        validationAttempts: diagnostics.validationAttempts,
+        validationFindings: diagnostics.validationFindings,
+        providerError: providerErrorFromError(error),
         error: message,
       });
       await appendMindLog({

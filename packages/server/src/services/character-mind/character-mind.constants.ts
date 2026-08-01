@@ -121,14 +121,33 @@ mind_read_markdown accepts at most 12 files per call: split larger manifests acr
 calls, copy paths exactly from the manifest, and correct any failed read before
 returning the plan.
 Every source must either appear in at least one page's sources or in
-excludedSources with a specific reason. Return only this JSON object, with no
-Markdown fence:
+excludedSources with a specific reason. A source may support more than one page,
+but a source assigned to any page MUST NOT also appear in excludedSources.
+excludedSources contains only sources assigned to no page. Before returning,
+preflight the complete partition: page sources and excludedSources must be
+disjoint, and together they must account for every manifest source. Return only
+this JSON object, with no Markdown fence:
 {"summary":"...","pages":[{"path":"wiki/stable-slug.md","title":"...","purpose":"...","sources":["raw/source.md"]}],"excludedSources":[{"path":"raw/source.md","reason":"..."}]}
 
 CURRENT RAW SOURCE MANIFEST:
 ${value ?? "[]"}`;
   }
   if (operation === "build-page") {
+    let requiredFirstLine = "# <mapped title>";
+    let allowedRawSources = "[]";
+    try {
+      const parsed = JSON.parse(value ?? "{}") as {
+        targetPage?: { title?: unknown; sources?: unknown };
+        allowedRawSources?: unknown;
+      };
+      if (typeof parsed.targetPage?.title === "string" && parsed.targetPage.title.trim())
+        requiredFirstLine = `# ${parsed.targetPage.title.trim()}`;
+      const sources = Array.isArray(parsed.allowedRawSources) ? parsed.allowedRawSources : parsed.targetPage?.sources;
+      if (Array.isArray(sources))
+        allowedRawSources = JSON.stringify(sources.filter((source): source is string => typeof source === "string"));
+    } catch {
+      // The runtime still validates the bound page when diagnostic callers provide incomplete display data.
+    }
     return `You are performing the Karpathy LLM Wiki initial Build, pass 2: materialize one page.
 Operate only on the selected Character Mind. SCHEMA.md and index.md are preloaded
 below; read every raw source assigned to TARGET PAGE. Synthesize its subject from the assigned
@@ -136,12 +155,31 @@ evidence; do not write a source recap. Keep concrete details, uncertainty,
 contradictions, citations, and useful cross-links. You may link to other pages in
 the frozen map even when their sessions have not written them yet. Do not write
 index.md, invent another page, rename the target, or use sources outside its
-assignment. mind_read_markdown accepts at most 12 files per call; split larger
-assignments across calls. When all reads are complete, return the complete page as
-raw Markdown ordinary response text. Do not use a tool call or code fence for the page.
+assignment. Raw paths visible elsewhere in index.md are context only and are not
+authorised evidence for this target. mind_read_markdown accepts at most 12 files
+per call; split larger assignments across calls. The first non-empty line must be
+exactly the mapped \`# Title\` shown below; Setext \`===\` H1 syntax is invalid.
+Include exactly one unformatted, case-sensitive \`## Sources\` heading. Every raw
+wikilink anywhere in the page, including inline citations, must come from the
+target page's displayed raw-source whitelist.
 
-TARGET PAGE AND FROZEN PAGE MAP:
-${value ?? "{}"}`;
+TARGET PAGE, FROZEN PAGE MAP, AND EXACT RAW-SOURCE WHITELIST:
+${value ?? "{}"}
+
+EXACT REQUIRED FIRST LINE:
+${requiredFirstLine}
+
+EXACT REQUIRED SOURCES HEADING:
+## Sources
+
+EXACT ALLOWED RAW-SOURCE WHITELIST:
+${allowedRawSources}
+
+When all reads are complete, return the complete page as raw Markdown ordinary response text.
+Do not use a tool call or code fence for the page. The initial
+page and any explicitly requested full replacement must never be placed in tool
+arguments.
+`;
   }
   if (operation === "ingest") {
     return `You are performing the Karpathy LLM Wiki operation: ingest.

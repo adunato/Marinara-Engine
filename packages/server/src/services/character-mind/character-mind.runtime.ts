@@ -26,6 +26,7 @@ import { normalizeMindPath } from "./character-mind.files.js";
 import {
   createCharacterMindTools,
   createCharacterMindTrace,
+  CharacterMindPageValidationError,
   validateWikiPageCandidate,
   type CharacterMindTrace,
 } from "./character-mind.tools.js";
@@ -37,6 +38,26 @@ type RuntimeOperation = "plan" | "build-page" | "ingest" | "query" | "lint" | "w
 export interface CharacterMindMarkdownResult {
   content: string;
   summary: string;
+}
+
+export interface CharacterMindOperationDiagnostics {
+  validationAttempts: number;
+  validationFindings: string[];
+}
+
+type CandidateRecovery = "tools" | "no-tools" | "candidate-edit" | "replacement";
+
+interface CandidateFinding {
+  category: string;
+  message: string;
+  recovery: CandidateRecovery;
+}
+
+class CharacterMindPlanPartitionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CharacterMindPlanPartitionError";
+  }
 }
 
 export interface CharacterMindRuntime {
@@ -192,14 +213,21 @@ export function validateCharacterMindPlanResult(
     const item = candidate as Record<string, unknown>;
     const path = normalizeMindPath(requiredString(item.path, `excluded source ${index + 1} path`));
     if (!allowedSources.has(path)) throw new Error(`Character Mind plan excluded an unknown source: ${path}`);
-    if (usedSources.has(path)) throw new Error(`Character Mind plan both used and excluded source: ${path}`);
     if (excludedPaths.has(path)) throw new Error(`Character Mind plan excluded a source more than once: ${path}`);
     excludedPaths.add(path);
     excludedSources.push({ path, reason: requiredString(item.reason, `excluded source ${path} reason`) });
   }
   const accounted = new Set([...usedSources, ...excludedSources.map((item) => item.path)]);
+  const overlaps = sourcePaths.filter((path) => usedSources.has(path) && excludedPaths.has(path));
   const missing = sourcePaths.filter((path) => !accounted.has(path));
-  if (missing.length) throw new Error(`Character Mind plan did not account for sources: ${missing.join(", ")}`);
+  const partitionFindings = [
+    ...(overlaps.length ? [`both assigned and excluded sources: ${overlaps.join(", ")}`] : []),
+    ...(missing.length ? [`did not account for sources: ${missing.join(", ")}`] : []),
+  ];
+  if (partitionFindings.length)
+    throw new CharacterMindPlanPartitionError(
+      `Character Mind plan partition is invalid: ${partitionFindings.join("; ")}`,
+    );
   const unread = sourcePaths.filter((path) => !trace.verifiedRaw.has(path));
   if (unread.length) throw new Error(`Character Mind planner did not read sources: ${unread.join(", ")}`);
   return { summary, pages, excludedSources };
@@ -209,21 +237,29 @@ function characterMindPlanCandidateError(
   content: string,
   trace: CharacterMindTrace,
   sourcePaths: string[],
-): string | null {
+): CandidateFinding | null {
   const unread = [
     ...(!trace.read.has("SCHEMA.md") ? ["SCHEMA.md"] : []),
     ...(!trace.read.has("index.md") ? ["index.md"] : []),
     ...sourcePaths.filter((path) => !trace.verifiedRaw.has(path)),
   ];
   if (unread.length > 0)
-    return `The candidate map was not accepted because these required files were not successfully read: ${[
-      ...new Set(unread),
-    ].join(", ")}`;
+    return {
+      category: "required-read",
+      message: `The candidate map was not accepted because these required files were not successfully read: ${[
+        ...new Set(unread),
+      ].join(", ")}`,
+      recovery: "tools",
+    };
   try {
     validateCharacterMindPlanResult(parseObject(content), trace, sourcePaths);
     return null;
   } catch (error) {
-    return error instanceof Error ? error.message : "The candidate map is invalid";
+    return {
+      category: error instanceof CharacterMindPlanPartitionError ? "map-partition" : "map-structure",
+      message: error instanceof Error ? error.message : "The candidate map is invalid",
+      recovery: error instanceof CharacterMindPlanPartitionError ? "no-tools" : "tools",
+    };
   }
 }
 
@@ -231,9 +267,33 @@ async function characterMindPageCandidateError(
   root: string,
   content: string,
   trace: CharacterMindTrace,
-  target: { path: string; sources: string[]; mustRead?: boolean },
+  target: { path: string; title?: string; sources: string[]; mustRead?: boolean },
   options: { exactSources: boolean; knownWikiPaths: string[] },
-): Promise<string | null> {
+): Promise<CandidateFinding | null> {
+  let unreadCitation: CharacterMindPageValidationError | null = null;
+  try {
+    if (!content || /^```/u.test(content)) throw new Error("Return raw Markdown without a code fence");
+    if (Buffer.byteLength(content, "utf8") > 64 * 1024) throw new Error(`${target.path} exceeds 64 KiB`);
+    const knownPaths = new Set(options.knownWikiPaths.map((path) => path.toLowerCase()));
+    await validateWikiPageCandidate(root, target.path, content, {
+      knownPaths,
+      verifiedRaw: trace.verifiedRaw,
+      ...(options.exactSources && target.title ? { expectedTitle: target.title } : {}),
+      ...(options.exactSources ? { requiredSources: new Set(target.sources) } : {}),
+    });
+  } catch (error) {
+    if (error instanceof CharacterMindPageValidationError && error.category !== "page-source-read") {
+      return { category: error.category, message: error.message, recovery: "candidate-edit" };
+    }
+    if (error instanceof CharacterMindPageValidationError) unreadCitation = error;
+    if (!(error instanceof CharacterMindPageValidationError)) {
+      return {
+        category: "page-replacement",
+        message: error instanceof Error ? error.message : "The page candidate is invalid",
+        recovery: "replacement",
+      };
+    }
+  }
   const unread = [
     ...(!trace.read.has("SCHEMA.md") ? ["SCHEMA.md"] : []),
     ...(!trace.read.has("index.md") ? ["index.md"] : []),
@@ -241,21 +301,31 @@ async function characterMindPageCandidateError(
     ...target.sources.filter((path) => !trace.verifiedRaw.has(path)),
   ];
   if (unread.length > 0)
-    return `The page candidate was not accepted because these required files were not successfully read: ${[
-      ...new Set(unread),
-    ].join(", ")}`;
-  try {
-    if (!content || /^```/u.test(content)) throw new Error("Return raw Markdown without a code fence");
-    const knownPaths = new Set(options.knownWikiPaths.map((path) => path.toLowerCase()));
-    await validateWikiPageCandidate(root, target.path, content, {
-      knownPaths,
-      verifiedRaw: trace.verifiedRaw,
-      ...(options.exactSources ? { requiredSources: new Set(target.sources) } : {}),
-    });
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : "The page candidate is invalid";
-  }
+    return {
+      category: "required-read",
+      message: `The page candidate was not accepted because these required assigned files were not successfully read: ${[
+        ...new Set(unread),
+      ].join(", ")}`,
+      recovery: "tools",
+    };
+  if (unreadCitation) return { category: unreadCitation.category, message: unreadCitation.message, recovery: "tools" };
+  return null;
+}
+
+function validationRecoveryMessage(
+  finding: CandidateFinding,
+  options: { retainedCandidate: boolean; forceReplacement: boolean },
+): string {
+  const header = `MARINARA VALIDATION REJECTED THIS CANDIDATE (${finding.category}):\n${finding.message}`;
+  if (finding.recovery === "no-tools")
+    return `${header}\n\nThe complete corpus is already read. No read tools are available on this correction turn. Correct the complete JSON map in the existing conversation context, preserving the required shape, and return JSON only.`;
+  if (options.retainedCandidate && finding.recovery === "candidate-edit")
+    return `${header}\n\nThe safe candidate is retained in Marinara's unpublished temporary area. Use mind_edit_candidate with bounded exact replacements to correct this local defect, then return a short completion marker. Do not stream or place another complete page in a tool argument. For an outside-assignment citation, remove or replace it; do not read the unassigned source.`;
+  if (options.retainedCandidate)
+    return `${header}\n\nThe safe candidate is retained in Marinara's unpublished temporary area. Complete only the required assigned reads with the available tools, then return a short completion marker so Marinara can revalidate the retained candidate. Do not stream another complete page.`;
+  if (options.forceReplacement)
+    return `${header}\n\nThis candidate cannot be repaired safely with bounded temporary-candidate edits. Return one complete replacement as ordinary streamed Markdown response text, without a code fence or content-bearing tool call.`;
+  return `${header}\n\nContinue the same operation using only the tools needed for this specific finding, then return a corrected result that satisfies the original contract.`;
 }
 
 function validateJsonResult(
@@ -300,7 +370,7 @@ export async function runCharacterMindOperation(input: {
   sourcePaths?: string[];
   plan?: CharacterMindPlanResult;
   page?: CharacterMindPagePlan;
-  target?: { path: string; sources: string[]; mustRead?: boolean };
+  target?: { path: string; title?: string; sources: string[]; mustRead?: boolean };
   knownWikiPaths?: string[];
   candidate?: CharacterMindCandidateSet;
   runtime: CharacterMindRuntime;
@@ -314,6 +384,7 @@ export async function runCharacterMindOperation(input: {
     | CharacterMindChangePlan
     | CharacterMindMarkdownResult;
   trace: CharacterMindTrace;
+  diagnostics: CharacterMindOperationDiagnostics;
 }> {
   if (input.operation === "build-page" && (!input.plan || !input.page))
     throw new Error("Character Mind page build requires its frozen map and target page");
@@ -325,7 +396,8 @@ export async function runCharacterMindOperation(input: {
   const sourcePaths = input.sourcePaths ?? [];
   const toolContext = createCharacterMindTools(input.root, input.operation, trace, {
     candidate: input.candidate,
-    editablePaths: input.target ? [input.target.path] : undefined,
+    editablePaths: input.target ? [input.target.path] : input.page ? [input.page.path] : undefined,
+    allowedRawPaths: input.operation === "build-page" ? input.page?.sources : undefined,
   });
   const preloadedResult = JSON.parse(
     await toolContext.execute({
@@ -353,7 +425,13 @@ export async function runCharacterMindOperation(input: {
   ];
   let finalContent = "";
   const toolFailures: string[] = [];
+  const diagnostics: CharacterMindOperationDiagnostics = { validationAttempts: 0, validationFindings: [] };
+  const findingCounts = new Map<string, number>();
   let unresolvedEditFailure: string | null = null;
+  let stagedBuildCandidate = false;
+  let requireFullBuildReplacement = false;
+  let allowToolsOnNextTurn = true;
+  let providerFailure: string | null = null;
   const streamedMarkdown = ["build-page", "write-page", "write-index"].includes(input.operation);
   const complete = (allowTools = true) =>
     withLlmRequestTimeout(CHARACTER_MIND_REQUEST_TIMEOUT_MS, () =>
@@ -369,26 +447,58 @@ export async function runCharacterMindOperation(input: {
     );
   try {
     for (let round = 0; round < CHARACTER_MIND_MAX_TOOL_ROUNDS[input.operation]; round += 1) {
-      const response = await complete();
+      let response: Awaited<ReturnType<typeof complete>>;
+      try {
+        response = await complete(allowToolsOnNextTurn);
+      } catch (error) {
+        providerFailure = error instanceof Error ? error.message : "Provider request failed";
+        throw error;
+      }
+      allowToolsOnNextTurn = true;
       if (!response.toolCalls.length) {
-        const candidateContent = response.content?.trim() ?? "";
-        let validationError: string | null = null;
+        const responseContent = response.content?.trim() ?? "";
+        const candidateContent =
+          input.operation === "build-page" && stagedBuildCandidate && input.candidate
+            ? (await input.candidate.read(input.page!.path)).trim()
+            : responseContent;
+        let validationFinding: CandidateFinding | null = null;
+        if (input.operation === "plan" || input.operation === "build-page") diagnostics.validationAttempts += 1;
         if (input.operation === "plan") {
-          validationError = characterMindPlanCandidateError(candidateContent, trace, sourcePaths);
+          validationFinding = characterMindPlanCandidateError(candidateContent, trace, sourcePaths);
         }
         const markdownTarget = input.operation === "build-page" ? input.page : input.target;
         if ((input.operation === "build-page" || input.operation === "write-page") && markdownTarget) {
-          validationError = await characterMindPageCandidateError(input.root, candidateContent, trace, markdownTarget, {
-            exactSources: input.operation === "build-page",
-            knownWikiPaths: input.knownWikiPaths ?? input.plan?.pages.map((page) => page.path) ?? [markdownTarget.path],
-          });
+          validationFinding = await characterMindPageCandidateError(
+            input.root,
+            candidateContent,
+            trace,
+            markdownTarget,
+            {
+              exactSources: input.operation === "build-page",
+              knownWikiPaths: input.knownWikiPaths ??
+                input.plan?.pages.map((page) => page.path) ?? [markdownTarget.path],
+            },
+          );
         }
         if (input.operation === "write-index") {
           if (!candidateContent || /^```/u.test(candidateContent))
-            validationError = "Return raw Markdown without a code fence";
+            validationFinding = {
+              category: "index-format",
+              message: "Return raw Markdown without a code fence",
+              recovery: "replacement",
+            };
           else if (Buffer.byteLength(candidateContent, "utf8") > 128 * 1024)
-            validationError = "index.md exceeds 128 KiB";
-          else if (!/^#\s+\S.+$/mu.test(candidateContent)) validationError = "index.md must contain an H1";
+            validationFinding = {
+              category: "index-format",
+              message: "index.md exceeds 128 KiB",
+              recovery: "replacement",
+            };
+          else if (!/^#\s+\S.+$/mu.test(candidateContent))
+            validationFinding = {
+              category: "index-format",
+              message: "index.md must contain an H1",
+              recovery: "replacement",
+            };
         }
         if (input.operation === "ingest" || input.operation === "lint") {
           try {
@@ -400,7 +510,11 @@ export async function runCharacterMindOperation(input: {
               input.operation === "ingest" ? input.value : undefined,
             );
           } catch (error) {
-            validationError = error instanceof Error ? error.message : "The change plan is invalid";
+            validationFinding = {
+              category: "change-plan",
+              message: error instanceof Error ? error.message : "The change plan is invalid",
+              recovery: "tools",
+            };
           }
         }
         if (input.operation === "edit" && input.target) {
@@ -414,10 +528,45 @@ export async function runCharacterMindOperation(input: {
               throw new Error(`Character Mind editor did not edit its target: ${input.target.path}`);
             validateJsonResult("edit", parseObject(candidateContent), trace, []);
           } catch (error) {
-            validationError = error instanceof Error ? error.message : "The edit result is invalid";
+            validationFinding = {
+              category: "candidate-edit",
+              message: error instanceof Error ? error.message : "The edit result is invalid",
+              recovery: "tools",
+            };
           }
         }
-        if (validationError) {
+        if (validationFinding) {
+          const findingKey = `${validationFinding.category}: ${validationFinding.message}`;
+          const findingCount = (findingCounts.get(findingKey) ?? 0) + 1;
+          findingCounts.set(findingKey, findingCount);
+          if (!diagnostics.validationFindings.includes(findingKey)) diagnostics.validationFindings.push(findingKey);
+          let recovery = validationFinding.recovery;
+          let retainedCandidate = stagedBuildCandidate;
+          if (
+            input.operation === "build-page" &&
+            input.candidate &&
+            !requireFullBuildReplacement &&
+            !stagedBuildCandidate &&
+            responseContent.length > 0 &&
+            !/^```/u.test(responseContent) &&
+            Buffer.byteLength(responseContent, "utf8") <= 64 * 1024 &&
+            (recovery === "candidate-edit" || recovery === "tools")
+          ) {
+            await input.candidate.write(input.page!.path, responseContent);
+            stagedBuildCandidate = true;
+            retainedCandidate = true;
+          }
+          if (input.operation === "build-page" && stagedBuildCandidate && findingCount >= 2) {
+            stagedBuildCandidate = false;
+            requireFullBuildReplacement = true;
+            retainedCandidate = false;
+            recovery = "replacement";
+          }
+          if (input.operation === "build-page" && requireFullBuildReplacement) {
+            retainedCandidate = false;
+            recovery = "replacement";
+          }
+          allowToolsOnNextTurn = recovery !== "no-tools" && recovery !== "replacement";
           messages.push({
             role: "assistant",
             content: response.content ?? "",
@@ -425,7 +574,10 @@ export async function runCharacterMindOperation(input: {
           });
           messages.push({
             role: "user",
-            content: `MARINARA VALIDATION REJECTED THIS CANDIDATE:\n${validationError}\n\nContinue the same operation. Correct the failed reads, edits, or result, then return a complete replacement that satisfies the original contract.`,
+            content: validationRecoveryMessage(validationFinding, {
+              retainedCandidate,
+              forceReplacement: recovery === "replacement",
+            }),
             contextKind: "prompt",
           });
           continue;
@@ -466,6 +618,7 @@ export async function runCharacterMindOperation(input: {
             summary: `${input.operation === "write-index" ? "Replaced" : "Prepared"} ${targetPath}`,
           },
           trace,
+          diagnostics,
         };
       }
       if (input.operation === "ingest" || input.operation === "lint") {
@@ -478,16 +631,26 @@ export async function runCharacterMindOperation(input: {
             input.operation === "ingest" ? input.value : undefined,
           ),
           trace,
+          diagnostics,
         };
       }
-      return { result: validateJsonResult(input.operation, parseObject(finalContent), trace, sourcePaths), trace };
+      return {
+        result: validateJsonResult(input.operation, parseObject(finalContent), trace, sourcePaths),
+        trace,
+        diagnostics,
+      };
     } catch (error) {
       if (toolFailures.length === 0) throw error;
       const resultError = error instanceof Error ? error.message : "invalid final result";
       throw new Error(`Character Mind final result failed after tool error (${toolFailures.at(-1)}): ${resultError}`);
     }
   } catch (error) {
-    if (error && typeof error === "object") Object.assign(error, { characterMindTrace: trace });
+    if (error && typeof error === "object")
+      Object.assign(error, {
+        characterMindTrace: trace,
+        characterMindDiagnostics: diagnostics,
+        ...(providerFailure ? { characterMindProviderError: providerFailure } : {}),
+      });
     throw error;
   }
 }
