@@ -10,6 +10,7 @@ import { GoogleProvider } from "./providers/google.provider.js";
 import type { BaseLLMProvider } from "./base-provider.js";
 import { withConnectionDefaultParameters } from "./connection-default-provider.js";
 import { withPhoenixLlmTracing } from "./phoenix-tracing-provider.js";
+import { withLlmTransportRetries } from "./transport-retry-provider.js";
 
 export function normalizeCohereOpenAIBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
@@ -166,5 +167,7 @@ export function createLLMProvider(
       );
       break;
   }
-  return withPhoenixLlmTracing(withConnectionDefaultParameters(resolved, defaultParameters), provider);
+  return withLlmTransportRetries(
+    withPhoenixLlmTracing(withConnectionDefaultParameters(resolved, defaultParameters), provider),
+  );
 }

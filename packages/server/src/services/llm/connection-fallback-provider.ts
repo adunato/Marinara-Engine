@@ -7,6 +7,11 @@ import {
 } from "../../routes/generate/generate-route-utils.js";
 import { logger } from "../../lib/logger.js";
 import { notifyGenerationFallback, type GenerationFallbackNotifier } from "../generation/fallback-notification.js";
+import {
+  claimLlmFallbackNotification,
+  unwrapLlmTransportRetries,
+  withLlmTransportRetries,
+} from "./transport-retry-provider.js";
 
 export type FallbackConnection = {
   id: string;
@@ -106,6 +111,7 @@ export class ConnectionFallbackProvider extends BaseLLMProvider {
   }
 
   private async logFallback(error: unknown): Promise<void> {
+    if (!claimLlmFallbackNotification(`${this.category}:${this.connection.id}`)) return;
     logger.warn(
       error,
       "[%s-fallback] Primary generation failed before producing usable output; retrying with %s (%s)",
@@ -187,19 +193,29 @@ export function withConnectionFallbackProvider({
     !fallbackConnection.model?.trim() ||
     !fallbackBaseUrl
   ) {
-    return primary;
+    return withLlmTransportRetries(primary);
   }
 
-  const fallback = createLLMProvider(
-    fallbackConnection.provider,
-    fallbackBaseUrl,
-    fallbackConnection.apiKey,
-    fallbackConnection.maxContext,
-    fallbackConnection.openrouterProvider,
-    fallbackConnection.maxTokensOverride,
-    isEnabled(fallbackConnection.claudeFastMode),
-    isEnabled(fallbackConnection.treatAsLocalEndpoint),
-    fallbackConnection.defaultParameters,
+  const fallback = unwrapLlmTransportRetries(
+    createLLMProvider(
+      fallbackConnection.provider,
+      fallbackBaseUrl,
+      fallbackConnection.apiKey,
+      fallbackConnection.maxContext,
+      fallbackConnection.openrouterProvider,
+      fallbackConnection.maxTokensOverride,
+      isEnabled(fallbackConnection.claudeFastMode),
+      isEnabled(fallbackConnection.treatAsLocalEndpoint),
+      fallbackConnection.defaultParameters,
+    ),
   );
-  return new ConnectionFallbackProvider(primary, fallback, fallbackConnection, category, onFallback);
+  return withLlmTransportRetries(
+    new ConnectionFallbackProvider(
+      unwrapLlmTransportRetries(primary),
+      fallback,
+      fallbackConnection,
+      category,
+      onFallback,
+    ),
+  );
 }

@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import {
   BaseLLMProvider,
+  LLMHttpError,
   llmFetch,
   sanitizeApiError,
   type ChatMessage,
@@ -1123,7 +1124,10 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(this.formatChatCompletionsHttpError(response.status, errorText, effectiveStream));
+      throw new LLMHttpError(
+        this.formatChatCompletionsHttpError(response.status, errorText, effectiveStream),
+        response,
+      );
     }
 
     if (!effectiveStream) {
@@ -1401,7 +1405,7 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(this.formatChatCompletionsHttpError(response.status, errorText, useStream));
+      throw new LLMHttpError(this.formatChatCompletionsHttpError(response.status, errorText, useStream), response);
     }
 
     if (!useStream) {
@@ -1928,10 +1932,16 @@ export class OpenAIProvider extends BaseLLMProvider {
         });
         if (!response.ok) {
           const retryError = await response.text();
-          throw new Error(`OpenAI Responses API error ${response.status}: ${sanitizeApiError(retryError)}`);
+          throw new LLMHttpError(
+            `OpenAI Responses API error ${response.status}: ${sanitizeApiError(retryError)}`,
+            response,
+          );
         }
       } else {
-        throw new Error(`OpenAI Responses API error ${response.status}: ${sanitizeApiError(errorText)}`);
+        throw new LLMHttpError(
+          `OpenAI Responses API error ${response.status}: ${sanitizeApiError(errorText)}`,
+          response,
+        );
       }
     }
 
@@ -2164,10 +2174,16 @@ export class OpenAIProvider extends BaseLLMProvider {
         });
         if (!response.ok) {
           const retryError = await response.text();
-          throw new Error(`OpenAI Responses API error ${response.status}: ${sanitizeApiError(retryError)}`);
+          throw new LLMHttpError(
+            `OpenAI Responses API error ${response.status}: ${sanitizeApiError(retryError)}`,
+            response,
+          );
         }
       } else {
-        throw new Error(`OpenAI Responses API error ${response.status}: ${sanitizeApiError(errorText)}`);
+        throw new LLMHttpError(
+          `OpenAI Responses API error ${response.status}: ${sanitizeApiError(errorText)}`,
+          response,
+        );
       }
     }
 

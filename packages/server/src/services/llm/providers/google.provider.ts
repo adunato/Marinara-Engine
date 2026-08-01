@@ -4,6 +4,7 @@
 import { createHash, createSign } from "crypto";
 import {
   BaseLLMProvider,
+  LLMHttpError,
   llmFetch,
   sanitizeApiError,
   type ChatCompletionResult,
@@ -573,7 +574,7 @@ export class GoogleProvider extends BaseLLMProvider {
     if (!response.ok) {
       const errorText = await readDecodedText();
       const label = this.providerKind === "google_vertex" ? "Vertex AI Gemini API" : "Gemini API";
-      throw new Error(`${label} error ${response.status}: ${sanitizeApiError(errorText)}`);
+      throw new LLMHttpError(`${label} error ${response.status}: ${sanitizeApiError(errorText)}`, response);
     }
 
     const json = JSON.parse(await readDecodedText()) as GeminiResponsePayload;
@@ -750,7 +751,7 @@ export class GoogleProvider extends BaseLLMProvider {
     if (!response.ok) {
       const errorText = await readDecodedText();
       const label = this.providerKind === "google_vertex" ? "Vertex AI Gemini API" : "Gemini API";
-      throw new Error(`${label} error ${response.status}: ${sanitizeApiError(errorText)}`);
+      throw new LLMHttpError(`${label} error ${response.status}: ${sanitizeApiError(errorText)}`, response);
     }
 
     // ── Non-streaming path (also used when thinking is enabled) ──

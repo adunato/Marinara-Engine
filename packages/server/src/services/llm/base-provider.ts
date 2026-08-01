@@ -57,6 +57,27 @@ export function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/** HTTP failure metadata retained for shared transport retry classification. */
+export class LLMHttpError extends Error {
+  readonly status: number;
+  readonly retryAfter: string | null;
+  readonly retryAfterMs: number | null;
+
+  constructor(message: string, response: Pick<Response, "status" | "headers">) {
+    super(message);
+    this.name = "LLMHttpError";
+    this.status = response.status;
+    this.retryAfter = response.headers.get("retry-after");
+    const retryAfterMillisecondsHeader = response.headers.get("retry-after-ms");
+    const retryAfterMilliseconds =
+      retryAfterMillisecondsHeader === null ? Number.NaN : Number(retryAfterMillisecondsHeader);
+    this.retryAfterMs =
+      Number.isFinite(retryAfterMilliseconds) && retryAfterMilliseconds >= 0
+        ? Math.round(retryAfterMilliseconds)
+        : null;
+  }
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
