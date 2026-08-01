@@ -22,6 +22,7 @@ import {
   mindRoot,
   pathExists,
   readMindIndex,
+  resolveMindMarkdown,
   revisionForPayload,
   resetMindSynthesis,
   snapshotAutoSummary,
@@ -48,6 +49,7 @@ import {
   pendingCharacterMindPages,
   parseCharacterMindPlan,
   renderCharacterMindPlan,
+  type CharacterMindChangePlan,
 } from "./character-mind.plan.js";
 import {
   createCharacterMindTrace,
@@ -59,7 +61,9 @@ import {
   isCharacterMindAgentEnabled,
   resolveCharacterMindRuntime,
   runCharacterMindOperation,
+  type CharacterMindMarkdownResult,
 } from "./character-mind.runtime.js";
+import { CharacterMindCandidateSet } from "./character-mind.candidate.js";
 
 export class CharacterMindError extends Error {
   constructor(
@@ -343,7 +347,11 @@ async function buildCorpus(
   const preservedPages = plan.pages.length - pendingPages.length;
   for (const page of pendingPages) {
     let pageTrace = createCharacterMindTrace();
+    const candidates = await CharacterMindCandidateSet.create(context.root);
     try {
+      if (await pathExists((await resolveMindMarkdown(context.root, page.path)).path))
+        await candidates.requireExisting(page.path);
+      else await candidates.requireAbsent(page.path);
       const run = await runCharacterMindOperation({
         root: context.root,
         operation: "build-page",
@@ -354,8 +362,10 @@ async function buildCorpus(
         signal: await operationSignal(operation),
       });
       pageTrace = run.trace;
+      await candidates.write(page.path, (run.result as CharacterMindMarkdownResult).content);
+      await candidates.publish(pageTrace);
       mergeMindTrace(buildTrace, pageTrace);
-      const result = run.result as CharacterMindIngestResult;
+      const result = run.result as CharacterMindMarkdownResult;
       pageSummaries.push(result.summary);
       await appendMindLog({
         root: context.root,
@@ -386,6 +396,8 @@ async function buildCorpus(
         error: `${page.path}: ${message}`,
       });
       throw error;
+    } finally {
+      await candidates.dispose();
     }
   }
 
@@ -421,6 +433,108 @@ async function buildCorpus(
   return result;
 }
 
+async function executeCharacterMindChangePlan(input: {
+  context: MindContext;
+  runtime: Awaited<ReturnType<typeof requireRuntime>>;
+  operation: ActiveOperation;
+  plan: CharacterMindChangePlan;
+  discoveryTrace: CharacterMindTrace;
+}): Promise<{ trace: CharacterMindTrace; summaries: string[] }> {
+  const candidates = await CharacterMindCandidateSet.create(input.context.root);
+  const trace = createCharacterMindTrace();
+  mergeMindTrace(trace, input.discoveryTrace);
+  const summaries: string[] = [];
+  try {
+    for (const action of input.plan.actions) {
+      if (action.type === "create") await candidates.requireAbsent(action.path);
+      else if (action.type === "rename") {
+        await candidates.requireExisting(action.from);
+        await candidates.requireAbsent(action.to);
+      } else await candidates.requireExisting(action.path);
+    }
+
+    for (const action of input.plan.actions) {
+      if (action.type === "rename") await candidates.move(action.from, action.to);
+      if (action.type === "delete") await candidates.delete(action.path);
+    }
+
+    const liveWikiPaths = (await listMarkdown(input.context.root, "wiki")).filter((path) => path.startsWith("wiki/"));
+    const knownWikiPaths = [
+      ...new Set([
+        ...liveWikiPaths.filter(
+          (path) =>
+            !input.plan.actions.some(
+              (action) =>
+                (action.type === "delete" && action.path === path) ||
+                (action.type === "rename" && action.from === path),
+            ),
+        ),
+        ...input.plan.actions.flatMap((action) =>
+          action.type === "create" ? [action.path] : action.type === "rename" ? [action.to] : [],
+        ),
+      ]),
+    ];
+
+    for (const action of input.plan.actions) {
+      if (action.type === "rename" || action.type === "delete") continue;
+      if (action.type === "create" || action.type === "replace") {
+        const run = await runCharacterMindOperation({
+          root: input.context.root,
+          operation: "write-page",
+          value: JSON.stringify({ action, changePlan: input.plan.actions }),
+          target: { path: action.path, sources: action.sources, mustRead: action.type === "replace" },
+          knownWikiPaths,
+          runtime: input.runtime,
+          signal: await operationSignal(input.operation),
+        });
+        mergeMindTrace(trace, run.trace);
+        const result = run.result as CharacterMindMarkdownResult;
+        await candidates.write(action.path, result.content);
+        summaries.push(result.summary);
+        continue;
+      }
+      if (action.type === "edit" || action.type === "index-edit") {
+        const sources = action.type === "edit" ? action.sources : [];
+        const run = await runCharacterMindOperation({
+          root: input.context.root,
+          operation: "edit",
+          value: JSON.stringify({ action, changePlan: input.plan.actions }),
+          target: { path: action.path, sources, mustRead: true },
+          candidate: candidates,
+          runtime: input.runtime,
+          signal: await operationSignal(input.operation),
+        });
+        mergeMindTrace(trace, run.trace);
+        summaries.push((run.result as CharacterMindIngestResult).summary);
+        continue;
+      }
+      const run = await runCharacterMindOperation({
+        root: input.context.root,
+        operation: "write-index",
+        value: JSON.stringify({ action, changePlan: input.plan.actions }),
+        target: { path: "index.md", sources: [] },
+        candidate: candidates,
+        knownWikiPaths,
+        runtime: input.runtime,
+        signal: await operationSignal(input.operation),
+      });
+      mergeMindTrace(trace, run.trace);
+      const result = run.result as CharacterMindMarkdownResult;
+      await candidates.write("index.md", result.content);
+      summaries.push(result.summary);
+    }
+
+    await validateCompleteWiki(input.context.root, candidates);
+    await candidates.publish(trace);
+    return { trace, summaries };
+  } catch (error) {
+    if (error && typeof error === "object") Object.assign(error, { characterMindTrace: trace });
+    throw error;
+  } finally {
+    await candidates.dispose();
+  }
+}
+
 async function ingestOne(
   db: DB,
   context: MindContext,
@@ -438,9 +552,20 @@ async function ingestOne(
       runtime,
       signal: await operationSignal(operation),
     });
-    trace = run.trace;
-    await validateCompleteWiki(context.root);
-    const result = run.result as CharacterMindIngestResult;
+    const plan = run.result as CharacterMindChangePlan;
+    const executed = await executeCharacterMindChangePlan({
+      context,
+      runtime,
+      operation,
+      plan,
+      discoveryTrace: run.trace,
+    });
+    trace = executed.trace;
+    const result: CharacterMindIngestResult = {
+      summary: [plan.summary, ...executed.summaries].filter(Boolean).join(" "),
+      created: [...trace.created],
+      updated: [...trace.updated],
+    };
     await appendMindLog({
       root: context.root,
       operation: "ingest",
@@ -623,18 +748,31 @@ export async function lintCharacterMind(db: DB, chatId: string, characterId: str
       runtime,
       signal: await operationSignal(operation),
     });
-    await validateCompleteWiki(context.root);
-    const result = run.result as CharacterMindLintResult;
-    const allFindings = [...new Set([...findings, ...result.findings])];
-    const output = { ...result, findings: allFindings };
+    const plan = run.result as CharacterMindChangePlan;
+    const executed = await executeCharacterMindChangePlan({
+      context,
+      runtime,
+      operation,
+      plan,
+      discoveryTrace: run.trace,
+    });
+    const allFindings = [...new Set([...findings, ...plan.findings])];
+    const moved = [...executed.trace.moved].flatMap((entry) => entry.split(" -> "));
+    const output: CharacterMindLintResult = {
+      summary: [plan.summary, ...executed.summaries].filter(Boolean).join(" "),
+      findings: allFindings,
+      changed: [
+        ...new Set([...executed.trace.created, ...executed.trace.updated, ...executed.trace.deleted, ...moved]),
+      ],
+    };
     await appendMindLog({
       root: context.root,
       operation: "lint",
       subject: "wiki",
       status: "success",
-      trace: run.trace,
+      trace: executed.trace,
       findings: allFindings,
-      summary: result.summary,
+      summary: output.summary,
     });
     return output;
   } catch (error) {

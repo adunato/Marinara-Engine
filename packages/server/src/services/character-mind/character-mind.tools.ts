@@ -1,15 +1,15 @@
-import { readFile, rename, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type { LLMToolCall, LLMToolDefinition } from "../llm/base-provider.js";
 import {
-  atomicWrite,
   listMarkdown,
   normalizeMindPath,
   pathExists,
   resolveMindMarkdown,
   verifyRawMarkdown,
 } from "./character-mind.files.js";
+import type { CharacterMindCandidateSet } from "./character-mind.candidate.js";
 
-type MindOperation = "plan" | "build-page" | "ingest" | "query" | "lint";
+type MindOperation = "plan" | "build-page" | "ingest" | "query" | "lint" | "edit" | "write-page" | "write-index";
 
 export interface CharacterMindTrace {
   listed: string[];
@@ -94,55 +94,17 @@ const ALL_TOOLS: LLMToolDefinition[] = [
   {
     type: "function",
     function: {
-      name: "mind_write_wiki",
-      description: "Create or replace Markdown pages below wiki/.",
+      name: "mind_edit_candidate",
+      description:
+        "Apply one bounded exact replacement to an existing temporary page candidate. oldText must match exactly once.",
       parameters: objectSchema(
         {
-          files: {
-            type: "array",
-            minItems: 1,
-            maxItems: 12,
-            items: objectSchema({ path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
-          },
+          path: { type: "string" },
+          oldText: { type: "string", minLength: 1, maxLength: 16384 },
+          newText: { type: "string", maxLength: 16384 },
         },
-        ["files"],
+        ["path", "oldText", "newText"],
       ),
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "mind_write_index",
-      description: "Replace index.md after wiki maintenance.",
-      parameters: objectSchema({ content: { type: "string" } }, ["content"]),
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "mind_move_wiki",
-      description: "Move or rename wiki pages during lint.",
-      parameters: objectSchema(
-        {
-          moves: {
-            type: "array",
-            minItems: 1,
-            maxItems: 12,
-            items: objectSchema({ from: { type: "string" }, to: { type: "string" } }, ["from", "to"]),
-          },
-        },
-        ["moves"],
-      ),
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "mind_delete_wiki",
-      description: "Delete unreferenced wiki pages during lint.",
-      parameters: objectSchema({ paths: { type: "array", minItems: 1, maxItems: 12, items: { type: "string" } } }, [
-        "paths",
-      ]),
     },
   },
 ];
@@ -162,12 +124,6 @@ function requireString(value: unknown, field: string): string {
   return value;
 }
 
-function wikiPath(value: unknown): string {
-  const path = normalizeMindPath(requireString(value, "path"));
-  if (!/^wiki\/[^/]+\.md$/i.test(path)) throw new Error("Only flat wiki/*.md files are permitted");
-  return path;
-}
-
 export function extractWikilinks(content: string): string[] {
   const links: string[] = [];
   for (const match of content.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)) {
@@ -177,26 +133,49 @@ export function extractWikilinks(content: string): string[] {
   return links;
 }
 
-function wikilinkPath(sourcePath: string, link: string): string {
+export function wikilinkPath(sourcePath: string, link: string): string {
   const normalized = normalizeMindPath(link);
   if (normalized.includes("/")) return normalized;
   return sourcePath === "index.md" || sourcePath.startsWith("wiki/") ? `wiki/${normalized}` : normalized;
 }
 
-function hasRawSourceCitation(content: string): boolean {
+function rawSourceCitations(content: string): string[] {
   const sourceBody = /^##\s+Sources\s*$([\s\S]*)$/im.exec(content)?.[1] ?? "";
-  return extractWikilinks(sourceBody).some((link) => link.startsWith("raw/"));
+  return extractWikilinks(sourceBody).filter((link) => link.startsWith("raw/"));
 }
 
-async function validateWikiContent(root: string, path: string, content: string): Promise<void> {
+export async function validateWikiPageCandidate(
+  root: string,
+  path: string,
+  content: string,
+  options: {
+    knownPaths?: ReadonlySet<string>;
+    requiredSources?: ReadonlySet<string>;
+    verifiedRaw?: ReadonlySet<string>;
+  } = {},
+): Promise<void> {
   if (Buffer.byteLength(content, "utf8") > 64 * 1024) throw new Error(`${path} exceeds 64 KiB`);
   const h1s = content.match(/^#\s+\S.+$/gm) ?? [];
   if (h1s.length !== 1) throw new Error(`${path} must contain exactly one H1`);
   const sourceSections = content.match(/^##\s+Sources\s*$/gim) ?? [];
   if (sourceSections.length !== 1) throw new Error(`${path} must contain exactly one ## Sources section`);
-  if (!hasRawSourceCitation(content)) throw new Error(`${path} must cite at least one raw source under ## Sources`);
+  const citedRaw = new Set(rawSourceCitations(content).map((source) => normalizeMindPath(source)));
+  if (citedRaw.size === 0) throw new Error(`${path} must cite at least one raw source under ## Sources`);
+  if (options.requiredSources) {
+    const missing = [...options.requiredSources].filter((source) => !citedRaw.has(source));
+    const unexpected = [...citedRaw].filter((source) => !options.requiredSources!.has(source));
+    if (missing.length) throw new Error(`${path} does not cite assigned sources: ${missing.join(", ")}`);
+    if (unexpected.length) throw new Error(`${path} cites sources outside its map: ${unexpected.join(", ")}`);
+  }
   for (const link of extractWikilinks(content)) {
     const normalized = wikilinkPath(path, link);
+    if (normalized.startsWith("raw/")) {
+      await verifyRawMarkdown(root, normalized);
+      if (options.verifiedRaw && !options.verifiedRaw.has(normalized))
+        throw new Error(`${path} cites a raw source that was not read: ${normalized}`);
+      continue;
+    }
+    if (options.knownPaths?.has(normalized.toLowerCase()) || normalized === path) continue;
     const resolved = await resolveMindMarkdown(root, normalized);
     if (!(await pathExists(resolved.path)) && normalized !== path)
       throw new Error(`${path} has unresolved wikilink: ${link}`);
@@ -226,25 +205,16 @@ export function createCharacterMindTools(
   operation: MindOperation,
   trace: CharacterMindTrace,
   options: {
-    plannedWikiPaths?: string[];
-    plannedSourcesByPage?: Record<string, string[]>;
-    writableWikiPaths?: string[];
+    candidate?: CharacterMindCandidateSet;
+    editablePaths?: string[];
   } = {},
 ) {
-  const writable = operation === "build-page" || operation === "ingest" || operation === "lint";
-  const writableIndex = operation === "ingest" || operation === "lint";
-  const plannedWikiPaths = new Set((options.plannedWikiPaths ?? []).map((path) => path.toLowerCase()));
-  const writableWikiPaths = new Set((options.writableWikiPaths ?? []).map((path) => path.toLowerCase()));
-  const plannedSourcesByPage = new Map(
-    Object.entries(options.plannedSourcesByPage ?? {}).map(([path, sources]) => [path.toLowerCase(), new Set(sources)]),
-  );
+  const editablePaths = new Set((options.editablePaths ?? []).map((path) => normalizeMindPath(path).toLowerCase()));
   const toolNames = new Set([
     "mind_list_markdown",
     "mind_search_markdown",
     "mind_read_markdown",
-    ...(writable ? ["mind_write_wiki"] : []),
-    ...(writableIndex ? ["mind_write_index"] : []),
-    ...(operation === "lint" ? ["mind_move_wiki", "mind_delete_wiki"] : []),
+    ...(operation === "edit" ? ["mind_edit_candidate"] : []),
   ]);
   const tools = ALL_TOOLS.filter((tool) => toolNames.has(tool.function.name));
 
@@ -301,7 +271,10 @@ export function createCharacterMindTools(
           await verifyRawMarkdown(root, relativePath);
           trace.verifiedRaw.add(relativePath);
         }
-        const content = await readFile(resolved.path, "utf8");
+        const content =
+          options.candidate && editablePaths.has(relativePath.toLowerCase())
+            ? await options.candidate.read(relativePath)
+            : await readFile(resolved.path, "utf8");
         const lines = content.split(/\r?\n/);
         const startLine = Math.max(1, Number(item.startLine) || 1);
         const maxLines = Math.max(1, Math.min(2000, Number(item.maxLines) || 2000));
@@ -319,115 +292,17 @@ export function createCharacterMindTools(
       return JSON.stringify({ reads });
     }
 
-    if (call.function.name === "mind_write_wiki") {
-      if (!Array.isArray(args.files) || args.files.length < 1 || args.files.length > 12)
-        throw new Error("files must contain 1 to 12 pages");
-      const staged: Array<{ relativePath: string; fullPath: string; content: string; existed: boolean }> = [];
-      for (const item of args.files as Array<Record<string, unknown>>) {
-        const relativePath = wikiPath(item.path);
-        if (writableWikiPaths.size > 0 && !writableWikiPaths.has(relativePath.toLowerCase()))
-          throw new Error(`This operation may not write wiki page: ${relativePath}`);
-        const content = requireString(item.content, "content");
-        const resolved = await resolveMindMarkdown(root, relativePath);
-        staged.push({ relativePath, fullPath: resolved.path, content, existed: await pathExists(resolved.path) });
-      }
-      // Validate structure first; unresolved links to another page in this batch are allowed.
-      const batchPaths = new Set(staged.map((file) => file.relativePath.toLowerCase()));
-      for (const file of staged) {
-        if (Buffer.byteLength(file.content, "utf8") > 64 * 1024) throw new Error(`${file.relativePath} exceeds 64 KiB`);
-        if ((file.content.match(/^#\s+\S.+$/gm) ?? []).length !== 1)
-          throw new Error(`${file.relativePath} must contain exactly one H1`);
-        if ((file.content.match(/^##\s+Sources\s*$/gim) ?? []).length !== 1)
-          throw new Error(`${file.relativePath} must contain exactly one ## Sources section`);
-        if (!hasRawSourceCitation(file.content))
-          throw new Error(`${file.relativePath} must cite at least one raw source under ## Sources`);
-        const links = extractWikilinks(file.content);
-        const citedRawSources = new Set<string>();
-        for (const link of links) {
-          const normalized = wikilinkPath(file.relativePath, link);
-          if (normalized.startsWith("raw/")) citedRawSources.add(normalized);
-          if (normalized.startsWith("raw/") && !trace.verifiedRaw.has(normalized)) {
-            throw new Error(`${file.relativePath} cites a raw source that was not read: ${normalized}`);
-          }
-          const target = await resolveMindMarkdown(root, normalized);
-          if (
-            !(await pathExists(target.path)) &&
-            !batchPaths.has(normalized.toLowerCase()) &&
-            !(operation === "build-page" && plannedWikiPaths.has(normalized.toLowerCase()))
-          )
-            throw new Error(`${file.relativePath} has unresolved wikilink: ${link}`);
-        }
-        const assignedSources = plannedSourcesByPage.get(file.relativePath.toLowerCase());
-        if (operation === "build-page" && assignedSources) {
-          const missing = [...assignedSources].filter((path) => !citedRawSources.has(path));
-          const unexpected = [...citedRawSources].filter((path) => !assignedSources.has(path));
-          if (missing.length)
-            throw new Error(`${file.relativePath} does not cite assigned sources: ${missing.join(", ")}`);
-          if (unexpected.length)
-            throw new Error(`${file.relativePath} cites sources outside its map: ${unexpected.join(", ")}`);
-        }
-      }
-      for (const file of staged) {
-        await atomicWrite(file.fullPath, file.content);
-        (file.existed ? trace.updated : trace.created).add(file.relativePath);
-      }
-      return JSON.stringify({ written: staged.map((file) => file.relativePath) });
-    }
-
-    if (call.function.name === "mind_write_index") {
-      const content = requireString(args.content, "content");
-      if (Buffer.byteLength(content, "utf8") > 128 * 1024) throw new Error("index.md exceeds 128 KiB");
-      for (const link of extractWikilinks(content)) {
-        const normalized = wikilinkPath("index.md", link);
-        if (!normalized.startsWith("wiki/")) throw new Error("index.md may only link to wiki pages");
-        const target = await resolveMindMarkdown(root, normalized);
-        if (!(await pathExists(target.path))) throw new Error(`index.md has unresolved wikilink: ${link}`);
-      }
-      await atomicWrite((await resolveMindMarkdown(root, "index.md")).path, content);
-      trace.updated.add("index.md");
-      return JSON.stringify({ written: "index.md" });
-    }
-
-    if (call.function.name === "mind_move_wiki") {
-      if (!Array.isArray(args.moves) || args.moves.length < 1 || args.moves.length > 12)
-        throw new Error("moves must contain 1 to 12 pages");
-      const moves = [];
-      for (const item of args.moves as Array<Record<string, unknown>>) {
-        const from = wikiPath(item.from);
-        const to = wikiPath(item.to);
-        const source = await resolveMindMarkdown(root, from);
-        const target = await resolveMindMarkdown(root, to);
-        if (!(await pathExists(source.path))) throw new Error(`Missing source page: ${from}`);
-        if (await pathExists(target.path)) throw new Error(`Target already exists: ${to}`);
-        moves.push({ from, to, source: source.path, target: target.path });
-      }
-      for (const move of moves) {
-        await rename(move.source, move.target);
-        trace.moved.add(`${move.from} -> ${move.to}`);
-      }
-      return JSON.stringify({ moved: moves.map(({ from, to }) => ({ from, to })) });
-    }
-
-    if (call.function.name === "mind_delete_wiki") {
-      if (!Array.isArray(args.paths) || args.paths.length < 1 || args.paths.length > 12)
-        throw new Error("paths must contain 1 to 12 pages");
-      const paths = args.paths.map(wikiPath);
-      const deleting = new Set(paths.map((path) => path.toLowerCase()));
-      for (const candidate of (await listMarkdown(root)).filter(
-        (path) => path === "index.md" || path.startsWith("wiki/"),
-      )) {
-        if (deleting.has(candidate.toLowerCase())) continue;
-        const content = await readFile((await resolveMindMarkdown(root, candidate)).path, "utf8");
-        for (const link of extractWikilinks(content)) {
-          if (deleting.has(wikilinkPath(candidate, link).toLowerCase()))
-            throw new Error(`${candidate} still links to ${link}`);
-        }
-      }
-      for (const path of paths) {
-        await rm((await resolveMindMarkdown(root, path)).path);
-        trace.deleted.add(path);
-      }
-      return JSON.stringify({ deleted: paths });
+    if (call.function.name === "mind_edit_candidate") {
+      if (!options.candidate) throw new Error("No Character Mind candidate is bound to this edit session");
+      const relativePath = normalizeMindPath(requireString(args.path, "path"));
+      if (!editablePaths.has(relativePath.toLowerCase())) throw new Error(`This session may not edit: ${relativePath}`);
+      await options.candidate.edit(
+        relativePath,
+        requireString(args.oldText, "oldText"),
+        requireString(args.newText, "newText"),
+      );
+      trace.updated.add(relativePath);
+      return JSON.stringify({ edited: relativePath });
     }
 
     throw new Error(`Unknown Character Mind tool: ${call.function.name}`);
@@ -436,19 +311,38 @@ export function createCharacterMindTools(
   return { tools, execute };
 }
 
-export async function validateCompleteWiki(root: string): Promise<void> {
-  const wikiPages = (await listMarkdown(root, "wiki")).filter((candidate) => candidate.startsWith("wiki/"));
+export async function validateCompleteWiki(root: string, candidate?: CharacterMindCandidateSet): Promise<void> {
+  const livePages = (await listMarkdown(root, "wiki")).filter((path) => path.startsWith("wiki/"));
+  const wikiPages = [
+    ...new Set([
+      ...livePages.filter((path) => !candidate?.deleted.has(path)),
+      ...(candidate?.candidatePaths().filter((path) => path.startsWith("wiki/")) ?? []),
+    ]),
+  ].sort();
+  const knownPaths = new Set(wikiPages.map((path) => path.toLowerCase()));
+  const candidatePaths = new Set(candidate?.candidatePaths() ?? []);
   for (const path of wikiPages) {
-    const resolved = await resolveMindMarkdown(root, path);
-    await validateWikiContent(root, path, await readFile(resolved.path, "utf8"));
+    const content =
+      candidate && candidatePaths.has(path)
+        ? await candidate.read(path)
+        : await readFile((await resolveMindMarkdown(root, path)).path, "utf8");
+    await validateWikiPageCandidate(root, path, content, { knownPaths });
   }
-  const index = await readFile((await resolveMindMarkdown(root, "index.md")).path, "utf8");
+  const index =
+    candidate && candidatePaths.has("index.md")
+      ? await candidate.read("index.md")
+      : await readFile((await resolveMindMarkdown(root, "index.md")).path, "utf8");
+  if (Buffer.byteLength(index, "utf8") > 128 * 1024) throw new Error("index.md exceeds 128 KiB");
   const indexedPages = new Set<string>();
   for (const link of extractWikilinks(index)) {
     const normalized = wikilinkPath("index.md", link);
-    const target = await resolveMindMarkdown(root, normalized);
-    if (!(await pathExists(target.path))) throw new Error(`index.md has unresolved wikilink: ${link}`);
-    if (normalized.startsWith("wiki/")) indexedPages.add(normalized.toLowerCase());
+    if (normalized.startsWith("raw/")) {
+      await verifyRawMarkdown(root, normalized);
+      continue;
+    }
+    if (!normalized.startsWith("wiki/") || !knownPaths.has(normalized.toLowerCase()))
+      throw new Error(`index.md has unresolved wikilink: ${link}`);
+    indexedPages.add(normalized.toLowerCase());
   }
   const missing = wikiPages.filter((path) => !indexedPages.has(path.toLowerCase()));
   if (missing.length) throw new Error(`index.md does not catalog: ${missing.join(", ")}`);

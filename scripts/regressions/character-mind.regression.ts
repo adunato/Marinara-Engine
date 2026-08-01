@@ -31,6 +31,7 @@ import {
   pendingCharacterMindPages,
   parseCharacterMindPlan,
   renderCharacterMindPlan,
+  validateCharacterMindChangePlan,
 } from "../../packages/server/src/services/character-mind/character-mind.plan.js";
 import {
   runCharacterMindOperation,
@@ -40,8 +41,10 @@ import {
   createCharacterMindTools,
   createCharacterMindTrace,
   deterministicMindFindings,
+  validateCompleteWiki,
 } from "../../packages/server/src/services/character-mind/character-mind.tools.js";
 import { characterMindPrompt } from "../../packages/server/src/services/character-mind/character-mind.constants.js";
+import { CharacterMindCandidateSet } from "../../packages/server/src/services/character-mind/character-mind.candidate.js";
 
 const root = join(process.cwd(), ".tmp-character-mind-regression");
 
@@ -179,36 +182,52 @@ async function main() {
       type: "function",
       function: { name: "mind_read_markdown", arguments: JSON.stringify({ reads: [{ path: day.path }] }) },
     });
-    await ingestTools.execute({
-      id: "write-page",
-      type: "function",
-      function: {
-        name: "mind_write_wiki",
-        arguments: JSON.stringify({
-          files: [
-            {
-              path: "wiki/relationship-with-alex.md",
-              content: `# Relationship with Alex\n\nMira feels let down by [[Alex]].\n\n## Sources\n\n- [[${day.path}]]\n`,
-            },
-            {
-              path: "wiki/alex.md",
-              content: `# Alex\n\nAlex missed a planned screening.\n\n## Sources\n\n- [[${day.path}]]\n`,
-            },
-          ],
-        }),
-      },
-    });
-    await ingestTools.execute({
-      id: "write-index",
-      type: "function",
-      function: {
-        name: "mind_write_index",
-        arguments: JSON.stringify({
-          content: "# Index\n\n- [[relationship-with-alex]] — relationship synthesis\n- [[alex]] — person\n",
-        }),
-      },
-    });
+    const initialCandidates = await CharacterMindCandidateSet.create(root);
+    await initialCandidates.requireAbsent("wiki/relationship-with-alex.md");
+    await initialCandidates.requireAbsent("wiki/alex.md");
+    await initialCandidates.write(
+      "wiki/relationship-with-alex.md",
+      `# Relationship with Alex\n\nMira feels let down by [[Alex]].\n\n## Sources\n\n- [[${day.path}]]\n`,
+    );
+    await initialCandidates.write(
+      "wiki/alex.md",
+      `# Alex\n\nAlex missed a planned screening.\n\n## Sources\n\n- [[${day.path}]]\n`,
+    );
+    await initialCandidates.write(
+      "index.md",
+      "# Index\n\n- [[relationship-with-alex]] — relationship synthesis\n- [[alex]] — person\n",
+    );
+    await validateCompleteWiki(root, initialCandidates);
+    await initialCandidates.publish(trace);
+    await initialCandidates.dispose();
     assert.deepEqual(await deterministicMindFindings(root), []);
+    const discovered = await validateCharacterMindChangePlan(
+      root,
+      {
+        summary: "The new evidence affects two existing subjects.",
+        actions: [
+          { type: "edit", path: "wiki/relationship-with-alex.md", sources: [day.path], reason: "Relationship" },
+          { type: "edit", path: "wiki/alex.md", sources: [day.path], reason: "Person detail" },
+        ],
+      },
+      trace,
+      "ingest",
+      day.path,
+    );
+    assert.equal(discovered.actions.length, 2, "ingest discovery may return an initially unknown multi-page set");
+    await assert.rejects(
+      validateCharacterMindChangePlan(
+        root,
+        {
+          summary: "Incomplete retirement.",
+          actions: [{ type: "delete", path: "wiki/alex.md", reason: "Duplicate" }],
+        },
+        trace,
+        "ingest",
+        day.path,
+      ),
+      /topology changes require an index-edit or index-replace action/,
+    );
 
     const queryTrace = createCharacterMindTrace();
     const queryTools = createCharacterMindTools(root, "query", queryTrace);
@@ -232,10 +251,9 @@ async function main() {
     );
 
     const ingestPrompt = characterMindPrompt("ingest", day.path);
-    assert.match(ingestPrompt, /mind_write_wiki\(\{"files":\[\.\.\.\]\}\)/);
-    assert.match(ingestPrompt, /mind_write_index\(\{"content":"\.\.\."\}\)/);
-    assert.match(ingestPrompt, /\{"summary":"concise description of what was integrated"\}/);
-    assert.doesNotMatch(ingestPrompt, /required ingest JSON/);
+    assert.match(ingestPrompt, /read-only discovery session/);
+    assert.match(ingestPrompt, /"type":"edit"/);
+    assert.doesNotMatch(ingestPrompt, /mind_write_wiki|mind_write_index/);
     assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /Assess the complete corpus/);
     assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /at most 12 files per call/);
     assert.match(
@@ -245,6 +263,10 @@ async function main() {
     assert.match(
       characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
       /Do not write\s+index\.md/,
+    );
+    assert.match(
+      characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
+      /complete page as\s+raw Markdown ordinary response text/,
     );
 
     const toolResponse = (toolCalls: LLMToolCall[]): ChatCompletionResult => ({
@@ -257,6 +279,7 @@ async function main() {
       toolCalls: [],
       finishReason: "stop",
     });
+    const textResponse = (content: string): ChatCompletionResult => ({ content, toolCalls: [], finishReason: "stop" });
     let plannerCall = 0;
     const plannerSignals: AbortSignal[] = [];
     const plannerParentSignal = new AbortController().signal;
@@ -298,9 +321,8 @@ async function main() {
         if (plannerCall === 3) {
           const correction = messages.at(-1);
           assert.equal(correction?.role, "user");
-          assert.match(correction?.content ?? "", /PLAN VALIDATION REJECTED/);
+          assert.match(correction?.content ?? "", /VALIDATION REJECTED/);
           assert.match(correction?.content ?? "", new RegExp(autoSummary.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-          assert.match(correction?.content ?? "", /at most 12 files per call/);
           return toolResponse([
             {
               id: "corrective-read",
@@ -372,6 +394,7 @@ async function main() {
     };
     const pageSessionCalls: number[] = [];
     await writeMindIndex(root, renderCharacterMindPlan(splitPlan));
+    await validateCompleteWiki(root);
     const pageProvider = (pageIndex: number) => {
       let call = 0;
       const page = splitPlan.pages[pageIndex]!;
@@ -401,48 +424,19 @@ async function main() {
           }
           if (call === 2) {
             if (pageIndex === 0) return finalResponse({ summary: "Premature page result." });
-            return toolResponse([
-              {
-                id: `write-page-${pageIndex}`,
-                type: "function",
-                function: {
-                  name: "mind_write_wiki",
-                  arguments: JSON.stringify({
-                    files: [
-                      {
-                        path: page.path,
-                        content: `# ${page.title}\n\nGrounded synthesis linking [[${splitPlan.pages[1 - pageIndex]!.path}]].\n\n## Sources\n\n- [[${page.sources[0]}]]\n`,
-                      },
-                    ],
-                  }),
-                },
-              },
-            ]);
+            return textResponse(
+              `# ${page.title}\n\nGrounded synthesis linking [[${splitPlan.pages[1 - pageIndex]!.path}]].\n\n## Sources\n\n- [[${page.sources[0]}]]\n`,
+            );
           }
           if (call === 3 && pageIndex === 0) {
             const correction = messages.at(-1);
             assert.equal(correction?.role, "user");
-            assert.match(correction?.content ?? "", /PAGE VALIDATION REJECTED/);
-            assert.match(correction?.content ?? "", new RegExp(page.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-            return toolResponse([
-              {
-                id: `write-page-${pageIndex}`,
-                type: "function",
-                function: {
-                  name: "mind_write_wiki",
-                  arguments: JSON.stringify({
-                    files: [
-                      {
-                        path: page.path,
-                        content: `# ${page.title}\n\nGrounded synthesis linking [[${splitPlan.pages[1]!.path}]].\n\n## Sources\n\n- [[${page.sources[0]}]]\n`,
-                      },
-                    ],
-                  }),
-                },
-              },
-            ]);
+            assert.match(correction?.content ?? "", /VALIDATION REJECTED/);
+            return textResponse(
+              `# ${page.title}\n\nGrounded synthesis linking [[${splitPlan.pages[1]!.path}]].\n\n## Sources\n\n- [[${page.sources[0]}]]\n`,
+            );
           }
-          return finalResponse({ summary: `Materialized ${page.path}.` });
+          throw new Error(`Unexpected page provider call ${call}`);
         },
       } as unknown as BaseLLMProvider;
     };
@@ -462,10 +456,9 @@ async function main() {
         },
         signal: new AbortController().signal,
       });
-      assert.deepEqual(pageRun.result.created, []);
-      assert.deepEqual(pageRun.result.updated, [page.path]);
+      assert.match("content" in pageRun.result ? pageRun.result.content : "", new RegExp(`^# ${page.title}`));
     }
-    assert.deepEqual(pageSessionCalls, [4, 3]);
+    assert.deepEqual(pageSessionCalls, [3, 2]);
 
     const checkpointEntries = parseMindLog(`# Log
 
@@ -511,23 +504,60 @@ async function main() {
       "a successful log checkpoint is reusable only while its page still exists",
     );
 
-    const restrictedPageTools = createCharacterMindTools(root, "build-page", createCharacterMindTrace(), {
-      plannedWikiPaths: splitPlan.pages.map((page) => page.path),
-      plannedSourcesByPage: Object.fromEntries(splitPlan.pages.map((page) => [page.path, page.sources])),
-      writableWikiPaths: [splitPlan.pages[0]!.path],
+    const editCandidates = await CharacterMindCandidateSet.create(root);
+    await editCandidates.requireExisting("wiki/relationship-with-alex.md");
+    const restrictedPageTools = createCharacterMindTools(root, "edit", createCharacterMindTrace(), {
+      candidate: editCandidates,
+      editablePaths: ["wiki/relationship-with-alex.md"],
     });
     await assert.rejects(
       restrictedPageTools.execute({
         id: "wrong-page",
         type: "function",
         function: {
-          name: "mind_write_wiki",
-          arguments: JSON.stringify({
-            files: [{ path: splitPlan.pages[1]!.path, content: "# Wrong\n\n## Sources\n\n- [[raw/no.md]]\n" }],
-          }),
+          name: "mind_edit_candidate",
+          arguments: JSON.stringify({ path: "wiki/alex.md", oldText: "Alex", newText: "Alexander" }),
         },
       }),
-      /may not write wiki page/,
+      /may not edit/,
+    );
+    await assert.rejects(
+      restrictedPageTools.execute({
+        id: "ambiguous-edit",
+        type: "function",
+        function: {
+          name: "mind_edit_candidate",
+          arguments: JSON.stringify({ path: "wiki/relationship-with-alex.md", oldText: "\n", newText: "\n\n" }),
+        },
+      }),
+      /ambiguous/,
+    );
+    await restrictedPageTools.execute({
+      id: "bounded-edit",
+      type: "function",
+      function: {
+        name: "mind_edit_candidate",
+        arguments: JSON.stringify({
+          path: "wiki/relationship-with-alex.md",
+          oldText: "Mira feels let down",
+          newText: "Mira remains disappointed",
+        }),
+      },
+    });
+    assert.match(await editCandidates.read("wiki/relationship-with-alex.md"), /remains disappointed/);
+    const manualContent = `# Relationship with Alex\n\nManual edit wins.\n\n## Sources\n\n- [[${day.path}]]\n`;
+    await writeFile(join(root, "wiki", "relationship-with-alex.md"), manualContent, "utf8");
+    await assert.rejects(editCandidates.publish(createCharacterMindTrace()), /publication conflict/);
+    assert.equal(await readFile(join(root, "wiki", "relationship-with-alex.md"), "utf8"), manualContent);
+    await editCandidates.dispose();
+
+    await assert.rejects(
+      ingestTools.execute({
+        id: "complete-content-write",
+        type: "function",
+        function: { name: "mind_write_wiki", arguments: JSON.stringify({ files: [] }) },
+      }),
+      /not permitted/,
     );
     await assert.rejects(
       ingestTools.execute({
@@ -535,7 +565,7 @@ async function main() {
         type: "function",
         function: { name: "wiki_write", arguments: JSON.stringify({ writes: [] }) },
       }),
-      /Use only these exact tool names:.*mind_write_wiki.*mind_write_index/,
+      /Use only these exact tool names: mind_list_markdown, mind_search_markdown, mind_read_markdown/,
     );
 
     await appendMindLog({
