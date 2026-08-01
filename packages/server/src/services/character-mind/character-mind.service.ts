@@ -152,7 +152,9 @@ function autoSummaryPayloads(context: MindContext): AutoSummaryRawPayload[] {
       const entry = parseRecord(entries[date]);
       const summary = typeof entry.summary === "string" ? entry.summary.trim() : "";
       const keyDetails = Array.isArray(entry.keyDetails)
-        ? entry.keyDetails.filter((item): item is string => typeof item === "string" && !!item.trim()).map((item) => item.trim())
+        ? entry.keyDetails
+            .filter((item): item is string => typeof item === "string" && !!item.trim())
+            .map((item) => item.trim())
         : [];
       if (!summary && keyDetails.length === 0) continue;
       payloads.push({ chatId: context.chat.id, period, date, summary, keyDetails });
@@ -202,8 +204,7 @@ async function pendingSources(root: string, current?: Set<string>): Promise<stri
 
 async function snapshotInputs(db: DB, context: MindContext) {
   const snapshots = [await snapshotCharacterCard(context.root, cardPayload(context))];
-  for (const summary of autoSummaryPayloads(context))
-    snapshots.push(await snapshotAutoSummary(context.root, summary));
+  for (const summary of autoSummaryPayloads(context)) snapshots.push(await snapshotAutoSummary(context.root, summary));
   for (const day of await formedDays(db, context.chat.id))
     snapshots.push(await snapshotDailyMemories(context.root, memoryPayload(context.chat.id, day)));
   return snapshots;
@@ -253,18 +254,39 @@ function traceFromError(error: unknown): CharacterMindTrace {
 }
 
 function renderPageMap(plan: CharacterMindPlanResult): string {
-  const indexText = (value: string) => value.replace(/[\r\n\[\]|]+/g, " ").replace(/\s+/g, " ").trim();
+  const indexText = (value: string) =>
+    value
+      .replace(/[\r\n\[\]|]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   const lines = [
     "# Index",
     "",
     "Corpus-level page map created before wiki materialization.",
     "",
     ...plan.pages.map(
-      (page) =>
-        `- [[${page.path.replace(/\.md$/i, "")}|${indexText(page.title)}]] — ${indexText(page.purpose)}`,
+      (page) => `- [[${page.path.replace(/\.md$/i, "")}|${indexText(page.title)}]] — ${indexText(page.purpose)}`,
     ),
   ];
   return `${lines.join("\n")}\n`;
+}
+
+function mergeMindTrace(target: CharacterMindTrace, source: CharacterMindTrace): void {
+  target.listed.push(...source.listed);
+  target.searched.push(...source.searched);
+  for (const field of ["read", "verifiedRaw", "created", "updated", "moved", "deleted"] as const) {
+    for (const value of source[field]) target[field].add(value);
+  }
+}
+
+function pageMaterializationInput(
+  plan: CharacterMindPlanResult,
+  page: CharacterMindPlanResult["pages"][number],
+): string {
+  return JSON.stringify({
+    targetPage: page,
+    pageMap: plan.pages.map(({ path, title, purpose }) => ({ path, title, purpose })),
+  });
 }
 
 async function buildCorpus(
@@ -309,41 +331,86 @@ async function buildCorpus(
     throw error;
   }
 
-  let buildTrace = createCharacterMindTrace();
+  const buildTrace = createCharacterMindTrace();
+  const pageSummaries: string[] = [];
+  for (const page of plan.pages) {
+    let pageTrace = createCharacterMindTrace();
+    try {
+      const run = await runCharacterMindOperation({
+        root: context.root,
+        operation: "build-page",
+        value: pageMaterializationInput(plan, page),
+        plan,
+        page,
+        runtime,
+        signal: await operationSignal(operation),
+      });
+      pageTrace = run.trace;
+      mergeMindTrace(buildTrace, pageTrace);
+      const result = run.result as CharacterMindIngestResult;
+      pageSummaries.push(result.summary);
+      await appendMindLog({
+        root: context.root,
+        operation: "build-page",
+        subject: page.path,
+        status: "success",
+        trace: pageTrace,
+        summary: result.summary,
+      });
+    } catch (error) {
+      pageTrace = traceFromError(error);
+      mergeMindTrace(buildTrace, pageTrace);
+      const message = error instanceof Error ? error.message : "Page materialization failed";
+      await appendMindLog({
+        root: context.root,
+        operation: "build-page",
+        subject: page.path,
+        status: "failure",
+        trace: pageTrace,
+        error: message,
+      });
+      await appendMindLog({
+        root: context.root,
+        operation: "build",
+        subject: `${plan.pages.length} mapped pages`,
+        status: "failure",
+        trace: buildTrace,
+        error: `${page.path}: ${message}`,
+      });
+      throw error;
+    }
+  }
+
   try {
-    const run = await runCharacterMindOperation({
-      root: context.root,
-      operation: "build",
-      value: JSON.stringify(plan),
-      plan,
-      runtime,
-      signal: await operationSignal(operation),
-    });
-    buildTrace = run.trace;
+    await writeMindIndex(context.root, renderPageMap(plan));
+    buildTrace.updated.add("index.md");
     await validateCompleteWiki(context.root);
-    const result = run.result as CharacterMindIngestResult;
-    await appendMindLog({
-      root: context.root,
-      operation: "build",
-      subject: `${plan.pages.length} mapped pages`,
-      status: "success",
-      revisions: snapshots.map((snapshot) => snapshot.revision),
-      trace: buildTrace,
-      summary: result.summary,
-    });
-    return result;
   } catch (error) {
-    buildTrace = traceFromError(error);
     await appendMindLog({
       root: context.root,
       operation: "build",
       subject: `${plan.pages.length} mapped pages`,
       status: "failure",
       trace: buildTrace,
-      error: error instanceof Error ? error.message : "Build materialization failed",
+      error: error instanceof Error ? error.message : "Build finalization failed",
     });
     throw error;
   }
+  const result: CharacterMindIngestResult = {
+    summary: `Materialized ${plan.pages.length} mapped page${plan.pages.length === 1 ? "" : "s"}. ${pageSummaries.join(" ")}`,
+    created: [...buildTrace.created],
+    updated: [...buildTrace.updated],
+  };
+  await appendMindLog({
+    root: context.root,
+    operation: "build",
+    subject: `${plan.pages.length} mapped pages`,
+    status: "success",
+    revisions: snapshots.map((snapshot) => snapshot.revision),
+    trace: buildTrace,
+    summary: result.summary,
+  });
+  return result;
 }
 
 async function ingestOne(
@@ -439,8 +506,7 @@ async function buildOrSync(
   if (mode === "build" && built) throw new CharacterMindError("Character Mind is already built; use Sync", 409);
   if (mode === "sync" && !initialized)
     throw new CharacterMindError("Character Mind is not initialized; use Build", 409);
-  if (mode === "sync" && !built)
-    throw new CharacterMindError("Character Mind Build is incomplete; retry Build", 409);
+  if (mode === "sync" && !built) throw new CharacterMindError("Character Mind Build is incomplete; retry Build", 409);
   const operation = claimOperation(chatId, characterId, mode);
   try {
     if (mode === "build") {

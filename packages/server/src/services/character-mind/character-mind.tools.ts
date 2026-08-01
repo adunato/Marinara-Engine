@@ -9,7 +9,7 @@ import {
   verifyRawMarkdown,
 } from "./character-mind.files.js";
 
-type MindOperation = "plan" | "build" | "ingest" | "query" | "lint";
+type MindOperation = "plan" | "build-page" | "ingest" | "query" | "lint";
 
 export interface CharacterMindTrace {
   listed: string[];
@@ -71,26 +71,24 @@ const ALL_TOOLS: LLMToolDefinition[] = [
     function: {
       name: "mind_read_markdown",
       description: "Read one Markdown file with path, or batch-read files with reads.",
-      parameters: objectSchema(
-        {
-          path: { type: "string" },
-          startLine: { type: "integer", minimum: 1 },
-          maxLines: { type: "integer", minimum: 1, maximum: 2000 },
-          reads: {
-            type: "array",
-            minItems: 1,
-            maxItems: 12,
-            items: objectSchema(
-              {
-                path: { type: "string" },
-                startLine: { type: "integer", minimum: 1 },
-                maxLines: { type: "integer", minimum: 1, maximum: 2000 },
-              },
-              ["path"],
-            ),
-          },
+      parameters: objectSchema({
+        path: { type: "string" },
+        startLine: { type: "integer", minimum: 1 },
+        maxLines: { type: "integer", minimum: 1, maximum: 2000 },
+        reads: {
+          type: "array",
+          minItems: 1,
+          maxItems: 12,
+          items: objectSchema(
+            {
+              path: { type: "string" },
+              startLine: { type: "integer", minimum: 1 },
+              maxLines: { type: "integer", minimum: 1, maximum: 2000 },
+            },
+            ["path"],
+          ),
         },
-      ),
+      }),
     },
   },
   {
@@ -227,21 +225,25 @@ export function createCharacterMindTools(
   root: string,
   operation: MindOperation,
   trace: CharacterMindTrace,
-  options: { plannedWikiPaths?: string[]; plannedSourcesByPage?: Record<string, string[]> } = {},
+  options: {
+    plannedWikiPaths?: string[];
+    plannedSourcesByPage?: Record<string, string[]>;
+    writableWikiPaths?: string[];
+  } = {},
 ) {
-  const writable = operation === "build" || operation === "ingest" || operation === "lint";
+  const writable = operation === "build-page" || operation === "ingest" || operation === "lint";
+  const writableIndex = operation === "ingest" || operation === "lint";
   const plannedWikiPaths = new Set((options.plannedWikiPaths ?? []).map((path) => path.toLowerCase()));
+  const writableWikiPaths = new Set((options.writableWikiPaths ?? []).map((path) => path.toLowerCase()));
   const plannedSourcesByPage = new Map(
-    Object.entries(options.plannedSourcesByPage ?? {}).map(([path, sources]) => [
-      path.toLowerCase(),
-      new Set(sources),
-    ]),
+    Object.entries(options.plannedSourcesByPage ?? {}).map(([path, sources]) => [path.toLowerCase(), new Set(sources)]),
   );
   const toolNames = new Set([
     "mind_list_markdown",
     "mind_search_markdown",
     "mind_read_markdown",
-    ...(writable ? ["mind_write_wiki", "mind_write_index"] : []),
+    ...(writable ? ["mind_write_wiki"] : []),
+    ...(writableIndex ? ["mind_write_index"] : []),
     ...(operation === "lint" ? ["mind_move_wiki", "mind_delete_wiki"] : []),
   ]);
   const tools = ALL_TOOLS.filter((tool) => toolNames.has(tool.function.name));
@@ -323,6 +325,8 @@ export function createCharacterMindTools(
       const staged: Array<{ relativePath: string; fullPath: string; content: string; existed: boolean }> = [];
       for (const item of args.files as Array<Record<string, unknown>>) {
         const relativePath = wikiPath(item.path);
+        if (writableWikiPaths.size > 0 && !writableWikiPaths.has(relativePath.toLowerCase()))
+          throw new Error(`This operation may not write wiki page: ${relativePath}`);
         const content = requireString(item.content, "content");
         const resolved = await resolveMindMarkdown(root, relativePath);
         staged.push({ relativePath, fullPath: resolved.path, content, existed: await pathExists(resolved.path) });
@@ -349,12 +353,12 @@ export function createCharacterMindTools(
           if (
             !(await pathExists(target.path)) &&
             !batchPaths.has(normalized.toLowerCase()) &&
-            !(operation === "build" && plannedWikiPaths.has(normalized.toLowerCase()))
+            !(operation === "build-page" && plannedWikiPaths.has(normalized.toLowerCase()))
           )
             throw new Error(`${file.relativePath} has unresolved wikilink: ${link}`);
         }
         const assignedSources = plannedSourcesByPage.get(file.relativePath.toLowerCase());
-        if (operation === "build" && assignedSources) {
+        if (operation === "build-page" && assignedSources) {
           const missing = [...assignedSources].filter((path) => !citedRawSources.has(path));
           const unexpected = [...citedRawSources].filter((path) => !assignedSources.has(path));
           if (missing.length)

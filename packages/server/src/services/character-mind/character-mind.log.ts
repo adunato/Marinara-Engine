@@ -26,7 +26,8 @@ export function parseMindLog(content: string): ParsedMindLogEntry[] {
     const status = /^- status:\s*(success|failure)\s*$/m.exec(body)?.[1];
     if (status !== "success" && status !== "failure") continue;
     const revision = /^- revision:\s*([0-9a-f]{16})\s*$/m.exec(body)?.[1];
-    const revisions = /^- revisions:\s*(.+?)\s*$/m.exec(body)?.[1]
+    const revisions = /^- revisions:\s*(.+?)\s*$/m
+      .exec(body)?.[1]
       ?.split(",")
       .map((value) => value.trim())
       .filter((value) => /^[0-9a-f]{16}$/.test(value));
@@ -52,7 +53,7 @@ function oneLine(value: string): string {
 
 export async function appendMindLog(input: {
   root: string;
-  operation: "build-map" | "build" | "ingest" | "query" | "lint";
+  operation: "build-map" | "build-page" | "build" | "ingest" | "query" | "lint";
   subject: string;
   status: "success" | "failure";
   trace: CharacterMindTrace;

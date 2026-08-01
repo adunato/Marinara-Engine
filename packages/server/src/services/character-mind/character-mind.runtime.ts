@@ -25,7 +25,7 @@ import {
 import { listMarkdown, normalizeMindPath } from "./character-mind.files.js";
 import { createCharacterMindTools, createCharacterMindTrace, type CharacterMindTrace } from "./character-mind.tools.js";
 
-type RuntimeOperation = "plan" | "build" | "ingest" | "query" | "lint";
+type RuntimeOperation = "plan" | "build-page" | "ingest" | "query" | "lint";
 type MutationTarget = "index" | "wiki";
 
 export interface CharacterMindRuntime {
@@ -158,7 +158,8 @@ export function validateCharacterMindPlanResult(
       throw new Error(`Character Mind plan page ${index + 1} is invalid`);
     const item = candidate as Record<string, unknown>;
     const path = normalizeMindPath(requiredString(item.path, `page ${index + 1} path`));
-    if (!/^wiki\/[^/]+\.md$/i.test(path)) throw new Error(`Character Mind plan page path is not flat wiki Markdown: ${path}`);
+    if (!/^wiki\/[^/]+\.md$/i.test(path))
+      throw new Error(`Character Mind plan page path is not flat wiki Markdown: ${path}`);
     if (seenPages.has(path.toLowerCase())) throw new Error(`Character Mind plan contains duplicate page: ${path}`);
     seenPages.add(path.toLowerCase());
     const requestedSources = strings(item.sources);
@@ -220,6 +221,30 @@ function characterMindPlanCandidateError(
   }
 }
 
+function characterMindPageCandidateError(
+  content: string,
+  trace: CharacterMindTrace,
+  page: CharacterMindPagePlan,
+): string | null {
+  const unread = [
+    ...(!trace.read.has("SCHEMA.md") ? ["SCHEMA.md"] : []),
+    ...(!trace.read.has("index.md") ? ["index.md"] : []),
+    ...page.sources.filter((path) => !trace.verifiedRaw.has(path)),
+  ];
+  if (unread.length > 0)
+    return `The page candidate was not accepted because these required files were not successfully read: ${[
+      ...new Set(unread),
+    ].join(", ")}`;
+  if (!trace.created.has(page.path) && !trace.updated.has(page.path))
+    return `The page candidate was not accepted because the mapped page was not written: ${page.path}`;
+  try {
+    validateResult("build-page", parseObject(content), trace, []);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "The page result is invalid";
+  }
+}
+
 function validateResult(
   operation: RuntimeOperation,
   value: Record<string, unknown>,
@@ -227,7 +252,7 @@ function validateResult(
   sourcePaths: string[],
 ) {
   if (operation === "plan") return validateCharacterMindPlanResult(value, trace, sourcePaths);
-  if (operation === "build" || operation === "ingest") {
+  if (operation === "build-page" || operation === "ingest") {
     const summary = typeof value.summary === "string" ? value.summary.trim() : "";
     if (!summary) throw new Error("Character Mind ingest result has no summary");
     return {
@@ -261,12 +286,15 @@ export async function runCharacterMindOperation(input: {
   value?: string;
   sourcePaths?: string[];
   plan?: CharacterMindPlanResult;
+  page?: CharacterMindPagePlan;
   runtime: CharacterMindRuntime;
   signal: AbortSignal;
 }): Promise<{
   result: CharacterMindPlanResult | CharacterMindIngestResult | CharacterMindQueryResult | CharacterMindLintResult;
   trace: CharacterMindTrace;
 }> {
+  if (input.operation === "build-page" && (!input.plan || !input.page))
+    throw new Error("Character Mind page build requires its frozen map and target page");
   const trace = createCharacterMindTrace();
   const sourcePaths = input.sourcePaths ?? [];
   const toolContext = createCharacterMindTools(input.root, input.operation, trace, {
@@ -274,6 +302,7 @@ export async function runCharacterMindOperation(input: {
     plannedSourcesByPage: input.plan
       ? Object.fromEntries(input.plan.pages.map((page) => [page.path, page.sources]))
       : undefined,
+    writableWikiPaths: input.page ? [input.page.path] : undefined,
   });
   const messages: ChatMessage[] = [
     {
@@ -310,6 +339,22 @@ export async function runCharacterMindOperation(input: {
               messages.push({
                 role: "user",
                 content: `MARINARA PLAN VALIDATION REJECTED THIS CANDIDATE:\n${validationError}\n\nContinue the same planning operation. Correct every failed or missing read using the exact manifest paths; mind_read_markdown accepts at most 12 files per call. Then return a complete replacement plan that satisfies the original contract.`,
+                contextKind: "prompt",
+              });
+              continue;
+            }
+          }
+          if (input.operation === "build-page" && input.page) {
+            const validationError = characterMindPageCandidateError(candidateContent, trace, input.page);
+            if (validationError) {
+              messages.push({
+                role: "assistant",
+                content: response.content ?? "",
+                ...(response.providerMetadata ? { providerMetadata: response.providerMetadata } : {}),
+              });
+              messages.push({
+                role: "user",
+                content: `MARINARA PAGE VALIDATION REJECTED THIS CANDIDATE:\n${validationError}\n\nContinue the same page-materialization operation. Correct every missing read or write with the advertised tools, then return a complete replacement result that satisfies the original contract. mind_read_markdown accepts at most 12 files per call.`,
                 contextKind: "prompt",
               });
               continue;
@@ -357,20 +402,18 @@ export async function runCharacterMindOperation(input: {
       throw new Error("Character Mind operation did not read SCHEMA.md and index.md");
     if (input.operation === "ingest" && input.value && !trace.read.has(input.value))
       throw new Error("Character Mind ingest did not read its raw source");
-    if (input.operation === "build" && input.plan) {
-      const plannedPaths = new Set(input.plan.pages.map((page) => page.path));
-      const requiredSources = [...new Set(input.plan.pages.flatMap((page) => page.sources))];
+    if (input.operation === "build-page" && input.plan && input.page) {
+      const requiredSources = [...new Set(input.page.sources)];
       const unread = requiredSources.filter((path) => !trace.verifiedRaw.has(path));
-      if (unread.length) throw new Error(`Character Mind builder did not read mapped sources: ${unread.join(", ")}`);
-      const unwritten = input.plan.pages
-        .map((page) => page.path)
-        .filter((path) => !trace.created.has(path) && !trace.updated.has(path));
-      if (unwritten.length) throw new Error(`Character Mind builder did not write mapped pages: ${unwritten.join(", ")}`);
+      if (unread.length)
+        throw new Error(`Character Mind page builder did not read mapped sources: ${unread.join(", ")}`);
+      if (!trace.created.has(input.page.path) && !trace.updated.has(input.page.path))
+        throw new Error(`Character Mind page builder did not write mapped page: ${input.page.path}`);
       const unexpected = [...trace.created, ...trace.updated].filter(
-        (path) => path.startsWith("wiki/") && !plannedPaths.has(path),
+        (path) => path.startsWith("wiki/") && path !== input.page!.path,
       );
-      if (unexpected.length) throw new Error(`Character Mind builder wrote pages outside the map: ${unexpected.join(", ")}`);
-      if (!trace.updated.has("index.md")) throw new Error("Character Mind builder did not finalize index.md");
+      if (unexpected.length)
+        throw new Error(`Character Mind page builder wrote outside its target: ${unexpected.join(", ")}`);
     }
     if (unresolvedMutationFailures.size > 0)
       throw new Error(

@@ -2,7 +2,7 @@ export const CHARACTER_MIND_DIR = "character-minds";
 export const CHARACTER_MIND_RAW_MAX_BYTES = 4 * 1024 * 1024;
 export const CHARACTER_MIND_QUERY_MAX_CHARS = 32 * 1024;
 export const CHARACTER_MIND_OPERATION_TIMEOUT_MS = 5 * 60 * 1000;
-export const CHARACTER_MIND_MAX_TOOL_ROUNDS = { plan: 24, build: 32, ingest: 16, query: 8, lint: 24 } as const;
+export const CHARACTER_MIND_MAX_TOOL_ROUNDS = { plan: 24, "build-page": 16, ingest: 16, query: 8, lint: 24 } as const;
 
 export const CHARACTER_MIND_INDEX = `# Index
 
@@ -11,7 +11,7 @@ No wiki pages have been created yet.
 
 export const CHARACTER_MIND_LOG = `# Log
 
-Append-only history of build-map, build, ingest, query, and lint operations.
+Append-only history of build-map, build-page, build, ingest, query, and lint operations.
 `;
 
 export const CHARACTER_MIND_SCHEMA = `# Character Mind Schema
@@ -48,7 +48,8 @@ ordinary ingest operations.
 
 1. Map: read every current raw source before proposing any page. Assess the
    corpus as a whole and define a coherent set of reusable subjects.
-2. Materialize: write the mapped pages, then finalize \`index.md\`.
+2. Materialize: Marinara runs one isolated session per mapped page, then
+   deterministically finalizes \`index.md\` from the frozen map.
 3. A page is a synthesis of a subject, not a summary of one source. A page may
    combine Character Cards, auto-summaries, and Daily Memories.
 4. Do not create one page per source or default to one catch-all character page.
@@ -99,7 +100,10 @@ ordinary ingest operations.
    calls and writes the log itself.
 `;
 
-export function characterMindPrompt(operation: "plan" | "build" | "ingest" | "query" | "lint", value?: string): string {
+export function characterMindPrompt(
+  operation: "plan" | "build-page" | "ingest" | "query" | "lint",
+  value?: string,
+): string {
   if (operation === "plan") {
     return `You are performing the Karpathy LLM Wiki initial Build, pass 1: map.
 Operate only on the selected Character Mind. Read SCHEMA.md, index.md, and EVERY
@@ -117,18 +121,20 @@ Markdown fence:
 CURRENT RAW SOURCE MANIFEST:
 ${value ?? "[]"}`;
   }
-  if (operation === "build") {
-    return `You are performing the Karpathy LLM Wiki initial Build, pass 2: materialize.
+  if (operation === "build-page") {
+    return `You are performing the Karpathy LLM Wiki initial Build, pass 2: materialize one page.
 Operate only on the selected Character Mind. Read SCHEMA.md and index.md, then
-read every raw source assigned by the frozen page map below. Write EVERY mapped
-wiki page using mind_write_wiki({"files":[...]}). Pages synthesize their subject
-from the assigned evidence; they are not source recaps. Keep concrete details,
-uncertainty, contradictions, citations, and useful cross-links. Do not invent,
-omit, rename, or add mapped pages. After every page exists, finalize index.md
-using mind_write_index({"content":"..."}). Return only this JSON object, with no
-Markdown fence: {"summary":"concise description of the corpus build"}
+read every raw source assigned to TARGET PAGE below. Write exactly TARGET PAGE
+using mind_write_wiki({"files":[...]}). Synthesize its subject from the assigned
+evidence; do not write a source recap. Keep concrete details, uncertainty,
+contradictions, citations, and useful cross-links. You may link to other pages in
+the frozen map even when their sessions have not written them yet. Do not write
+index.md, invent another page, rename the target, or use sources outside its
+assignment. mind_read_markdown accepts at most 12 files per call; split larger
+assignments across calls. Return only this JSON object, with no Markdown fence:
+{"summary":"concise description of the materialized page"}
 
-FROZEN PAGE MAP:
+TARGET PAGE AND FROZEN PAGE MAP:
 ${value ?? "{}"}`;
   }
   if (operation === "ingest") {

@@ -91,13 +91,18 @@ async function main() {
       keyDetails: ["Alex missed the screening."],
     });
     assert.match(autoSummary.path, /^raw\/auto-summaries\/day\/30.07.2026--[0-9a-f]{16}\.md$/);
-    assert.equal((await snapshotAutoSummary(root, {
-      chatId: "chat-1",
-      period: "day",
-      date: "30.07.2026",
-      summary: "Mira and Alex planned to see Interstellar, but Alex did not arrive.",
-      keyDetails: ["Alex missed the screening."],
-    })).created, false);
+    assert.equal(
+      (
+        await snapshotAutoSummary(root, {
+          chatId: "chat-1",
+          period: "day",
+          date: "30.07.2026",
+          summary: "Mira and Alex planned to see Interstellar, but Alex did not arrive.",
+          keyDetails: ["Alex missed the screening."],
+        })
+      ).created,
+      false,
+    );
 
     const planTrace = createCharacterMindTrace();
     const planTools = createCharacterMindTools(root, "plan", planTrace);
@@ -106,7 +111,9 @@ async function main() {
       type: "function",
       function: {
         name: "mind_read_markdown",
-        arguments: JSON.stringify({ reads: [{ path: "SCHEMA.md" }, { path: "index.md" }, { path: day.path }, { path: autoSummary.path }] }),
+        arguments: JSON.stringify({
+          reads: [{ path: "SCHEMA.md" }, { path: "index.md" }, { path: day.path }, { path: autoSummary.path }],
+        }),
       },
     });
     const plan = validateCharacterMindPlanResult(
@@ -213,7 +220,14 @@ async function main() {
     assert.doesNotMatch(ingestPrompt, /required ingest JSON/);
     assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /Assess the complete corpus/);
     assert.match(characterMindPrompt("plan", JSON.stringify([day.path])), /at most 12 files per call/);
-    assert.match(characterMindPrompt("build", JSON.stringify(plan)), /FROZEN PAGE MAP/);
+    assert.match(
+      characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
+      /materialize one page/,
+    );
+    assert.match(
+      characterMindPrompt("build-page", JSON.stringify({ targetPage: plan.pages[0], pageMap: plan.pages })),
+      /Do not write\s+index\.md/,
+    );
 
     const toolResponse = (toolCalls: LLMToolCall[]): ChatCompletionResult => ({
       content: "",
@@ -303,8 +317,143 @@ async function main() {
       signal: new AbortController().signal,
     });
     assert.equal(plannerCall, 4);
-    assert.equal("summary" in recoveredPlan.result ? recoveredPlan.result.summary : null, "Mapped the complete corpus.");
+    assert.equal(
+      "summary" in recoveredPlan.result ? recoveredPlan.result.summary : null,
+      "Mapped the complete corpus.",
+    );
     assert.equal(recoveredPlan.trace.verifiedRaw.has(autoSummary.path), true);
+
+    const splitPlan = {
+      summary: "Two-page map.",
+      pages: [
+        {
+          path: "wiki/relationship-with-alex.md",
+          title: "Relationship with Alex",
+          purpose: "Tracks recurring disappointment.",
+          sources: [day.path],
+        },
+        {
+          path: "wiki/alex.md",
+          title: "Alex",
+          purpose: "Tracks concrete information about Alex.",
+          sources: [autoSummary.path],
+        },
+      ],
+      excludedSources: [],
+    };
+    const pageSessionCalls: number[] = [];
+    const pageProvider = (pageIndex: number) => {
+      let call = 0;
+      const page = splitPlan.pages[pageIndex]!;
+      return {
+        chatComplete: async (messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> => {
+          call += 1;
+          pageSessionCalls[pageIndex] = call;
+          if (call === 1) {
+            assert.equal(messages.length, 1, "each page starts with a fresh message history");
+            assert.equal(
+              options.tools?.some((tool) => tool.function.name === "mind_write_index"),
+              false,
+            );
+            return toolResponse([
+              {
+                id: `read-page-${pageIndex}`,
+                type: "function",
+                function: {
+                  name: "mind_read_markdown",
+                  arguments: JSON.stringify({
+                    reads: [{ path: "SCHEMA.md" }, { path: "index.md" }, { path: page.sources[0] }],
+                  }),
+                },
+              },
+            ]);
+          }
+          if (call === 2) {
+            if (pageIndex === 0) return finalResponse({ summary: "Premature page result." });
+            return toolResponse([
+              {
+                id: `write-page-${pageIndex}`,
+                type: "function",
+                function: {
+                  name: "mind_write_wiki",
+                  arguments: JSON.stringify({
+                    files: [
+                      {
+                        path: page.path,
+                        content: `# ${page.title}\n\nGrounded synthesis linking [[${splitPlan.pages[1 - pageIndex]!.path}]].\n\n## Sources\n\n- [[${page.sources[0]}]]\n`,
+                      },
+                    ],
+                  }),
+                },
+              },
+            ]);
+          }
+          if (call === 3 && pageIndex === 0) {
+            const correction = messages.at(-1);
+            assert.equal(correction?.role, "user");
+            assert.match(correction?.content ?? "", /PAGE VALIDATION REJECTED/);
+            assert.match(correction?.content ?? "", new RegExp(page.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+            return toolResponse([
+              {
+                id: `write-page-${pageIndex}`,
+                type: "function",
+                function: {
+                  name: "mind_write_wiki",
+                  arguments: JSON.stringify({
+                    files: [
+                      {
+                        path: page.path,
+                        content: `# ${page.title}\n\nGrounded synthesis linking [[${splitPlan.pages[1]!.path}]].\n\n## Sources\n\n- [[${page.sources[0]}]]\n`,
+                      },
+                    ],
+                  }),
+                },
+              },
+            ]);
+          }
+          return finalResponse({ summary: `Materialized ${page.path}.` });
+        },
+      } as unknown as BaseLLMProvider;
+    };
+    for (const [pageIndex, page] of splitPlan.pages.entries()) {
+      const pageRun = await runCharacterMindOperation({
+        root,
+        operation: "build-page",
+        value: JSON.stringify({ targetPage: page, pageMap: splitPlan.pages }),
+        plan: splitPlan,
+        page,
+        runtime: {
+          provider: pageProvider(pageIndex),
+          model: "regression-model",
+          prompt: "",
+          enableCaching: false,
+          maxTokens: 4096,
+        },
+        signal: new AbortController().signal,
+      });
+      assert.deepEqual(pageRun.result.created, []);
+      assert.deepEqual(pageRun.result.updated, [page.path]);
+    }
+    assert.deepEqual(pageSessionCalls, [4, 3]);
+
+    const restrictedPageTools = createCharacterMindTools(root, "build-page", createCharacterMindTrace(), {
+      plannedWikiPaths: splitPlan.pages.map((page) => page.path),
+      plannedSourcesByPage: Object.fromEntries(splitPlan.pages.map((page) => [page.path, page.sources])),
+      writableWikiPaths: [splitPlan.pages[0]!.path],
+    });
+    await assert.rejects(
+      restrictedPageTools.execute({
+        id: "wrong-page",
+        type: "function",
+        function: {
+          name: "mind_write_wiki",
+          arguments: JSON.stringify({
+            files: [{ path: splitPlan.pages[1]!.path, content: "# Wrong\n\n## Sources\n\n- [[raw/no.md]]\n" }],
+          }),
+        },
+      }),
+      /may not write wiki page/,
+    );
     await assert.rejects(
       ingestTools.execute({
         id: "hallucinated-alias",
