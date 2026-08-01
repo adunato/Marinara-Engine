@@ -169,7 +169,9 @@ import {
   buildCompletedDailyMemoryBuckets,
   buildDailyMemoriesContextBlock,
   buildDailyMemoryRetrievalQuery,
+  createDailyMemoryRetrievalSnapshot,
   ensureMissingDailyMemoryDays,
+  LAST_DAILY_MEMORY_RETRIEVAL_METADATA_KEY,
   retrieveDailyMemories,
 } from "../services/conversation/daily-memory.service.js";
 import {
@@ -2250,6 +2252,21 @@ export async function generateRoutes(app: FastifyInstance) {
                   now: nowInstant,
                   signal: abortController.signal,
                 });
+                try {
+                  const updatedChat = await chats.patchMetadata(
+                    input.chatId,
+                    {
+                      [LAST_DAILY_MEMORY_RETRIEVAL_METADATA_KEY]: createDailyMemoryRetrievalSnapshot(
+                        recalledDailyMemories,
+                        nowInstant,
+                      ),
+                    },
+                    { touchUpdatedAt: false },
+                  );
+                  if (updatedChat) chatMeta = parseExtra(updatedChat.metadata) as Record<string, unknown>;
+                } catch (err) {
+                  logger.warn(err, "[daily-memory] Failed to save the last retrieval for chat %s", input.chatId);
+                }
                 if (recalledDailyMemories.length > 0) {
                   const block = buildDailyMemoriesContextBlock(recalledDailyMemories, wrapFormat);
                   const insertAt = finalMessages.findIndex(

@@ -436,6 +436,50 @@ export interface RankedDailyMemory extends DailyMemory {
   rankingScore: number;
 }
 
+export const LAST_DAILY_MEMORY_RETRIEVAL_METADATA_KEY = "lastDailyMemoryRetrieval";
+
+export interface DailyMemoryRetrievalSnapshot {
+  queriedAt: string;
+  memories: Array<Pick<DailyMemory, "id" | "date" | "memory" | "importance">>;
+}
+
+export function createDailyMemoryRetrievalSnapshot(
+  memories: RankedDailyMemory[],
+  queriedAt: Date = new Date(),
+): DailyMemoryRetrievalSnapshot {
+  return {
+    queriedAt: queriedAt.toISOString(),
+    memories: memories.map(({ id, date, memory, importance }) => ({ id, date, memory, importance })),
+  };
+}
+
+export function normalizeDailyMemoryRetrievalSnapshot(value: unknown): DailyMemoryRetrievalSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.queriedAt !== "string" || !Number.isFinite(Date.parse(record.queriedAt))) return null;
+  if (!Array.isArray(record.memories)) return null;
+  const memories = record.memories.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const memory = entry as Record<string, unknown>;
+    const importance = Number(memory.importance);
+    if (
+      typeof memory.id !== "string" ||
+      !memory.id.trim() ||
+      typeof memory.date !== "string" ||
+      !memory.date.trim() ||
+      typeof memory.memory !== "string" ||
+      !memory.memory.trim() ||
+      !Number.isInteger(importance) ||
+      importance < 1 ||
+      importance > 5
+    ) {
+      return [];
+    }
+    return [{ id: memory.id, date: memory.date, memory: memory.memory, importance }];
+  });
+  return { queriedAt: new Date(record.queriedAt).toISOString(), memories };
+}
+
 export function buildDailyMemoryRetrievalQuery(
   messages: DailyMemorySourceMessage[],
   retrievalMessageCount: number,

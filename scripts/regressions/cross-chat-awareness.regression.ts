@@ -6,6 +6,10 @@ import {
   isCrossChatAwarenessEnabled,
   selectCrossChatSourceChats,
 } from "../../packages/server/src/services/conversation/awareness.service.js";
+import {
+  createDailyMemoryRetrievalSnapshot,
+  normalizeDailyMemoryRetrievalSnapshot,
+} from "../../packages/server/src/services/conversation/daily-memory.service.js";
 import { mergeConversationCharacterMemories } from "../../packages/server/src/services/generation/conversation-memory-context.js";
 
 const messages = Array.from({ length: 40 }, (_, index) => ({
@@ -32,6 +36,35 @@ const conversation = formatAwarenessConversation({
       "10.07.2026": { summary: "DAILY_SUMMARY_INCLUDED", keyDetails: ["DAILY_DETAIL_INCLUDED"] },
     },
   },
+  lastDailyMemoryRetrieval: createDailyMemoryRetrievalSnapshot(
+    [
+      {
+        id: "daily-memory-1",
+        chatId: "source-chat",
+        date: "11.07.2026",
+        memory: "LAST_QUERY_DAILY_MEMORY_INCLUDED <thinking>& verbatim",
+        importance: 5,
+        createdAt: "2026-07-12T04:05:00.000Z",
+        updatedAt: "2026-07-12T04:05:00.000Z",
+        semanticScore: 0.9,
+        recencyScore: 0.8,
+        rankingScore: 0.85,
+      },
+      {
+        id: "daily-memory-2",
+        chatId: "source-chat",
+        date: "08.07.2026",
+        memory: "EARLIER_DAY_QUERY_MEMORY_INCLUDED",
+        importance: 3,
+        createdAt: "2026-07-09T04:05:00.000Z",
+        updatedAt: "2026-07-09T04:05:00.000Z",
+        semanticScore: 0.88,
+        recencyScore: 0.7,
+        rankingScore: 0.8,
+      },
+    ],
+    new Date("2026-07-12T17:55:00.000Z"),
+  ),
   messages: [
     {
       id: "previous-logical-day-message",
@@ -80,6 +113,10 @@ assert.match(conversation, /<conversation_summaries>/u);
 assert.match(conversation, /<rolling_summary>[\s\S]*ROLLING_SUMMARY_INCLUDED/u);
 assert.match(conversation, /<weekly_summary>[\s\S]*WEEKLY_SUMMARY_INCLUDED[\s\S]*WEEKLY_DETAIL_INCLUDED/u);
 assert.match(conversation, /<daily_summary>[\s\S]*DAILY_SUMMARY_INCLUDED[\s\S]*DAILY_DETAIL_INCLUDED/u);
+assert.match(
+  conversation,
+  /<last_daily_memory_query>[\s\S]*Query run: 2026-07-12T17:55:00\.000Z[\s\S]*\[08\.07\.2026\][\s\S]*\(importance 3\/5\) EARLIER_DAY_QUERY_MEMORY_INCLUDED[\s\S]*\[11\.07\.2026\][\s\S]*\(importance 5\/5\) LAST_QUERY_DAILY_MEMORY_INCLUDED <thinking>& verbatim/u,
+);
 assert.match(conversation, /<current_day_conversation_transcript>/u);
 assert.match(conversation, /Morgan: FULL_TRANSCRIPT_MARKER_0_/u);
 assert.match(conversation, /Alice: FULL_TRANSCRIPT_MARKER_39_/u);
@@ -106,6 +143,7 @@ const conversationWithoutSummaryMemories = formatAwarenessConversation({
       "10.07.2026": { summary: "EXCLUDED_MEMORY_DAY_SUMMARY_INCLUDED", keyDetails: ["EXCLUDED_DAY_DETAIL"] },
     },
   },
+  lastDailyMemoryRetrieval: createDailyMemoryRetrievalSnapshot([], new Date("2026-07-12T17:56:00.000Z")),
   messages: [],
   now: new Date("2026-07-12T18:00:00.000Z"),
   timeZone: "UTC",
@@ -115,6 +153,34 @@ assert.match(conversationWithoutSummaryMemories, /EXCLUDED_MEMORY_WEEK_SUMMARY_I
 assert.match(conversationWithoutSummaryMemories, /EXCLUDED_MEMORY_DAY_SUMMARY_INCLUDED/u);
 assert.doesNotMatch(conversationWithoutSummaryMemories, /EXCLUDED_WEEK_DETAIL/u);
 assert.doesNotMatch(conversationWithoutSummaryMemories, /EXCLUDED_DAY_DETAIL/u);
+assert.doesNotMatch(conversationWithoutSummaryMemories, /<last_daily_memory_query>/u);
+
+assert.deepEqual(
+  normalizeDailyMemoryRetrievalSnapshot({
+    queriedAt: "2026-07-12T17:55:00.000Z",
+    memories: [
+      {
+        id: "valid-memory",
+        date: "10.07.2026",
+        memory: "VALID_SNAPSHOT_MEMORY",
+        importance: 4,
+      },
+      { id: "invalid-memory", date: "10.07.2026", memory: "INVALID_IMPORTANCE", importance: 8 },
+    ],
+  }),
+  {
+    queriedAt: "2026-07-12T17:55:00.000Z",
+    memories: [
+      {
+        id: "valid-memory",
+        date: "10.07.2026",
+        memory: "VALID_SNAPSHOT_MEMORY",
+        importance: 4,
+      },
+    ],
+  },
+);
+assert.equal(normalizeDailyMemoryRetrievalSnapshot({ queriedAt: "invalid", memories: [] }), null);
 
 const awareness = formatAwarenessContextBlock([conversation], "xml");
 assert.match(awareness, /<cross_chat_awareness>/u);
