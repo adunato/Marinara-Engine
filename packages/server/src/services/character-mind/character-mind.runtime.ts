@@ -314,6 +314,7 @@ export async function runCharacterMindOperation(input: {
   let finalContent = "";
   const toolFailures: string[] = [];
   const unresolvedMutationFailures = new Map<MutationTarget, string>();
+  const streamCompletion = input.operation === "build-page";
   try {
     await withLlmRequestTimeout(CHARACTER_MIND_OPERATION_TIMEOUT_MS, async () => {
       for (let round = 0; round < CHARACTER_MIND_MAX_TOOL_ROUNDS[input.operation]; round += 1) {
@@ -322,7 +323,7 @@ export async function runCharacterMindOperation(input: {
           temperature: 0.2,
           maxTokens: input.runtime.maxTokens,
           tools: toolContext.tools,
-          stream: false,
+          stream: streamCompletion,
           enableCaching: input.runtime.enableCaching,
           signal: input.signal,
         });
@@ -391,7 +392,7 @@ export async function runCharacterMindOperation(input: {
           model: input.runtime.model,
           temperature: 0.2,
           maxTokens: input.runtime.maxTokens,
-          stream: false,
+          stream: streamCompletion,
           enableCaching: input.runtime.enableCaching,
           signal: input.signal,
         });

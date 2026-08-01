@@ -349,6 +349,7 @@ async function main() {
         chatComplete: async (messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> => {
           call += 1;
           pageSessionCalls[pageIndex] = call;
+          assert.equal(options.stream, true, "page sessions stream every completion");
           if (call === 1) {
             assert.equal(messages.length, 1, "each page starts with a fresh message history");
             assert.equal(
