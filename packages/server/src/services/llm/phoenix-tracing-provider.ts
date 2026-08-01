@@ -11,6 +11,7 @@ import {
 const TRACER_NAME = "marinara-engine.llm";
 const DEFAULT_PROJECT_NAME = "marinara-engine";
 const DEFAULT_COLLECTOR_ENDPOINT = "http://localhost:6007";
+const MAX_RAW_STREAM_TRACE_CHARS = 4 * 1024 * 1024;
 
 let phoenixTracer: ReturnType<typeof trace.getTracer> | null = null;
 let phoenixRegistrationAttempted = false;
@@ -109,6 +110,146 @@ function invocationParameters(options: ChatOptions): Record<string, unknown> {
       forceTextualToolCalls: options.forceTextualToolCalls,
     }).filter(([, value]) => value !== undefined),
   );
+}
+
+type RawStreamSummary = {
+  dataEvents: number;
+  doneReceived: boolean;
+  invalidJsonEvents: number;
+  contentCharacters: number;
+  toolCallChunks: number;
+  toolArgumentCharacters: number;
+  messageToolCalls: number;
+  finishReason?: string;
+};
+
+function recordContentCharacters(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (!Array.isArray(value)) return 0;
+  return value.reduce((total, item) => {
+    if (typeof item === "string") return total + item.length;
+    if (!item || typeof item !== "object") return total;
+    const record = item as Record<string, unknown>;
+    return total + (typeof record.text === "string" ? record.text.length : 0);
+  }, 0);
+}
+
+function toolArgumentCharacters(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (value === undefined || value === null) return 0;
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function summarizeRawOpenAiStream(raw: string): RawStreamSummary {
+  const summary: RawStreamSummary = {
+    dataEvents: 0,
+    doneReceived: false,
+    invalidJsonEvents: 0,
+    contentCharacters: 0,
+    toolCallChunks: 0,
+    toolArgumentCharacters: 0,
+    messageToolCalls: 0,
+  };
+
+  for (const line of raw.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const payload = trimmed.slice(5).trimStart();
+    summary.dataEvents += 1;
+    if (payload === "[DONE]") {
+      summary.doneReceived = true;
+      continue;
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(payload) as Record<string, unknown>;
+    } catch {
+      summary.invalidJsonEvents += 1;
+      continue;
+    }
+
+    if (!Array.isArray(parsed.choices)) continue;
+    for (const rawChoice of parsed.choices) {
+      if (!rawChoice || typeof rawChoice !== "object") continue;
+      const choice = rawChoice as Record<string, unknown>;
+      if (typeof choice.finish_reason === "string") summary.finishReason = choice.finish_reason;
+
+      for (const [kind, value] of [
+        ["delta", choice.delta],
+        ["message", choice.message],
+      ] as const) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const part = value as Record<string, unknown>;
+        summary.contentCharacters += recordContentCharacters(part.content);
+        if (!Array.isArray(part.tool_calls)) continue;
+        if (kind === "delta") summary.toolCallChunks += part.tool_calls.length;
+        else summary.messageToolCalls += part.tool_calls.length;
+        for (const rawToolCall of part.tool_calls) {
+          if (!rawToolCall || typeof rawToolCall !== "object") continue;
+          const toolCall = rawToolCall as Record<string, unknown>;
+          const fn =
+            toolCall.function && typeof toolCall.function === "object" && !Array.isArray(toolCall.function)
+              ? (toolCall.function as Record<string, unknown>)
+              : toolCall;
+          summary.toolArgumentCharacters += toolArgumentCharacters(
+            fn.arguments ?? fn.parameters ?? toolCall.arguments ?? toolCall.parameters,
+          );
+        }
+      }
+    }
+  }
+
+  return summary;
+}
+
+function createRawStreamCapture(options: ChatOptions) {
+  if (!(options.stream ?? Boolean(options.onToken))) return null;
+  const startedAt = Date.now();
+  const originalObserver = options.onRawStreamChunk;
+  let rawResponse = "";
+  let rawCharacters = 0;
+  let networkChunks = 0;
+  let firstChunkMs: number | undefined;
+  let truncated = false;
+
+  return {
+    options: {
+      ...options,
+      onRawStreamChunk: (chunk: string) => {
+        networkChunks += 1;
+        rawCharacters += chunk.length;
+        firstChunkMs ??= Date.now() - startedAt;
+        const remaining = MAX_RAW_STREAM_TRACE_CHARS - rawResponse.length;
+        if (remaining > 0) rawResponse += chunk.slice(0, remaining);
+        if (chunk.length > remaining) truncated = true;
+        originalObserver?.(chunk);
+      },
+    } satisfies ChatOptions,
+    record(span: NonNullable<ReturnType<typeof startLlmSpan>>) {
+      const summary = summarizeRawOpenAiStream(rawResponse);
+      span.setAttributes({
+        "llm.stream.raw_response": rawResponse,
+        "llm.stream.raw_character_count": rawCharacters,
+        "llm.stream.network_chunk_count": networkChunks,
+        "llm.stream.raw_response_truncated": truncated,
+        "llm.stream.capture_limit_chars": MAX_RAW_STREAM_TRACE_CHARS,
+        "llm.stream.sse_data_event_count": summary.dataEvents,
+        "llm.stream.sse_done_received": summary.doneReceived,
+        "llm.stream.invalid_json_event_count": summary.invalidJsonEvents,
+        "llm.stream.content_character_count": summary.contentCharacters,
+        "llm.stream.tool_call_chunk_count": summary.toolCallChunks,
+        "llm.stream.tool_argument_character_count": summary.toolArgumentCharacters,
+        "llm.stream.message_tool_call_count": summary.messageToolCalls,
+        ...(firstChunkMs !== undefined ? { "llm.stream.first_chunk_ms": firstChunkMs } : {}),
+        ...(summary.finishReason ? { "llm.stream.provider_finish_reason": summary.finishReason } : {}),
+      });
+    },
+  };
 }
 
 function startLlmSpan(providerName: string, messages: ChatMessage[], options: ChatOptions) {
@@ -269,15 +410,21 @@ class PhoenixTracingProvider extends BaseLLMProvider {
   override async chatComplete(messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> {
     const span = startLlmSpan(this.providerName, messages, options);
     if (!span) return this.provider.chatComplete(messages, options);
+    const rawStreamCapture = createRawStreamCapture(options);
 
     try {
-      const result = await this.provider.chatComplete(messages, options);
+      const result = await this.provider.chatComplete(messages, rawStreamCapture?.options ?? options);
       recordResult(span, this.providerName, options.model, result);
       return result;
     } catch (error) {
       recordError(span, error);
       throw error;
     } finally {
+      try {
+        rawStreamCapture?.record(span);
+      } catch (error) {
+        logger.warn(error, "[llm-tracing] Could not record raw Phoenix stream");
+      }
       endSpan(span);
     }
   }

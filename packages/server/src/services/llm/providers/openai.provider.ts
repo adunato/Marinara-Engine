@@ -84,11 +84,7 @@ export function normalizeOpenAIChatCompletionsResponseFormat(
 
   if (responseFormat.type === "json_schema") {
     if (responseFormat.json_schema && typeof responseFormat.json_schema === "object") return responseFormat;
-    if (
-      typeof responseFormat.name === "string" &&
-      responseFormat.schema &&
-      typeof responseFormat.schema === "object"
-    ) {
+    if (typeof responseFormat.name === "string" && responseFormat.schema && typeof responseFormat.schema === "object") {
       return {
         type: "json_schema",
         json_schema: {
@@ -237,6 +233,15 @@ export class OpenAIProvider extends BaseLLMProvider {
   private static extractSseEvent(trimmedLine: string): string | null {
     if (!trimmedLine.startsWith("event:")) return null;
     return trimmedLine.slice(6).trimStart();
+  }
+
+  private static emitRawStreamChunk(options: ChatOptions, chunk: string): void {
+    if (!chunk || !options.onRawStreamChunk) return;
+    try {
+      options.onRawStreamChunk(chunk);
+    } catch (error) {
+      logger.warn(error, "[OpenAI] Raw stream observer failed");
+    }
   }
 
   private static extractProviderErrorMessage(json: Record<string, unknown>): string {
@@ -1185,7 +1190,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       while (true) {
         const { done, value } = await reader.read();
 
-        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
+        OpenAIProvider.emitRawStreamChunk(options, decoded);
+        buffer += decoded;
         const lines = buffer.split(/\r?\n/);
         buffer = done ? "" : (lines.pop() ?? "");
 
@@ -1488,7 +1495,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       while (true) {
         const { done, value } = await reader.read();
 
-        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
+        OpenAIProvider.emitRawStreamChunk(options, decoded);
+        buffer += decoded;
         const lines = buffer.split(/\r?\n/);
         buffer = done ? "" : (lines.pop() ?? "");
 
@@ -2008,7 +2017,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       while (true) {
         const { done, value } = await reader.read();
 
-        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
+        OpenAIProvider.emitRawStreamChunk(options, decoded);
+        buffer += decoded;
         const lines = buffer.split(/\r?\n/);
         buffer = done ? "" : (lines.pop() ?? "");
 
@@ -2244,7 +2255,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       while (true) {
         const { done, value } = await reader.read();
 
-        sseBuffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
+        OpenAIProvider.emitRawStreamChunk(options, decoded);
+        sseBuffer += decoded;
         const lines = sseBuffer.split(/\r?\n/);
         sseBuffer = done ? "" : (lines.pop() ?? "");
 

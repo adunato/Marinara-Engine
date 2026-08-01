@@ -45,9 +45,7 @@ export function llmFetch(
     maxResponseBytes: 50 * 1024 * 1024,
     agentOptions:
       init?.agentOptions ??
-      (requestTimeoutMs
-        ? { bodyTimeout: requestTimeoutMs, headersTimeout: requestTimeoutMs }
-        : llmAgentOptions),
+      (requestTimeoutMs ? { bodyTimeout: requestTimeoutMs, headersTimeout: requestTimeoutMs } : llmAgentOptions),
     bufferResponse,
     decodeCompressedResponse: init?.decodeCompressedResponse ?? bufferResponse,
   });
@@ -153,6 +151,8 @@ export interface ChatOptions {
   captureReasoning?: boolean;
   /** Callback for streaming text tokens as they arrive (used in tool path) */
   onToken?: (chunk: string) => void | Promise<void>;
+  /** Internal diagnostics callback for decoded provider response chunks before stream parsing. */
+  onRawStreamChunk?: (chunk: string) => void;
   /** Enable extended thinking (reasoning models) */
   enableThinking?: boolean;
   /** Reasoning effort level for models that support it */

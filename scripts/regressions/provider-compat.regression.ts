@@ -17,6 +17,7 @@ import {
   normalizeOpenAIChatCompletionsResponseFormat,
   OpenAIProvider,
 } from "../../packages/server/src/services/llm/providers/openai.provider.js";
+import { summarizeRawOpenAiStream } from "../../packages/server/src/services/llm/phoenix-tracing-provider.js";
 import {
   isOpenRouterApiUrl,
   OPENROUTER_APP_CATEGORIES,
@@ -115,10 +116,42 @@ try {
     await collectProviderOutput(provider, { model: "custom-model", stream: false }),
     "recovered final message",
   );
+  const rawStreamChunks: string[] = [];
+  const completion = await provider.chatComplete([{ role: "user", content: "test raw stream" }], {
+    model: "custom-model",
+    stream: true,
+    onRawStreamChunk: (chunk) => rawStreamChunks.push(chunk),
+  });
+  assert.equal(completion.content, "recovered final message");
+  assert.equal(rawStreamChunks.join(""), gatewaySseBody);
+  assert.deepEqual(summarizeRawOpenAiStream(rawStreamChunks.join("")), {
+    dataEvents: 3,
+    doneReceived: true,
+    invalidJsonEvents: 0,
+    contentCharacters: "recovered final message".length,
+    toolCallChunks: 0,
+    toolArgumentCharacters: 0,
+    messageToolCalls: 0,
+    finishReason: "stop",
+  });
+  const toolArgumentChunks = ['{"files":[', "]}"];
+  const toolSseBody = [
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "mind_write_wiki", arguments: toolArgumentChunks[0] } }] }, finish_reason: null }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: toolArgumentChunks[1] } }] }, finish_reason: "tool_calls" }] })}`,
+    "data: [DONE]",
+  ].join("\n");
+  assert.deepEqual(summarizeRawOpenAiStream(toolSseBody), {
+    dataEvents: 3,
+    doneReceived: true,
+    invalidJsonEvents: 0,
+    contentCharacters: 0,
+    toolCallChunks: 2,
+    toolArgumentCharacters: toolArgumentChunks.join("").length,
+    messageToolCalls: 0,
+    finishReason: "tool_calls",
+  });
 } finally {
-  await new Promise<void>((resolve, reject) =>
-    gatewayServer.close((error) => (error ? reject(error) : resolve())),
-  );
+  await new Promise<void>((resolve, reject) => gatewayServer.close((error) => (error ? reject(error) : resolve())));
 }
 
 let customParametersRequestBody: Record<string, unknown> | null = null;
@@ -294,9 +327,7 @@ try {
   assert.equal(capturedOpenRouterBody.awesomesauce, "enabled");
   assert.deepEqual(capturedOpenRouterBody.nested, { connection: true, shared: "chat", level: 3 });
 } finally {
-  await new Promise<void>((resolve, reject) =>
-    openRouterServer.close((error) => (error ? reject(error) : resolve())),
-  );
+  await new Promise<void>((resolve, reject) => openRouterServer.close((error) => (error ? reject(error) : resolve())));
 }
 
 function assertStrictObjects(value: unknown): void {
@@ -536,15 +567,12 @@ const callbackPrimary = new TokenCallbackFailureProvider();
 const callbackFallback = new RegressionProvider(["must not replace visible callback output"]);
 let callbackOutput = "";
 await assert.rejects(
-  collectProviderOutput(
-    new ConnectionFallbackProvider(callbackPrimary, callbackFallback, fallbackConnection, "main"),
-    {
-      model: "primary-model",
-      onToken: (chunk) => {
-        callbackOutput += chunk;
-      },
+  collectProviderOutput(new ConnectionFallbackProvider(callbackPrimary, callbackFallback, fallbackConnection, "main"), {
+    model: "primary-model",
+    onToken: (chunk) => {
+      callbackOutput += chunk;
     },
-  ),
+  }),
   /stream interrupted after callback output/,
 );
 assert.equal(callbackOutput, "visible callback output");
