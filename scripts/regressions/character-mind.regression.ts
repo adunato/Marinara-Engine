@@ -17,13 +17,21 @@ import {
   snapshotDailyMemories,
   stableJson,
   verifyRawMarkdown,
+  writeMindIndex,
 } from "../../packages/server/src/services/character-mind/character-mind.files.js";
 import {
   appendMindLog,
   hasSuccessfulBuild,
   parseMindLog,
+  successfulBuildPagesSinceLatestMap,
   successfulIngestRevisions,
 } from "../../packages/server/src/services/character-mind/character-mind.log.js";
+import {
+  characterMindPlanMatchesSources,
+  pendingCharacterMindPages,
+  parseCharacterMindPlan,
+  renderCharacterMindPlan,
+} from "../../packages/server/src/services/character-mind/character-mind.plan.js";
 import {
   runCharacterMindOperation,
   validateCharacterMindPlanResult,
@@ -67,7 +75,6 @@ async function main() {
       await readFile(join(root, ...second.path.split("/")), "utf8"),
       new RegExp(`supersedes: ${first.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
     );
-
     const day = await snapshotDailyMemories(root, {
       chatId: "chat-1",
       date: "2026-07-30",
@@ -133,6 +140,17 @@ async function main() {
       [day.path, autoSummary.path],
     );
     assert.equal(plan.pages.length, 1);
+    const planMarkdown = renderCharacterMindPlan(plan);
+    assert.deepEqual(parseCharacterMindPlan(planMarkdown), plan);
+    assert.equal(characterMindPlanMatchesSources(plan, [day.path, autoSummary.path]), true);
+    assert.equal(characterMindPlanMatchesSources(plan, [day.path]), false);
+    assert.equal(parseCharacterMindPlan("# Index\n\nManually damaged"), null);
+    assert.equal(
+      parseCharacterMindPlan(
+        "# Index\n\n## Corpus Summary\n\nSummary\n\n## Planned Pages\n\n### [[../bad.md|Bad]]\n\nBad path.\n\n#### Sources\n\n- [[raw/bad.md]]\n\n## Excluded Sources\n\nNone.\n",
+      ),
+      null,
+    );
     assert.throws(
       () =>
         validateCharacterMindPlanResult(
@@ -240,10 +258,16 @@ async function main() {
       finishReason: "stop",
     });
     let plannerCall = 0;
+    const plannerSignals: AbortSignal[] = [];
+    const plannerParentSignal = new AbortController().signal;
     const recoveringProvider = {
-      chatComplete: async (messages: ChatMessage[], _options: ChatOptions): Promise<ChatCompletionResult> => {
+      chatComplete: async (messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> => {
         plannerCall += 1;
+        assert.ok(options.signal);
+        plannerSignals.push(options.signal);
         if (plannerCall === 1) {
+          assert.match(messages[0]?.content ?? "", /--- BEGIN SCHEMA\.md ---/);
+          assert.match(messages[0]?.content ?? "", /--- BEGIN index\.md ---/);
           return toolResponse([
             {
               id: "initial-partial-read",
@@ -251,7 +275,7 @@ async function main() {
               function: {
                 name: "mind_read_markdown",
                 arguments: JSON.stringify({
-                  reads: [{ path: "SCHEMA.md" }, { path: "index.md" }, { path: day.path }],
+                  reads: [{ path: day.path }],
                 }),
               },
             },
@@ -314,9 +338,14 @@ async function main() {
         enableCaching: false,
         maxTokens: 4096,
       },
-      signal: new AbortController().signal,
+      signal: plannerParentSignal,
     });
     assert.equal(plannerCall, 4);
+    assert.equal(
+      plannerSignals.every((signal) => signal !== plannerParentSignal),
+      true,
+    );
+    assert.equal(new Set(plannerSignals).size, plannerSignals.length, "each provider turn gets a fresh timeout signal");
     assert.equal(
       "summary" in recoveredPlan.result ? recoveredPlan.result.summary : null,
       "Mapped the complete corpus.",
@@ -342,6 +371,7 @@ async function main() {
       excludedSources: [],
     };
     const pageSessionCalls: number[] = [];
+    await writeMindIndex(root, renderCharacterMindPlan(splitPlan));
     const pageProvider = (pageIndex: number) => {
       let call = 0;
       const page = splitPlan.pages[pageIndex]!;
@@ -363,7 +393,7 @@ async function main() {
                 function: {
                   name: "mind_read_markdown",
                   arguments: JSON.stringify({
-                    reads: [{ path: "SCHEMA.md" }, { path: "index.md" }, { path: page.sources[0] }],
+                    reads: [{ path: page.sources[0] }],
                   }),
                 },
               },
@@ -436,6 +466,50 @@ async function main() {
       assert.deepEqual(pageRun.result.updated, [page.path]);
     }
     assert.deepEqual(pageSessionCalls, [4, 3]);
+
+    const checkpointEntries = parseMindLog(`# Log
+
+## [2026-08-01T08:00:00.000Z] build-map | 2 current sources
+
+- status: success
+- read: none
+- created: none
+- updated: none
+
+## [2026-08-01T08:01:00.000Z] build-page | wiki/relationship-with-alex.md
+
+- status: success
+- read: none
+- created: none
+- updated: none
+
+## [2026-08-01T08:02:00.000Z] build-page | wiki/alex.md
+
+- status: failure
+- read: none
+- created: none
+- updated: none
+
+## [2026-08-01T08:03:00.000Z] build-page | wiki/alex.md
+
+- status: success
+- read: none
+- created: none
+- updated: none
+`);
+    assert.deepEqual([...successfulBuildPagesSinceLatestMap(checkpointEntries)].sort(), [
+      "wiki/alex.md",
+      "wiki/relationship-with-alex.md",
+    ]);
+    assert.deepEqual(
+      pendingCharacterMindPages(
+        splitPlan,
+        new Set(["wiki/relationship-with-alex.md", "wiki/alex.md"]),
+        new Set(["wiki/relationship-with-alex.md"]),
+      ).map((page) => page.path),
+      ["wiki/alex.md"],
+      "a successful log checkpoint is reusable only while its page still exists",
+    );
 
     const restrictedPageTools = createCharacterMindTools(root, "build-page", createCharacterMindTrace(), {
       plannedWikiPaths: splitPlan.pages.map((page) => page.path),

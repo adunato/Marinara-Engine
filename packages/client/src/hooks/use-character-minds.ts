@@ -44,7 +44,11 @@ function useCharacterMindMutation<T>(
 }
 
 export function useBuildCharacterMind(chatId: string, characterId: string) {
-  return useCharacterMindMutation<CharacterMindBuildOrSyncResult>(chatId, characterId, "build");
+  return useCharacterMindMutation<CharacterMindBuildOrSyncResult>(chatId, characterId, "build", { restart: false });
+}
+
+export function useRestartCharacterMind(chatId: string, characterId: string) {
+  return useCharacterMindMutation<CharacterMindBuildOrSyncResult>(chatId, characterId, "build", { restart: true });
 }
 
 export function useSyncCharacterMind(chatId: string, characterId: string) {

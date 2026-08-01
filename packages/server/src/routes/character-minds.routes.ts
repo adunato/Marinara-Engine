@@ -33,13 +33,24 @@ export async function characterMindsRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post<{ Params: Params }>("/:chatId/character-minds/:characterId/build", async (request, reply) => {
-    try {
-      return await buildCharacterMind(app.db, request.params.chatId, request.params.characterId);
-    } catch (error) {
-      return sendError(reply, error);
-    }
-  });
+  app.post<{ Params: Params; Body: { restart?: boolean } }>(
+    "/:chatId/character-minds/:characterId/build",
+    async (request, reply) => {
+      if (request.body?.restart !== undefined && typeof request.body.restart !== "boolean") {
+        return reply.status(400).send({ error: "restart must be a boolean" });
+      }
+      try {
+        return await buildCharacterMind(
+          app.db,
+          request.params.chatId,
+          request.params.characterId,
+          request.body?.restart === true,
+        );
+      } catch (error) {
+        return sendError(reply, error);
+      }
+    },
+  );
 
   app.post<{ Params: Params; Body: { maxSources?: number } }>(
     "/:chatId/character-minds/:characterId/sync",

@@ -14,6 +14,7 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   Square,
@@ -29,6 +30,7 @@ import {
   useLintCharacterMind,
   useOpenCharacterMindFolder,
   useQueryCharacterMind,
+  useRestartCharacterMind,
   useSyncCharacterMind,
 } from "../../hooks/use-character-minds";
 import { useConnections } from "../../hooks/use-connections";
@@ -108,6 +110,7 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
 
   const status = useCharacterMindStatus(chatId, characterId, open && !!characterId);
   const build = useBuildCharacterMind(chatId, characterId);
+  const restart = useRestartCharacterMind(chatId, characterId);
   const sync = useSyncCharacterMind(chatId, characterId);
   const lint = useLintCharacterMind(chatId, characterId);
   const cancel = useCancelCharacterMind(chatId, characterId);
@@ -129,7 +132,7 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
   }, [characterId]);
 
   const activeOperation = status.data?.activeOperation ?? null;
-  const requestPending = build.isPending || sync.isPending || lint.isPending || query.isPending;
+  const requestPending = build.isPending || restart.isPending || sync.isPending || lint.isPending || query.isPending;
   const operationActive = Boolean(activeOperation) || requestPending;
   const selectedConnectionMissing =
     !!connectionDraft &&
@@ -152,7 +155,9 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
   const runBuild = async () => {
     if (
       !window.confirm(
-        "Build this Character Mind now? Marinara will first map the complete Character Card, auto-summary, and Daily Memory corpus, then generate the mapped wiki pages.",
+        status.data?.initialized
+          ? "Resume this Character Mind Build from its saved map and completed pages?"
+          : "Build this Character Mind now? Marinara will first map the complete Character Card, auto-summary, and Daily Memory corpus, then generate the mapped wiki pages.",
       )
     )
       return;
@@ -163,6 +168,23 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
       toast.success(value.pendingSources.length ? "Build paused with pending sources" : "Character Mind built");
     } catch (error) {
       toast.error(errorMessage(error, "Character Mind build failed"));
+    }
+  };
+
+  const restartBuild = async () => {
+    if (
+      !window.confirm(
+        "Restart this Character Mind Build from scratch? Existing generated wiki pages and the saved map will be deleted. Raw sources are preserved.",
+      )
+    )
+      return;
+    setOperationResult(null);
+    try {
+      const value = await restart.mutateAsync();
+      setOperationResult({ kind: "build", value });
+      toast.success("Character Mind rebuilt");
+    } catch (error) {
+      toast.error(errorMessage(error, "Character Mind restart failed"));
     }
   };
 
@@ -310,11 +332,7 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
                       <p className="mt-1 text-[0.625rem] text-red-400">Could not load Character Mind status.</p>
                     ) : (
                       <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                        {status.data?.built
-                          ? "Built"
-                          : status.data?.initialized
-                            ? "Build incomplete"
-                            : "Not built"}
+                        {status.data?.built ? "Built" : status.data?.initialized ? "Build incomplete" : "Not built"}
                         {status.data?.pendingSources.length
                           ? ` · ${status.data.pendingSources.length} source${status.data.pendingSources.length === 1 ? "" : "s"} pending`
                           : status.data?.built
@@ -340,16 +358,34 @@ export function CharacterMindModal({ chatId, characterIds, characters, open, onC
 
               <div className="flex flex-wrap gap-2">
                 {!status.data?.built ? (
-                  <button
-                    type="button"
-                    data-testid="build-character-mind"
-                    onClick={() => void runBuild()}
-                    disabled={operationActive || status.isLoading}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] disabled:opacity-50"
-                  >
-                    {build.isPending ? <Loader2 size="0.75rem" className="animate-spin" /> : <Play size="0.75rem" />}
-                    Build
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      data-testid="build-character-mind"
+                      onClick={() => void runBuild()}
+                      disabled={operationActive || status.isLoading}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] disabled:opacity-50"
+                    >
+                      {build.isPending ? <Loader2 size="0.75rem" className="animate-spin" /> : <Play size="0.75rem" />}
+                      {status.data?.initialized ? "Resume Build" : "Build"}
+                    </button>
+                    {status.data?.initialized && (
+                      <button
+                        type="button"
+                        data-testid="restart-character-mind"
+                        onClick={() => void restartBuild()}
+                        disabled={operationActive || status.isLoading}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/30 px-3 py-2 text-xs font-medium text-red-400 hover:bg-red-400/10 disabled:opacity-50"
+                      >
+                        {restart.isPending ? (
+                          <Loader2 size="0.75rem" className="animate-spin" />
+                        ) : (
+                          <RotateCcw size="0.75rem" />
+                        )}
+                        Restart Build
+                      </button>
+                    )}
+                  </>
                 ) : (
                   <>
                     <button

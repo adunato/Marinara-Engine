@@ -172,11 +172,7 @@ function capturedAtFilename(date = new Date()): string {
   return date.toISOString().replace(/[-:]/g, "").replace(".", "");
 }
 
-async function newestRawPath(
-  root: string,
-  area: RawArea,
-  prefix = "",
-): Promise<string | null> {
+async function newestRawPath(root: string, area: RawArea, prefix = ""): Promise<string | null> {
   const dir = join(root, "raw", area);
   if (!(await pathExists(dir))) return null;
   const names = (await readdir(dir)).filter((name) => name.endsWith(".md") && name.startsWith(prefix));
@@ -277,6 +273,10 @@ export async function resetMindSynthesis(root: string): Promise<void> {
 
 export async function writeMindIndex(root: string, content: string): Promise<void> {
   await atomicWrite((await resolveMindMarkdown(root, "index.md")).path, content);
+}
+
+export async function readMindIndex(root: string): Promise<string> {
+  return readFile((await resolveMindMarkdown(root, "index.md")).path, "utf8");
 }
 
 export async function verifyRawMarkdown(

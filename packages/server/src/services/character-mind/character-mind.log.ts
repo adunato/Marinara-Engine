@@ -99,6 +99,23 @@ export function hasSuccessfulBuild(entries: ParsedMindLogEntry[]): boolean {
   return entries.some((entry) => entry.operation === "build" && entry.status === "success");
 }
 
+export function successfulBuildPagesSinceLatestMap(entries: ParsedMindLogEntry[]): Set<string> {
+  let latestMap = -1;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.operation === "build-map" && entry.status === "success") {
+      latestMap = index;
+      break;
+    }
+  }
+  if (latestMap < 0) return new Set();
+  const pageStatus = new Map<string, "success" | "failure">();
+  for (const entry of entries.slice(latestMap + 1)) {
+    if (entry.operation === "build-page") pageStatus.set(entry.subject, entry.status);
+  }
+  return new Set([...pageStatus].filter(([, status]) => status === "success").map(([path]) => path));
+}
+
 export function ingestsSinceLastLint(entries: ParsedMindLogEntry[]): number {
   let lastLint = -1;
   for (let index = entries.length - 1; index >= 0; index -= 1) {

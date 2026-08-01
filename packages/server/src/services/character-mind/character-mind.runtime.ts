@@ -19,7 +19,7 @@ import { createAgentsStorage } from "../storage/agents.storage.js";
 import { createConnectionsStorage } from "../storage/connections.storage.js";
 import {
   CHARACTER_MIND_MAX_TOOL_ROUNDS,
-  CHARACTER_MIND_OPERATION_TIMEOUT_MS,
+  CHARACTER_MIND_REQUEST_TIMEOUT_MS,
   characterMindPrompt,
 } from "./character-mind.constants.js";
 import { listMarkdown, normalizeMindPath } from "./character-mind.files.js";
@@ -304,10 +304,27 @@ export async function runCharacterMindOperation(input: {
       : undefined,
     writableWikiPaths: input.page ? [input.page.path] : undefined,
   });
+  const preloadedResult = JSON.parse(
+    await toolContext.execute({
+      id: "marinara-required-files",
+      type: "function",
+      function: {
+        name: "mind_read_markdown",
+        arguments: JSON.stringify({ reads: [{ path: "SCHEMA.md" }, { path: "index.md" }] }),
+      },
+    }),
+  ) as { reads?: Array<{ path?: unknown; content?: unknown }> };
+  const preloadedMarkdown = (preloadedResult.reads ?? [])
+    .filter(
+      (read): read is { path: string; content: string } =>
+        typeof read.path === "string" && typeof read.content === "string",
+    )
+    .map((read) => `--- BEGIN ${read.path} ---\n${read.content}\n--- END ${read.path} ---`)
+    .join("\n\n");
   const messages: ChatMessage[] = [
     {
       role: "system",
-      content: `${characterMindPrompt(input.operation, input.value)}${input.runtime.prompt ? `\n\nADDITIONAL USER-CONFIGURED AGENT GUIDANCE:\n${input.runtime.prompt}` : ""}`,
+      content: `${characterMindPrompt(input.operation, input.value)}\n\nMANDATORY MARKDOWN FILES PRELOADED BY MARINARA:\n${preloadedMarkdown}${input.runtime.prompt ? `\n\nADDITIONAL USER-CONFIGURED AGENT GUIDANCE:\n${input.runtime.prompt}` : ""}`,
       contextKind: "prompt",
     },
   ];
@@ -315,90 +332,85 @@ export async function runCharacterMindOperation(input: {
   const toolFailures: string[] = [];
   const unresolvedMutationFailures = new Map<MutationTarget, string>();
   const streamCompletion = input.operation === "build-page";
+  const complete = (allowTools = true) =>
+    withLlmRequestTimeout(CHARACTER_MIND_REQUEST_TIMEOUT_MS, () =>
+      input.runtime.provider.chatComplete(messages, {
+        model: input.runtime.model,
+        temperature: 0.2,
+        maxTokens: input.runtime.maxTokens,
+        ...(allowTools ? { tools: toolContext.tools } : {}),
+        stream: streamCompletion,
+        enableCaching: input.runtime.enableCaching,
+        signal: AbortSignal.any([input.signal, AbortSignal.timeout(CHARACTER_MIND_REQUEST_TIMEOUT_MS)]),
+      }),
+    );
   try {
-    await withLlmRequestTimeout(CHARACTER_MIND_OPERATION_TIMEOUT_MS, async () => {
-      for (let round = 0; round < CHARACTER_MIND_MAX_TOOL_ROUNDS[input.operation]; round += 1) {
-        const response = await input.runtime.provider.chatComplete(messages, {
-          model: input.runtime.model,
-          temperature: 0.2,
-          maxTokens: input.runtime.maxTokens,
-          tools: toolContext.tools,
-          stream: streamCompletion,
-          enableCaching: input.runtime.enableCaching,
-          signal: input.signal,
-        });
-        if (!response.toolCalls.length) {
-          const candidateContent = response.content?.trim() ?? "";
-          if (input.operation === "plan") {
-            const validationError = characterMindPlanCandidateError(candidateContent, trace, sourcePaths);
-            if (validationError) {
-              messages.push({
-                role: "assistant",
-                content: response.content ?? "",
-                ...(response.providerMetadata ? { providerMetadata: response.providerMetadata } : {}),
-              });
-              messages.push({
-                role: "user",
-                content: `MARINARA PLAN VALIDATION REJECTED THIS CANDIDATE:\n${validationError}\n\nContinue the same planning operation. Correct every failed or missing read using the exact manifest paths; mind_read_markdown accepts at most 12 files per call. Then return a complete replacement plan that satisfies the original contract.`,
-                contextKind: "prompt",
-              });
-              continue;
-            }
+    for (let round = 0; round < CHARACTER_MIND_MAX_TOOL_ROUNDS[input.operation]; round += 1) {
+      const response = await complete();
+      if (!response.toolCalls.length) {
+        const candidateContent = response.content?.trim() ?? "";
+        if (input.operation === "plan") {
+          const validationError = characterMindPlanCandidateError(candidateContent, trace, sourcePaths);
+          if (validationError) {
+            messages.push({
+              role: "assistant",
+              content: response.content ?? "",
+              ...(response.providerMetadata ? { providerMetadata: response.providerMetadata } : {}),
+            });
+            messages.push({
+              role: "user",
+              content: `MARINARA PLAN VALIDATION REJECTED THIS CANDIDATE:\n${validationError}\n\nContinue the same planning operation. Correct every failed or missing read using the exact manifest paths; mind_read_markdown accepts at most 12 files per call. Then return a complete replacement plan that satisfies the original contract.`,
+              contextKind: "prompt",
+            });
+            continue;
           }
-          if (input.operation === "build-page" && input.page) {
-            const validationError = characterMindPageCandidateError(candidateContent, trace, input.page);
-            if (validationError) {
-              messages.push({
-                role: "assistant",
-                content: response.content ?? "",
-                ...(response.providerMetadata ? { providerMetadata: response.providerMetadata } : {}),
-              });
-              messages.push({
-                role: "user",
-                content: `MARINARA PAGE VALIDATION REJECTED THIS CANDIDATE:\n${validationError}\n\nContinue the same page-materialization operation. Correct every missing read or write with the advertised tools, then return a complete replacement result that satisfies the original contract. mind_read_markdown accepts at most 12 files per call.`,
-                contextKind: "prompt",
-              });
-              continue;
-            }
-          }
-          finalContent = candidateContent;
-          break;
         }
-        messages.push({
-          role: "assistant",
-          content: response.content ?? "",
-          tool_calls: response.toolCalls,
-          ...(response.providerMetadata ? { providerMetadata: response.providerMetadata } : {}),
-        });
-        for (const call of response.toolCalls) {
-          let content: string;
-          try {
-            content = await toolContext.execute(call);
-            const target = mutationTarget(call.function.name);
-            if (target) unresolvedMutationFailures.delete(target);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Tool failed";
-            const failure = `${call.function.name}: ${message}`;
-            toolFailures.push(failure);
-            const target = mutationTarget(call.function.name);
-            if (target) unresolvedMutationFailures.set(target, failure);
-            content = JSON.stringify({ error: message });
+        if (input.operation === "build-page" && input.page) {
+          const validationError = characterMindPageCandidateError(candidateContent, trace, input.page);
+          if (validationError) {
+            messages.push({
+              role: "assistant",
+              content: response.content ?? "",
+              ...(response.providerMetadata ? { providerMetadata: response.providerMetadata } : {}),
+            });
+            messages.push({
+              role: "user",
+              content: `MARINARA PAGE VALIDATION REJECTED THIS CANDIDATE:\n${validationError}\n\nContinue the same page-materialization operation. Correct every missing read or write with the advertised tools, then return a complete replacement result that satisfies the original contract. mind_read_markdown accepts at most 12 files per call.`,
+              contextKind: "prompt",
+            });
+            continue;
           }
-          messages.push({ role: "tool", content, tool_call_id: call.id });
         }
+        finalContent = candidateContent;
+        break;
       }
-      if (!finalContent) {
-        const response = await input.runtime.provider.chatComplete(messages, {
-          model: input.runtime.model,
-          temperature: 0.2,
-          maxTokens: input.runtime.maxTokens,
-          stream: streamCompletion,
-          enableCaching: input.runtime.enableCaching,
-          signal: input.signal,
-        });
-        finalContent = response.content?.trim() ?? "";
+      messages.push({
+        role: "assistant",
+        content: response.content ?? "",
+        tool_calls: response.toolCalls,
+        ...(response.providerMetadata ? { providerMetadata: response.providerMetadata } : {}),
+      });
+      for (const call of response.toolCalls) {
+        let content: string;
+        try {
+          content = await toolContext.execute(call);
+          const target = mutationTarget(call.function.name);
+          if (target) unresolvedMutationFailures.delete(target);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Tool failed";
+          const failure = `${call.function.name}: ${message}`;
+          toolFailures.push(failure);
+          const target = mutationTarget(call.function.name);
+          if (target) unresolvedMutationFailures.set(target, failure);
+          content = JSON.stringify({ error: message });
+        }
+        messages.push({ role: "tool", content, tool_call_id: call.id });
       }
-    });
+    }
+    if (!finalContent) {
+      const response = await complete(false);
+      finalContent = response.content?.trim() ?? "";
+    }
     if (!trace.read.has("SCHEMA.md") || !trace.read.has("index.md"))
       throw new Error("Character Mind operation did not read SCHEMA.md and index.md");
     if (input.operation === "ingest" && input.value && !trace.read.has(input.value))

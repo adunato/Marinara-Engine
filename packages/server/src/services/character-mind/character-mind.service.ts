@@ -15,13 +15,13 @@ import { logger } from "../../lib/logger.js";
 import { listDailyMemoryDays } from "../conversation/daily-memory.service.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
-import { CHARACTER_MIND_OPERATION_TIMEOUT_MS } from "./character-mind.constants.js";
 import {
   initializeMind,
   listMarkdown,
   mindDiskPath,
   mindRoot,
   pathExists,
+  readMindIndex,
   revisionForPayload,
   resetMindSynthesis,
   snapshotAutoSummary,
@@ -40,8 +40,15 @@ import {
   parseMindLog,
   queryLogSubject,
   readMindLog,
+  successfulBuildPagesSinceLatestMap,
   successfulIngestRevisions,
 } from "./character-mind.log.js";
+import {
+  characterMindPlanMatchesSources,
+  pendingCharacterMindPages,
+  parseCharacterMindPlan,
+  renderCharacterMindPlan,
+} from "./character-mind.plan.js";
 import {
   createCharacterMindTrace,
   deterministicMindFindings,
@@ -235,7 +242,7 @@ function finishOperation(chatId: string, characterId: string, operation: ActiveO
 }
 
 async function operationSignal(operation: ActiveOperation): Promise<AbortSignal> {
-  return AbortSignal.any([operation.controller.signal, AbortSignal.timeout(CHARACTER_MIND_OPERATION_TIMEOUT_MS)]);
+  return operation.controller.signal;
 }
 
 async function requireRuntime(db: DB, context: MindContext) {
@@ -251,24 +258,6 @@ function traceFromError(error: unknown): CharacterMindTrace {
   const trace =
     error && typeof error === "object" ? (error as { characterMindTrace?: unknown }).characterMindTrace : null;
   return trace && typeof trace === "object" ? (trace as CharacterMindTrace) : createCharacterMindTrace();
-}
-
-function renderPageMap(plan: CharacterMindPlanResult): string {
-  const indexText = (value: string) =>
-    value
-      .replace(/[\r\n\[\]|]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  const lines = [
-    "# Index",
-    "",
-    "Corpus-level page map created before wiki materialization.",
-    "",
-    ...plan.pages.map(
-      (page) => `- [[${page.path.replace(/\.md$/i, "")}|${indexText(page.title)}]] — ${indexText(page.purpose)}`,
-    ),
-  ];
-  return `${lines.join("\n")}\n`;
 }
 
 function mergeMindTrace(target: CharacterMindTrace, source: CharacterMindTrace): void {
@@ -294,46 +283,65 @@ async function buildCorpus(
   runtime: Awaited<ReturnType<typeof requireRuntime>>,
   operation: ActiveOperation,
   snapshots: Awaited<ReturnType<typeof snapshotInputs>>,
+  restart: boolean,
 ): Promise<CharacterMindIngestResult> {
   const sourcePaths = snapshots.map((snapshot) => snapshot.path);
   let planTrace = createCharacterMindTrace();
-  let plan: CharacterMindPlanResult;
-  try {
-    const run = await runCharacterMindOperation({
-      root: context.root,
-      operation: "plan",
-      value: JSON.stringify(sourcePaths),
-      sourcePaths,
-      runtime,
-      signal: await operationSignal(operation),
-    });
-    planTrace = run.trace;
-    plan = run.result as CharacterMindPlanResult;
-    await writeMindIndex(context.root, renderPageMap(plan));
-    await appendMindLog({
-      root: context.root,
-      operation: "build-map",
-      subject: `${sourcePaths.length} current sources`,
-      status: "success",
-      trace: planTrace,
-      summary: plan.summary,
-    });
-  } catch (error) {
-    planTrace = traceFromError(error);
-    await appendMindLog({
-      root: context.root,
-      operation: "build-map",
-      subject: `${sourcePaths.length} current sources`,
-      status: "failure",
-      trace: planTrace,
-      error: error instanceof Error ? error.message : "Build map failed",
-    });
-    throw error;
+  let plan: CharacterMindPlanResult | null = null;
+  if (!restart) {
+    try {
+      const persisted = parseCharacterMindPlan(await readMindIndex(context.root));
+      if (persisted && characterMindPlanMatchesSources(persisted, sourcePaths)) plan = persisted;
+    } catch {
+      // An absent or manually damaged checkpoint is rebuilt from the current corpus.
+    }
+  }
+  const resumed = plan !== null;
+  if (!plan) {
+    await resetMindSynthesis(context.root);
+    try {
+      const run = await runCharacterMindOperation({
+        root: context.root,
+        operation: "plan",
+        value: JSON.stringify(sourcePaths),
+        sourcePaths,
+        runtime,
+        signal: await operationSignal(operation),
+      });
+      planTrace = run.trace;
+      plan = run.result as CharacterMindPlanResult;
+      await writeMindIndex(context.root, renderCharacterMindPlan(plan));
+      await appendMindLog({
+        root: context.root,
+        operation: "build-map",
+        subject: `${sourcePaths.length} current sources`,
+        status: "success",
+        trace: planTrace,
+        summary: plan.summary,
+      });
+    } catch (error) {
+      planTrace = traceFromError(error);
+      await appendMindLog({
+        root: context.root,
+        operation: "build-map",
+        subject: `${sourcePaths.length} current sources`,
+        status: "failure",
+        trace: planTrace,
+        error: error instanceof Error ? error.message : "Build map failed",
+      });
+      throw error;
+    }
   }
 
   const buildTrace = createCharacterMindTrace();
   const pageSummaries: string[] = [];
-  for (const page of plan.pages) {
+  const completedPages = resumed
+    ? successfulBuildPagesSinceLatestMap(parseMindLog(await readMindLog(context.root)))
+    : new Set<string>();
+  const existingPages = new Set((await listMarkdown(context.root, "wiki")).filter((path) => path.startsWith("wiki/")));
+  const pendingPages = pendingCharacterMindPages(plan, completedPages, existingPages);
+  const preservedPages = plan.pages.length - pendingPages.length;
+  for (const page of pendingPages) {
     let pageTrace = createCharacterMindTrace();
     try {
       const run = await runCharacterMindOperation({
@@ -382,7 +390,7 @@ async function buildCorpus(
   }
 
   try {
-    await writeMindIndex(context.root, renderPageMap(plan));
+    await writeMindIndex(context.root, renderCharacterMindPlan(plan));
     buildTrace.updated.add("index.md");
     await validateCompleteWiki(context.root);
   } catch (error) {
@@ -397,7 +405,7 @@ async function buildCorpus(
     throw error;
   }
   const result: CharacterMindIngestResult = {
-    summary: `Materialized ${plan.pages.length} mapped page${plan.pages.length === 1 ? "" : "s"}. ${pageSummaries.join(" ")}`,
+    summary: `${resumed ? "Resumed" : "Materialized"} ${plan.pages.length} mapped page${plan.pages.length === 1 ? "" : "s"}${preservedPages ? `, preserving ${preservedPages} completed page${preservedPages === 1 ? "" : "s"}` : ""}. ${pageSummaries.join(" ")}`,
     created: [...buildTrace.created],
     updated: [...buildTrace.updated],
   };
@@ -497,6 +505,7 @@ async function buildOrSync(
   characterId: string,
   mode: "build" | "sync",
   maxSources?: number,
+  restart = false,
 ): Promise<CharacterMindBuildOrSyncResult> {
   const context = await loadContext(db, chatId, characterId);
   const runtime = await requireRuntime(db, context);
@@ -509,15 +518,12 @@ async function buildOrSync(
   if (mode === "sync" && !built) throw new CharacterMindError("Character Mind Build is incomplete; retry Build", 409);
   const operation = claimOperation(chatId, characterId, mode);
   try {
-    if (mode === "build") {
-      await initializeMind(context.root);
-      if (initialized) await resetMindSynthesis(context.root);
-    }
+    if (mode === "build") await initializeMind(context.root);
     const snapshots = await snapshotInputs(db, context);
     const current = new Set(snapshots.map((snapshot) => snapshot.revision));
     const processed: CharacterMindBuildOrSyncResult["processed"] = [];
     if (mode === "build") {
-      const result = await buildCorpus(context, runtime, operation, snapshots);
+      const result = await buildCorpus(context, runtime, operation, snapshots, restart);
       processed.push(...snapshots.map((snapshot) => ({ source: snapshot.path, result, error: null })));
       return {
         snapshotsCreated: snapshots.filter((snapshot) => snapshot.created).map((snapshot) => snapshot.path),
@@ -546,8 +552,8 @@ async function buildOrSync(
   }
 }
 
-export function buildCharacterMind(db: DB, chatId: string, characterId: string) {
-  return buildOrSync(db, chatId, characterId, "build");
+export function buildCharacterMind(db: DB, chatId: string, characterId: string, restart = false) {
+  return buildOrSync(db, chatId, characterId, "build", undefined, restart);
 }
 
 export function syncCharacterMind(db: DB, chatId: string, characterId: string, maxSources?: number) {
