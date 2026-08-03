@@ -57,6 +57,8 @@ The **Overview** tab holds four fields. **Name** is the display name shown in th
 The **Prompts** tab holds the mode prompts.
 
 - **Conversation Mode**: a text box used as this preset's Conversation prompt. Leave it empty to use Marinara's built-in conversation prompt.
+- **Conversation Briefing**: the first-pass context-curator prompt used only when a Conversation chat selects the Two-pass pipeline.
+- **Conversation Writer**: the isolated second-pass response prompt used only when a Conversation chat selects the Two-pass pipeline.
 - **Roleplay Mode**: not editable here. Roleplay uses the assembled prompt from your **Sections**.
 - **Game Mode**: a text box used as this preset's Game prompt. Leave it empty to use Marinara's built-in game prompt.
 
@@ -70,16 +72,16 @@ A **Prompt Block** is a free-text section that you write yourself. Use it for sy
 
 A **marker** is an auto-filled section. It has no text of its own. Instead, Marinara fills it at send time with live content from your chat. The table below lists the markers.
 
-| Marker | What it inserts |
-|---|---|
-| **Character Info** | The active character card details. |
-| **Persona** | Your active persona details. |
-| **Chat History** | The running chat messages. |
-| **Chat Summary** | The compiled chat summary for this chat. |
-| **Dialogue Examples** | The character's example dialogue. |
-| **Lorebook Marker (All)** | All active lorebook entries. |
-| **Lorebook Marker (Before)** | Lorebook entries set to insert before. |
-| **Lorebook Marker (After)** | Lorebook entries set to insert after. |
+| Marker                       | What it inserts                          |
+| ---------------------------- | ---------------------------------------- |
+| **Character Info**           | The active character card details.       |
+| **Persona**                  | Your active persona details.             |
+| **Chat History**             | The running chat messages.               |
+| **Chat Summary**             | The compiled chat summary for this chat. |
+| **Dialogue Examples**        | The character's example dialogue.        |
+| **Lorebook Marker (All)**    | All active lorebook entries.             |
+| **Lorebook Marker (Before)** | Lorebook entries set to insert before.   |
+| **Lorebook Marker (After)**  | Lorebook entries set to insert after.    |
 
 A section that is a marker shows a **MARKER** badge in its row. Expand it to see a note that names the marker type. You cannot type content into most markers, because Marinara generates them for you.
 
@@ -148,7 +150,7 @@ Prompt presets are not available in **Conversation** mode from the panel. Clicki
 
 ## How Conversation and Game modes differ
 
-**Conversation** and **Game** chats do not build a prompt from Sections. Instead they use one mode prompt, which you can override per chat.
+**Conversation** and **Game** chats do not build a prompt from Sections. Standard Conversation and Game use one mode prompt that you can override per chat. Conversation's optional Two-pass pipeline instead uses its separate Briefing and Writer prompts; it bypasses the regular Conversation prompt without deleting it.
 
 In these modes, **Chat Settings** shows a **Prompt Preset** section with a **Prompt source** dropdown. The dropdown lists your presets. It defaults to "Default conversation prompt" or "Default game prompt". If you have no presets, it reads "No presets available".
 

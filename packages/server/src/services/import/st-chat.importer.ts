@@ -165,6 +165,7 @@ const INTERNAL_EXTRA_KEYS = new Set([
   "chatSummaryFingerprint",
   "contextInjections",
   "conversationCommandContent",
+  "conversationTwoPass",
   "encryptedReasoning",
   "geminiParts",
   "generationInfo",

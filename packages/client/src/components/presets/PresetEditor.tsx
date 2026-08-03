@@ -266,6 +266,8 @@ export function PresetEditor() {
   const [localWrapFormat, setLocalWrapFormat] = useState<WrapFormat>("xml");
   const [localAuthor, setLocalAuthor] = useState("");
   const [localConversationPrompt, setLocalConversationPrompt] = useState("");
+  const [localConversationBriefingPrompt, setLocalConversationBriefingPrompt] = useState("");
+  const [localConversationWriterPrompt, setLocalConversationWriterPrompt] = useState("");
   const [localGamePrompt, setLocalGamePrompt] = useState("");
   const hydratedPresetIdRef = useRef<string | null>(null);
   const dirtyRef = useRef(false);
@@ -286,6 +288,8 @@ export function PresetEditor() {
     setLocalWrapFormat((p.wrapFormat ?? "xml") as WrapFormat);
     setLocalAuthor(p.author ?? "");
     setLocalConversationPrompt(p.conversationPrompt ?? "");
+    setLocalConversationBriefingPrompt(p.conversationBriefingPrompt ?? "");
+    setLocalConversationWriterPrompt(p.conversationWriterPrompt ?? "");
     setLocalGamePrompt(p.gamePrompt ?? "");
   }, [data, presetDetailId]);
 
@@ -306,6 +310,8 @@ export function PresetEditor() {
       wrapFormat: localWrapFormat,
       author: localAuthor,
       conversationPrompt: localConversationPrompt,
+      conversationBriefingPrompt: localConversationBriefingPrompt,
+      conversationWriterPrompt: localConversationWriterPrompt,
       gamePrompt: localGamePrompt,
     };
     await updatePreset.mutateAsync(payload);
@@ -319,6 +325,8 @@ export function PresetEditor() {
     localWrapFormat,
     localAuthor,
     localConversationPrompt,
+    localConversationBriefingPrompt,
+    localConversationWriterPrompt,
     localGamePrompt,
     updatePreset,
   ]);
@@ -599,6 +607,16 @@ export function PresetEditor() {
                   setLocalConversationPrompt(v);
                   markDirty();
                 }}
+                conversationBriefingPrompt={localConversationBriefingPrompt}
+                onConversationBriefingPromptChange={(v) => {
+                  setLocalConversationBriefingPrompt(v);
+                  markDirty();
+                }}
+                conversationWriterPrompt={localConversationWriterPrompt}
+                onConversationWriterPromptChange={(v) => {
+                  setLocalConversationWriterPrompt(v);
+                  markDirty();
+                }}
                 gamePrompt={localGamePrompt}
                 onGamePromptChange={(v) => {
                   setLocalGamePrompt(v);
@@ -725,11 +743,19 @@ function OverviewTab({
 function PromptsTab({
   conversationPrompt,
   onConversationPromptChange,
+  conversationBriefingPrompt,
+  onConversationBriefingPromptChange,
+  conversationWriterPrompt,
+  onConversationWriterPromptChange,
   gamePrompt,
   onGamePromptChange,
 }: {
   conversationPrompt: string;
   onConversationPromptChange: (v: string) => void;
+  conversationBriefingPrompt: string;
+  onConversationBriefingPromptChange: (v: string) => void;
+  conversationWriterPrompt: string;
+  onConversationWriterPromptChange: (v: string) => void;
   gamePrompt: string;
   onGamePromptChange: (v: string) => void;
 }) {
@@ -750,6 +776,36 @@ function PromptsTab({
           onChange={onConversationPromptChange}
           title="Edit Conversation Mode Prompt"
           placeholder="Leave empty to use Marinara's built-in conversation prompt."
+          className="mari-editor-field min-h-[12rem] w-full p-3 font-mono text-xs"
+          formatOnChange={formatPrompt}
+          spellCheck={false}
+        />
+      </FieldGroup>
+
+      <FieldGroup
+        label="Conversation Briefing"
+        help="Used by the first pass of the optional Two-pass Conversation pipeline to curate the resolved context."
+      >
+        <MacroTextarea
+          value={conversationBriefingPrompt}
+          onChange={onConversationBriefingPromptChange}
+          title="Edit Conversation Briefing Prompt"
+          placeholder="Leave empty to use Marinara's built-in Conversation Briefing prompt."
+          className="mari-editor-field min-h-[12rem] w-full p-3 font-mono text-xs"
+          formatOnChange={formatPrompt}
+          spellCheck={false}
+        />
+      </FieldGroup>
+
+      <FieldGroup
+        label="Conversation Writer"
+        help="Used by the second pass of the optional Two-pass Conversation pipeline to write only from the briefing."
+      >
+        <MacroTextarea
+          value={conversationWriterPrompt}
+          onChange={onConversationWriterPromptChange}
+          title="Edit Conversation Writer Prompt"
+          placeholder="Leave empty to use Marinara's built-in Conversation Writer prompt."
           className="mari-editor-field min-h-[12rem] w-full p-3 font-mono text-xs"
           formatOnChange={formatPrompt}
           spellCheck={false}
@@ -2185,7 +2241,9 @@ function VariableCard({
               </div>
               <SettingsSwitch
                 ariaLabel={
-                  optionOrderIsAlphabetical ? "Use manual option display order" : "Use alphabetical option display order"
+                  optionOrderIsAlphabetical
+                    ? "Use manual option display order"
+                    : "Use alphabetical option display order"
                 }
                 checked={optionOrderIsAlphabetical}
                 onChange={(checked) => update({ optionSort: checked ? "alphabetical" : "manual" })}

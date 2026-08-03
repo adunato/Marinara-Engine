@@ -19,6 +19,8 @@ Below the badge is a generation info panel. It can show the provider and model n
 
 The rest of the window is the prompt itself, split into collapsible sections. Each section has a label and its own rough token estimate. The chat messages are grouped under one **Chat History** section. For an exact saved request, the provider may have combined several chat turns into one provider block. Expand each block to inspect all model-visible text inside it. Click any section header to open or close it.
 
+For a saved Two-pass Conversation response, Peek Prompt also shows **Curator Input**, **Conversation Briefing**, and **Writer Input** under Two-pass diagnostics. The briefing is hidden generation metadata, not a chat message. A live preview can show the writer boundary, but the exact curator input and generated briefing only exist after a real response runs.
+
 ## Opening Peek Prompt
 
 There are two ways to open the viewer.

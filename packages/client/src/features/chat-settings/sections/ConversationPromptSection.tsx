@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { ExternalLink, Pencil, Sliders, Trash2 } from "lucide-react";
-import { DEFAULT_CONVERSATION_PROMPT } from "@marinara-engine/shared";
+import { AlertTriangle, CheckCircle2, ExternalLink, GitBranch, Pencil, Sliders, Trash2 } from "lucide-react";
+import {
+  CONVERSATION_CURATOR_OUTPUT_TOKENS,
+  DEFAULT_CONVERSATION_BRIEFING_PROMPT,
+  DEFAULT_CONVERSATION_PROMPT,
+  DEFAULT_CONVERSATION_WRITER_PROMPT,
+  type ConversationGenerationPipeline,
+} from "@marinara-engine/shared";
 import { ExpandedTextarea } from "../../../components/ui/ExpandedTextarea";
 import { ChatSettingsSection } from "../ChatSettingsSection";
 
@@ -8,6 +14,14 @@ interface PromptPresetOption {
   id: string;
   name: string;
   conversationPrompt?: string;
+  conversationBriefingPrompt?: string;
+  conversationWriterPrompt?: string;
+}
+
+interface ConnectionOption {
+  id: string;
+  name: string;
+  model?: string;
 }
 
 interface ConversationPromptSectionProps {
@@ -17,7 +31,20 @@ interface ConversationPromptSectionProps {
   promptPresets: PromptPresetOption[];
   selectedPresetName: string | null;
   selectedPresetPrompt: string;
+  selectedPresetBriefingPrompt: string;
+  selectedPresetWriterPrompt: string;
+  pipeline: ConversationGenerationPipeline;
+  curatorConnectionId: string;
+  curatorMaxOutputTokens: number;
+  customBriefingPrompt: string;
+  customWriterPrompt: string;
+  connections: ConnectionOption[];
   onCustomPromptChange: (chatId: string, customPrompt: string | null) => void;
+  onPipelineChange: (pipeline: ConversationGenerationPipeline) => void;
+  onCuratorConnectionChange: (connectionId: string | null) => void;
+  onCuratorMaxOutputTokensChange: (maxTokens: number) => void;
+  onCustomBriefingPromptChange: (prompt: string | null) => void;
+  onCustomWriterPromptChange: (prompt: string | null) => void;
   onPromptPresetChange: (presetId: string | null) => void;
   onOpenPromptPreset: () => void;
 }
@@ -29,13 +56,34 @@ export function ConversationPromptSection({
   promptPresets,
   selectedPresetName,
   selectedPresetPrompt,
+  selectedPresetBriefingPrompt,
+  selectedPresetWriterPrompt,
+  pipeline,
+  curatorConnectionId,
+  curatorMaxOutputTokens,
+  customBriefingPrompt,
+  customWriterPrompt,
+  connections,
   onCustomPromptChange,
+  onPipelineChange,
+  onCuratorConnectionChange,
+  onCuratorMaxOutputTokensChange,
+  onCustomBriefingPromptChange,
+  onCustomWriterPromptChange,
   onPromptPresetChange,
   onOpenPromptPreset,
 }: ConversationPromptSectionProps) {
   const [promptOpen, setPromptOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState("");
+  const [briefingPromptOpen, setBriefingPromptOpen] = useState(false);
+  const [briefingPromptDraft, setBriefingPromptDraft] = useState("");
+  const [writerPromptOpen, setWriterPromptOpen] = useState(false);
+  const [writerPromptDraft, setWriterPromptDraft] = useState("");
   const basePrompt = selectedPresetPrompt.trim() || DEFAULT_CONVERSATION_PROMPT;
+  const baseBriefingPrompt = selectedPresetBriefingPrompt.trim() || DEFAULT_CONVERSATION_BRIEFING_PROMPT;
+  const baseWriterPrompt = selectedPresetWriterPrompt.trim() || DEFAULT_CONVERSATION_WRITER_PROMPT;
+  const missingCuratorConnection =
+    !!curatorConnectionId && !connections.some((connection) => connection.id === curatorConnectionId);
 
   const openPromptEditor = () => {
     setPromptDraft(customPrompt || basePrompt);
@@ -53,8 +101,38 @@ export function ConversationPromptSection({
     onCustomPromptChange(chatId, null);
   };
 
+  const closeBriefingPromptEditor = () => {
+    const nextPrompt =
+      !briefingPromptDraft.trim() || briefingPromptDraft.trim() === baseBriefingPrompt.trim()
+        ? null
+        : briefingPromptDraft;
+    onCustomBriefingPromptChange(nextPrompt);
+    setBriefingPromptOpen(false);
+  };
+
+  const closeWriterPromptEditor = () => {
+    const nextPrompt =
+      !writerPromptDraft.trim() || writerPromptDraft.trim() === baseWriterPrompt.trim() ? null : writerPromptDraft;
+    onCustomWriterPromptChange(nextPrompt);
+    setWriterPromptOpen(false);
+  };
+
   return (
     <>
+      <ChatSettingsSection
+        label="Message generation pipeline"
+        icon={<GitBranch size="0.875rem" />}
+        help="Standard writes directly from the resolved context. Two-pass first creates a hidden Conversation Briefing, then writes only from that briefing."
+      >
+        <select
+          value={pipeline}
+          onChange={(event) => onPipelineChange(event.target.value as ConversationGenerationPipeline)}
+          className="mari-preset-native-select w-full rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]/40"
+        >
+          <option value="standard">Standard</option>
+          <option value="two_pass">Two-pass</option>
+        </select>
+      </ChatSettingsSection>
       <ChatSettingsSection
         label="Prompt Preset"
         icon={<Sliders size="0.875rem" />}
@@ -70,7 +148,9 @@ export function ConversationPromptSection({
                 disabled={promptPresets.length === 0}
                 className="mari-preset-native-select min-w-0 flex-1 truncate rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-shadow focus:ring-[var(--primary)]/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <option value="">{promptPresets.length === 0 ? "No presets available" : "Default conversation prompt"}</option>
+                <option value="">
+                  {promptPresets.length === 0 ? "No presets available" : "Default conversation prompt"}
+                </option>
                 {promptPresets.length > 0 &&
                   promptPresets.map((preset) => (
                     <option key={preset.id} value={preset.id}>
@@ -94,11 +174,13 @@ export function ConversationPromptSection({
             <div className="min-w-0">
               <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">Conversation Prompt</span>
               <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                {customPrompt
-                  ? "Using chat-local edit"
-                  : promptPresetId
-                    ? `From ${selectedPresetName ?? "selected preset"}`
-                    : "Using default conversation prompt"}
+                {pipeline === "two_pass"
+                  ? "Unused while Two-pass is active"
+                  : customPrompt
+                    ? "Using chat-local edit"
+                    : promptPresetId
+                      ? `From ${selectedPresetName ?? "selected preset"}`
+                      : "Using default conversation prompt"}
               </span>
             </div>
             <span className="shrink-0 rounded-full bg-[var(--background)] px-2 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
@@ -125,6 +207,110 @@ export function ConversationPromptSection({
               </button>
             )}
           </div>
+          {pipeline === "two_pass" && (
+            <div className="space-y-3 rounded-lg bg-[var(--secondary)]/60 p-3 ring-1 ring-[var(--border)]">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
+                  Context curator connection
+                </span>
+                <select
+                  value={curatorConnectionId}
+                  onChange={(event) => onCuratorConnectionChange(event.target.value || null)}
+                  className="mari-preset-native-select w-full rounded-lg bg-[var(--background)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]/40"
+                >
+                  <option value="">Use chat connection</option>
+                  {connections.map((connection) => (
+                    <option key={connection.id} value={connection.id}>
+                      {connection.name}
+                      {connection.model ? ` — ${connection.model}` : ""}
+                    </option>
+                  ))}
+                  {missingCuratorConnection && <option value={curatorConnectionId}>Unavailable connection</option>}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
+                  Curator maximum output tokens
+                </span>
+                <input
+                  type="number"
+                  min={CONVERSATION_CURATOR_OUTPUT_TOKENS.MIN}
+                  max={CONVERSATION_CURATOR_OUTPUT_TOKENS.MAX}
+                  value={curatorMaxOutputTokens}
+                  onChange={(event) => onCuratorMaxOutputTokensChange(Number(event.target.value))}
+                  className="mari-editor-field w-full px-3 py-2 text-xs"
+                />
+              </label>
+
+              {[
+                {
+                  label: "Conversation Briefing prompt",
+                  custom: customBriefingPrompt,
+                  open: () => {
+                    setBriefingPromptDraft(customBriefingPrompt || baseBriefingPrompt);
+                    setBriefingPromptOpen(true);
+                  },
+                  reset: () => onCustomBriefingPromptChange(null),
+                },
+                {
+                  label: "Conversation Writer prompt",
+                  custom: customWriterPrompt,
+                  open: () => {
+                    setWriterPromptDraft(customWriterPrompt || baseWriterPrompt);
+                    setWriterPromptOpen(true);
+                  },
+                  reset: () => onCustomWriterPromptChange(null),
+                },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="flex items-center gap-2 rounded-lg bg-[var(--background)] px-3 py-2 ring-1 ring-[var(--border)]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">{item.label}</span>
+                    <span className="block text-[0.625rem] text-[var(--muted-foreground)]">
+                      {item.custom
+                        ? "Using chat-local edit"
+                        : promptPresetId
+                          ? `From ${selectedPresetName ?? "selected preset"}`
+                          : "Using built-in default"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={item.open}
+                    className="mari-chrome-control mari-chrome-control--small p-2"
+                    title={`Edit ${item.label}`}
+                  >
+                    <Pencil size="0.625rem" />
+                  </button>
+                  {item.custom && (
+                    <button
+                      type="button"
+                      onClick={item.reset}
+                      className="mari-chrome-control mari-chrome-control--small p-2"
+                      title={`Reset ${item.label}`}
+                    >
+                      <Trash2 size="0.625rem" />
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              <div
+                className={`flex items-center gap-2 text-[0.6875rem] ${missingCuratorConnection ? "text-[var(--destructive)]" : "text-[var(--muted-foreground)]"}`}
+              >
+                {missingCuratorConnection ? <AlertTriangle size="0.75rem" /> : <CheckCircle2 size="0.75rem" />}
+                {missingCuratorConnection
+                  ? "The selected curator connection is unavailable."
+                  : "Two-pass configuration is ready."}
+              </div>
+              <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                Prompt Patch agents cannot edit the isolated writer prompt and are skipped by this pipeline.
+              </p>
+            </div>
+          )}
         </div>
       </ChatSettingsSection>
       <ExpandedTextarea
@@ -134,6 +320,24 @@ export function ConversationPromptSection({
         value={promptDraft}
         onChange={setPromptDraft}
         placeholder="Enter your custom conversation prompt..."
+        surface="chat"
+      />
+      <ExpandedTextarea
+        open={briefingPromptOpen}
+        onClose={closeBriefingPromptEditor}
+        title="Edit Conversation Briefing Prompt"
+        value={briefingPromptDraft}
+        onChange={setBriefingPromptDraft}
+        placeholder="Enter the context curator prompt..."
+        surface="chat"
+      />
+      <ExpandedTextarea
+        open={writerPromptOpen}
+        onClose={closeWriterPromptEditor}
+        title="Edit Conversation Writer Prompt"
+        value={writerPromptDraft}
+        onChange={setWriterPromptDraft}
+        placeholder="Enter the isolated response writer prompt..."
         surface="chat"
       />
     </>

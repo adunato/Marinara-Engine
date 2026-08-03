@@ -9,6 +9,10 @@ export const promptPresets = fileTable("prompt_presets", {
   description: text("description").notNull().default(""),
   /** Conversation-mode system prompt template */
   conversationPrompt: text("conversation_prompt").notNull().default(""),
+  /** Conversation-mode first-pass context curator prompt template */
+  conversationBriefingPrompt: text("conversation_briefing_prompt").notNull().default(""),
+  /** Conversation-mode isolated response writer prompt template */
+  conversationWriterPrompt: text("conversation_writer_prompt").notNull().default(""),
   /** Game-mode GM prompt template */
   gamePrompt: text("game_prompt").notNull().default(""),
   /** JSON array of section IDs in order */

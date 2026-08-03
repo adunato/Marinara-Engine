@@ -31,8 +31,11 @@ import {
   trackerFieldLocksAreEmpty,
   customAgentHasCapability,
   CHAT_SUMMARY_PROMPT_SETTINGS_KEY,
+  DEFAULT_CONVERSATION_BRIEFING_PROMPT,
   DEFAULT_CONVERSATION_PROMPT,
+  DEFAULT_CONVERSATION_WRITER_PROMPT,
   DEFAULT_GENERATION_PARAMS,
+  normalizeConversationTwoPassSettings,
   unwrapConversationInstructions,
   findKnownModel,
   LOCAL_SIDECAR_CONNECTION_ID,
@@ -117,12 +120,16 @@ import {
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
 import {
+  fitMessagesToContext,
   withLlmRequestTimeout,
   yieldToEventLoop,
   type BaseLLMProvider,
   type ChatMessage,
   type LLMUsage,
 } from "../services/llm/base-provider.js";
+import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { getLocalSidecarProvider } from "../services/llm/local-sidecar.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import { executeToolCalls } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -274,6 +281,13 @@ import {
   formatConversationGroupOutputFormat,
   resolvePresetModePrompt,
 } from "./generate/conversation-prompt-formatting.js";
+import {
+  buildConversationCuratorMessages,
+  buildConversationWriterMessages,
+  conversationPromptHash,
+  createConversationSourceSnapshot,
+  normalizeConversationBriefing,
+} from "./generate/conversation-two-pass-runtime.js";
 import {
   normalizePromptAttachments,
   resolveImageCaptioningRuntime,
@@ -516,6 +530,8 @@ function scopeLorebookPromptMessagesForCharacter(
 }
 
 const PROFESSOR_MARI_INTERNAL_CHAT_MARKER = "professor-mari";
+const CONVERSATION_TWO_PASS_SOURCE_SCAFFOLD =
+  "MARINARA TWO-PASS SOURCE SNAPSHOT. This scaffold is removed before the curator request.";
 const INDIVIDUAL_CONVERSATION_LOREBOOK_TOKEN = "__MARINARA_INDIVIDUAL_CONVERSATION_LOREBOOK__";
 type ConversationContextMacroKey =
   | "context"
@@ -981,6 +997,9 @@ export async function generateRoutes(app: FastifyInstance) {
     const mainFallbackConnection = await connections.getFallbackForMain().catch(releaseActiveGenerationAndRethrow);
     const mainFallbackBaseUrl = mainFallbackConnection ? resolveBaseUrl(mainFallbackConnection) : "";
     let chatMeta = parseExtra(chat.metadata) as Record<string, unknown>;
+    const conversationTwoPassSettings = normalizeConversationTwoPassSettings(chatMeta);
+    const useTwoPassConversationPipeline =
+      requestChatMode === "conversation" && conversationTwoPassSettings.pipeline === "two_pass";
     const requestTimeZone = normalizePromptTimeZone(input.userTimeZone);
     const storedPromptTimeZone = normalizePromptTimeZone(chatMeta.promptTimeZone);
     const conversationTimeZone =
@@ -1527,6 +1546,8 @@ export async function generateRoutes(app: FastifyInstance) {
         let conversationLorebookBlockValue = "";
         let conversationMemoriesBlockValue = "";
         let conversationReplyRulesBlockValue = "";
+        let conversationSourceScaffoldBlock = "";
+        const conversationWriterTechnicalContracts: string[] = [];
         const buildConversationRelocationValues = (
           lorebook: string,
         ): Record<ConversationRelocationMacroKey, string> => ({
@@ -2371,9 +2392,10 @@ export async function generateRoutes(app: FastifyInstance) {
               ? resolvePresetModePrompt(resolvedPreset as Record<string, unknown>, "conversation")
               : "";
 
-          const conversationPromptTemplate =
-            customPrompt ?? (selectedConversationPrompt || DEFAULT_CONVERSATION_PROMPT);
-          identityFallbackPromptTemplateSources.push(conversationPromptTemplate);
+          const conversationPromptTemplate = useTwoPassConversationPipeline
+            ? CONVERSATION_TWO_PASS_SOURCE_SCAFFOLD
+            : (customPrompt ?? (selectedConversationPrompt || DEFAULT_CONVERSATION_PROMPT));
+          if (!useTwoPassConversationPipeline) identityFallbackPromptTemplateSources.push(conversationPromptTemplate);
           conversationContextMacroSlots = resolveConversationContextMacroSlots(conversationPromptTemplate);
           const individualConversationGroup = isGroup && promptGroupChatMode === "individual";
           const aliasedConversationPrompt = (
@@ -2423,6 +2445,7 @@ export async function generateRoutes(app: FastifyInstance) {
             conversationInstructionParts.filter((part) => part.trim().length > 0).join("\n"),
             wrapFormat,
           );
+          if (useTwoPassConversationPipeline) conversationSourceScaffoldBlock = conversationSystemPrompt;
 
           conversationCommandsReminder = await buildConversationCommandsReminder({
             enabled: conversationCommandsEnabled,
@@ -2890,12 +2913,15 @@ export async function generateRoutes(app: FastifyInstance) {
           characterGallery,
           connections,
           conversationCustomEmojiUrlByName,
-          replyRulesMacroPlacement: conversationContextMacroSlots.replyRules
-            ? (content) => {
-                conversationReplyRulesBlockValue = content;
-                replaceConversationContextMacro(finalMessages, "replyRules", content);
-              }
-            : undefined,
+          replyRulesMacroPlacement:
+            useTwoPassConversationPipeline || conversationContextMacroSlots.replyRules
+              ? (content) => {
+                  conversationReplyRulesBlockValue = content;
+                  if (conversationContextMacroSlots.replyRules) {
+                    replaceConversationContextMacro(finalMessages, "replyRules", content);
+                  }
+                }
+              : undefined,
         });
 
         let resolvedGameDiscordSpeakerName: string | null = null;
@@ -4099,7 +4125,8 @@ export async function generateRoutes(app: FastifyInstance) {
               `- ${t.function.name}: ${t.function.description}\n  Parameters: ${JSON.stringify(t.function.parameters)}`,
           );
           const toolBlock = `<available_functions>\nYou may call the following functions when appropriate. To invoke a function, include a tool_call block in your response:\n<tool_call>{"name": "function_name", "arguments": {"param_name": param_value}}</tool_call>\n\nAvailable functions:\n${toolLines.join("\n")}\n</available_functions>`;
-          appendToFirstSystemMessage(finalMessages, toolBlock);
+          if (useTwoPassConversationPipeline) conversationWriterTechnicalContracts.push(toolBlock);
+          else appendToFirstSystemMessage(finalMessages, toolBlock);
         }
         // Pre-generation prompt-patch agents read the assembled prompt here; this is overwritten
         // with the fitted provider prompt before each main model call.
@@ -4132,7 +4159,11 @@ export async function generateRoutes(app: FastifyInstance) {
         const SEPARATE_INJECTION_AGENTS = new Set(["director", "knowledge-retrieval", "knowledge-router"]);
         const EXCLUDED_FROM_PIPELINE = new Set(["knowledge-retrieval", "knowledge-router"]);
         const hasPreGenAgents = resolvedAgents.some(
-          (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type) && !reviewedAgentTypes.has(a.type),
+          (a) =>
+            a.phase === "pre_generation" &&
+            !EXCLUDED_FROM_PIPELINE.has(a.type) &&
+            !reviewedAgentTypes.has(a.type) &&
+            (!useTwoPassConversationPipeline || resolveAgentResultType(a) !== "prompt_patch"),
         );
 
         // ── Run pre-gen agents, knowledge retrieval, and knowledge router in parallel when possible ──
@@ -4219,7 +4250,10 @@ export async function generateRoutes(app: FastifyInstance) {
                 );
                 if (isDebug) {
                   const preGenAgents = pipelineAgents.filter(
-                    (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type),
+                    (a) =>
+                      a.phase === "pre_generation" &&
+                      !EXCLUDED_FROM_PIPELINE.has(a.type) &&
+                      (!useTwoPassConversationPipeline || resolveAgentResultType(a) !== "prompt_patch"),
                   );
                   app.log.debug(
                     "[debug] Pre-generation agents (%d): %s",
@@ -4229,7 +4263,15 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
                 const _tAgents = Date.now();
                 const injections = (
-                  await pipeline.preGenerate((t) => !EXCLUDED_FROM_PIPELINE.has(t) && !reviewedAgentTypes.has(t))
+                  await pipeline.preGenerate(
+                    (t) =>
+                      !EXCLUDED_FROM_PIPELINE.has(t) &&
+                      !reviewedAgentTypes.has(t) &&
+                      (!useTwoPassConversationPipeline ||
+                        resolvedAgents
+                          .filter((agent) => agent.type === t)
+                          .every((agent) => resolveAgentResultType(agent) !== "prompt_patch")),
+                  )
                 ).map(attachAgentName);
                 logger.debug(`[timing] Pre-gen agents: ${Date.now() - _tAgents}ms`);
                 return injections;
@@ -4403,6 +4445,13 @@ export async function generateRoutes(app: FastifyInstance) {
 
           for (const result of preGenResults) {
             if (!result.success || result.type !== "prompt_patch") continue;
+            if (useTwoPassConversationPipeline) {
+              logger.debug(
+                "[generate/two-pass] Skipped prompt patch from %s because the isolated writer does not accept main-prompt edits",
+                result.agentType,
+              );
+              continue;
+            }
             if (!customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "edit_main_prompt")) continue;
             const applied = applyPromptPatchOperations(finalMessages, result.data);
             if (applied > 0) {
@@ -5178,7 +5227,12 @@ export async function generateRoutes(app: FastifyInstance) {
             providerMacroContext,
             historyMacroProfilesById,
           );
-          if (chatMode === "conversation" && conversationIsGroup && !input.impersonate) {
+          if (
+            chatMode === "conversation" &&
+            conversationIsGroup &&
+            !input.impersonate &&
+            !useTwoPassConversationPipeline
+          ) {
             const turnCharacterName =
               usesIndividualGroupGeneration && groupTurnPromptEnabled && speaksOnlyTargetCharacter && targetCharId
                 ? (charInfo.find((character) => character.id === targetCharId)?.name ?? null)
@@ -5284,9 +5338,177 @@ export async function generateRoutes(app: FastifyInstance) {
             return fit.messages;
           };
 
-          const initialProviderMessages = prepareProviderMessages(
-            fitPromptForSend(toProviderMessages(preparedMessagesForGen)),
-          );
+          let conversationCuratorDiagnostics: {
+            provider: string;
+            model: string;
+            maxTokens: number;
+            durationMs: number;
+            usage?: LLMUsage;
+            sourceHash: string;
+            input: Array<{ role: string; content: string }>;
+            briefing: string;
+          } | null = null;
+          let initialProviderMessages: ChatMessage[];
+
+          if (useTwoPassConversationPipeline) {
+            sendProgress("conversation_briefing");
+
+            const presetRecord = (resolvedPreset ?? {}) as Record<string, unknown>;
+            const presetBriefingPrompt =
+              typeof presetRecord.conversationBriefingPrompt === "string"
+                ? presetRecord.conversationBriefingPrompt.trim()
+                : "";
+            const presetWriterPrompt =
+              typeof presetRecord.conversationWriterPrompt === "string"
+                ? presetRecord.conversationWriterPrompt.trim()
+                : "";
+            const curatorPromptTemplate =
+              conversationTwoPassSettings.customBriefingPrompt ??
+              (presetBriefingPrompt || DEFAULT_CONVERSATION_BRIEFING_PROMPT);
+            const writerPromptTemplate =
+              conversationTwoPassSettings.customWriterPrompt ??
+              (presetWriterPrompt || DEFAULT_CONVERSATION_WRITER_PROMPT);
+            const curatorPrompt = resolveMacros(curatorPromptTemplate, providerMacroContext, { trimResult: false });
+            const writerPrompt = resolveMacros(writerPromptTemplate, providerMacroContext, { trimResult: false });
+            if (!curatorPrompt.trim() || !writerPrompt.trim()) {
+              throw new Error("Two-pass Conversation generation requires both Briefing and Writer prompts.");
+            }
+
+            const sourceSnapshot = createConversationSourceSnapshot(
+              toProviderMessages(preparedMessagesForGen),
+              conversationSourceScaffoldBlock,
+            );
+            const curatorCandidateMessages = buildConversationCuratorMessages(curatorPrompt, sourceSnapshot);
+            const curatorConnectionId = conversationTwoPassSettings.curatorConnectionId ?? connId ?? "";
+            const curatorConnection =
+              curatorConnectionId === connId ? conn : await resolveGenerationConnection(curatorConnectionId);
+            if (!curatorConnection) {
+              throw new Error("The selected Conversation context curator connection is unavailable.");
+            }
+            const curatorBaseUrl = resolveBaseUrl(curatorConnection);
+            if (!curatorBaseUrl) {
+              throw new Error("The selected Conversation context curator connection has no base URL.");
+            }
+            const knownCuratorModel = findKnownModel(
+              curatorConnection.provider as APIProvider,
+              curatorConnection.model.trim(),
+            );
+            const curatorMaxTokens = Math.min(
+              conversationTwoPassSettings.curatorMaxOutputTokens,
+              knownCuratorModel?.maxOutput && knownCuratorModel.maxOutput > 0
+                ? Math.floor(knownCuratorModel.maxOutput)
+                : conversationTwoPassSettings.curatorMaxOutputTokens,
+              curatorConnection.maxTokensOverride && curatorConnection.maxTokensOverride > 0
+                ? Math.floor(curatorConnection.maxTokensOverride)
+                : conversationTwoPassSettings.curatorMaxOutputTokens,
+            );
+            const fittedCuratorPrompt = fitMessagesToContext(
+              curatorCandidateMessages,
+              {
+                maxTokens: curatorMaxTokens,
+                maxContext: typeof curatorConnection.maxContext === "number" ? curatorConnection.maxContext : undefined,
+              },
+              typeof curatorConnection.maxContext === "number" ? curatorConnection.maxContext : undefined,
+            );
+            const curatorMessages = fittedCuratorPrompt.messages;
+            const curatorProvider =
+              curatorConnectionId === connId
+                ? provider
+                : withConnectionFallbackProvider({
+                    primary:
+                      curatorConnectionId === LOCAL_SIDECAR_CONNECTION_ID
+                        ? getLocalSidecarProvider()
+                        : createLLMProvider(
+                            curatorConnection.provider,
+                            curatorBaseUrl,
+                            curatorConnection.apiKey,
+                            curatorConnection.maxContext,
+                            curatorConnection.openrouterProvider,
+                            curatorConnection.maxTokensOverride,
+                            curatorConnection.claudeFastMode === "true",
+                            curatorConnection.treatAsLocalEndpoint === "true",
+                            curatorConnection.defaultParameters,
+                          ),
+                    primaryConnectionId: curatorConnectionId,
+                    fallbackConnection: mainFallbackConnection,
+                    fallbackBaseUrl: mainFallbackBaseUrl,
+                    category: "main",
+                    onFallback,
+                  });
+            if (!curatorProvider.chatComplete) {
+              throw new Error("The selected Conversation context curator connection cannot run chat completion.");
+            }
+            if (isDebug || requestDebug) {
+              debugLog(
+                "[debug] Conversation curator prompt (%d messages), model %s (%s)",
+                curatorMessages.length,
+                curatorConnection.model,
+                curatorConnection.provider,
+              );
+              for (const message of curatorMessages) {
+                debugLog("  [%s] %s", message.role.toUpperCase(), message.content);
+              }
+            }
+            const curatorStartedAt = Date.now();
+            const curatorResult = await withLlmRequestTimeout(chatGenerationTimeoutMs, () =>
+              curatorProvider.chatComplete!(curatorMessages, {
+                model: curatorConnection.model,
+                maxTokens: fittedCuratorPrompt.maxTokens ?? curatorMaxTokens,
+                maxContext: typeof curatorConnection.maxContext === "number" ? curatorConnection.maxContext : undefined,
+                enableCaching: curatorConnection.enableCaching === "true",
+                anthropicExtendedCacheTtl: curatorConnection.anthropicExtendedCacheTtl === "true",
+                cachingAtDepth: curatorConnection.cachingAtDepth ?? 5,
+                stream: true,
+                signal: abortController.signal,
+                debugMode: requestDebug,
+              }),
+            );
+            if (abortController.signal.aborted) return null;
+            const briefing = normalizeConversationBriefing(curatorResult.content ?? "", curatorMaxTokens);
+            const technicalContracts = [...conversationWriterTechnicalContracts];
+            if (conversationCommandsReminder && !input.impersonate) {
+              technicalContracts.push(conversationCommandsReminder);
+            }
+            if (conversationReplyRulesBlockValue) technicalContracts.push(conversationReplyRulesBlockValue);
+            if (conversationIsGroup && !input.impersonate) {
+              const turnCharacterName =
+                usesIndividualGroupGeneration && groupTurnPromptEnabled && speaksOnlyTargetCharacter && targetCharId
+                  ? (charInfo.find((character) => character.id === targetCharId)?.name ?? null)
+                  : null;
+              technicalContracts.push(
+                formatConversationGroupOutputFormat({
+                  wrapFormat,
+                  characterNames: conversationCharacterNames,
+                  userName: personaName,
+                  turnCharacterName,
+                }),
+              );
+            }
+            initialProviderMessages = prepareProviderMessages(
+              fitPromptForSend(
+                buildConversationWriterMessages({
+                  writerPrompt,
+                  briefing,
+                  technicalContracts,
+                }),
+              ),
+            );
+            conversationCuratorDiagnostics = {
+              provider: curatorConnection.provider,
+              model: curatorConnection.model,
+              maxTokens: fittedCuratorPrompt.maxTokens ?? curatorMaxTokens,
+              durationMs: Date.now() - curatorStartedAt,
+              usage: curatorResult.usage,
+              sourceHash: conversationPromptHash(sourceSnapshot),
+              input: curatorMessages.map((message) => ({ role: message.role, content: message.content })),
+              briefing,
+            };
+            sendProgress("writing_response");
+          } else {
+            initialProviderMessages = prepareProviderMessages(
+              fitPromptForSend(toProviderMessages(preparedMessagesForGen)),
+            );
+          }
           finalPromptSent = initialProviderMessages;
           rememberMainPromptPreviewForAgents(initialProviderMessages);
 
@@ -5295,6 +5517,7 @@ export async function generateRoutes(app: FastifyInstance) {
           fullThinking = "";
           providerThinking = "";
           if (
+            !useTwoPassConversationPipeline &&
             tailMessages.assistantPrefillInjected &&
             !tailMessages.googleUserRegenerationInjected &&
             assistantPrefill
@@ -5362,10 +5585,10 @@ export async function generateRoutes(app: FastifyInstance) {
             // On regens/swipes: clear the cache so we re-derive from the filtered chatMessages
             // (which excludes the message being regenerated). Otherwise we'd replay the reasoning
             // from the discarded response instead of the turn before it.
-            if (input.regenerateMessageId) {
+            if (input.regenerateMessageId || useTwoPassConversationPipeline) {
               encryptedReasoningCache.delete(input.chatId);
             }
-            if (excludePastReasoning) {
+            if (excludePastReasoning || useTwoPassConversationPipeline) {
               encryptedReasoningCache.delete(input.chatId);
             } else if (!encryptedReasoningCache.has(input.chatId)) {
               for (let i = chatMessages.length - 1; i >= 0; i--) {
@@ -5439,12 +5662,14 @@ export async function generateRoutes(app: FastifyInstance) {
                     onToken: input.streaming ? onToken : undefined,
                     openrouterProvider: conn.openrouterProvider ?? undefined,
                     signal: abortController.signal,
-                    encryptedReasoningItems: excludePastReasoning
-                      ? undefined
-                      : encryptedReasoningCache.get(input.chatId),
-                    onEncryptedReasoning: excludePastReasoning
-                      ? undefined
-                      : (items) => encryptedReasoningCache.set(input.chatId, items),
+                    encryptedReasoningItems:
+                      excludePastReasoning || useTwoPassConversationPipeline
+                        ? undefined
+                        : encryptedReasoningCache.get(input.chatId),
+                    onEncryptedReasoning:
+                      excludePastReasoning || useTwoPassConversationPipeline
+                        ? undefined
+                        : (items) => encryptedReasoningCache.set(input.chatId, items),
                     onChatCompletionsReasoning: rememberChatCompletionsReasoning,
                   }),
                 );
@@ -5660,12 +5885,14 @@ export async function generateRoutes(app: FastifyInstance) {
                     onToken: input.streaming ? onToken : undefined,
                     openrouterProvider: conn.openrouterProvider ?? undefined,
                     signal: abortController.signal,
-                    encryptedReasoningItems: excludePastReasoning
-                      ? undefined
-                      : encryptedReasoningCache.get(input.chatId),
-                    onEncryptedReasoning: excludePastReasoning
-                      ? undefined
-                      : (items) => encryptedReasoningCache.set(input.chatId, items),
+                    encryptedReasoningItems:
+                      excludePastReasoning || useTwoPassConversationPipeline
+                        ? undefined
+                        : encryptedReasoningCache.get(input.chatId),
+                    onEncryptedReasoning:
+                      excludePastReasoning || useTwoPassConversationPipeline
+                        ? undefined
+                        : (items) => encryptedReasoningCache.set(input.chatId, items),
                     onChatCompletionsReasoning: rememberChatCompletionsReasoning,
                   }),
                 );
@@ -5723,10 +5950,14 @@ export async function generateRoutes(app: FastifyInstance) {
                 geminiResponseParts = parts;
               },
               signal: abortController.signal,
-              encryptedReasoningItems: excludePastReasoning ? undefined : encryptedReasoningCache.get(input.chatId),
-              onEncryptedReasoning: excludePastReasoning
-                ? undefined
-                : (items) => encryptedReasoningCache.set(input.chatId, items),
+              encryptedReasoningItems:
+                excludePastReasoning || useTwoPassConversationPipeline
+                  ? undefined
+                  : encryptedReasoningCache.get(input.chatId),
+              onEncryptedReasoning:
+                excludePastReasoning || useTwoPassConversationPipeline
+                  ? undefined
+                  : (items) => encryptedReasoningCache.set(input.chatId, items),
               onChatCompletionsReasoning: rememberChatCompletionsReasoning,
             });
             try {
@@ -6274,6 +6505,7 @@ export async function generateRoutes(app: FastifyInstance) {
           if (savedMsg?.id) {
             const extraUpdate: Record<string, unknown> = {
               generationInfo: {
+                conversationPipeline: useTwoPassConversationPipeline ? "two_pass" : "standard",
                 model: conn.model,
                 provider: conn.provider,
                 temperature: temperature ?? null,
@@ -6295,6 +6527,16 @@ export async function generateRoutes(app: FastifyInstance) {
                 tokensCacheWritePrompt: usage?.cacheWritePromptTokens ?? null,
                 durationMs,
                 finishReason: finishReason ?? null,
+                curator: conversationCuratorDiagnostics
+                  ? {
+                      model: conversationCuratorDiagnostics.model,
+                      provider: conversationCuratorDiagnostics.provider,
+                      maxTokens: conversationCuratorDiagnostics.maxTokens,
+                      tokensPrompt: conversationCuratorDiagnostics.usage?.promptTokens ?? null,
+                      tokensCompletion: conversationCuratorDiagnostics.usage?.completionTokens ?? null,
+                      durationMs: conversationCuratorDiagnostics.durationMs,
+                    }
+                  : null,
               },
             };
             if (fullThinking) extraUpdate.thinking = fullThinking;
@@ -6318,6 +6560,15 @@ export async function generateRoutes(app: FastifyInstance) {
             extraUpdate.startsNewAssistantBubble = startsNewAssistantBubble;
             // Cache the final prompt (what was actually sent to the model) for Peek Prompt
             extraUpdate.cachedPrompt = finalPromptSent.map((m) => ({ role: m.role, content: m.content }));
+            extraUpdate.conversationTwoPass = conversationCuratorDiagnostics
+              ? {
+                  sourceHash: conversationCuratorDiagnostics.sourceHash,
+                  curatorInput: conversationCuratorDiagnostics.input,
+                  briefing: conversationCuratorDiagnostics.briefing,
+                  writerInput: finalPromptSent.map((message) => ({ role: message.role, content: message.content })),
+                  writerInputHash: conversationPromptHash(finalPromptSent),
+                }
+              : null;
             // Cache the lorebook scan that produced the prompt so Active Context
             // reflects the last generation instead of a best-effort rescan.
             extraUpdate.lorebookScan = lorebookScanSnapshot;
@@ -6417,14 +6668,17 @@ export async function generateRoutes(app: FastifyInstance) {
             for (const staleMsg of staleAssistants) {
               const staleExtra =
                 typeof staleMsg.extra === "string" ? JSON.parse(staleMsg.extra) : (staleMsg.extra ?? {});
-              if (!staleExtra.cachedPrompt) continue;
-              await chats.updateMessageExtra(staleMsg.id, { cachedPrompt: null });
+              if (!staleExtra.cachedPrompt && !staleExtra.conversationTwoPass) continue;
+              await chats.updateMessageExtra(staleMsg.id, { cachedPrompt: null, conversationTwoPass: null });
               // Also clean swipes
               const swipes = await chats.getSwipes(staleMsg.id);
               for (const sw of swipes) {
                 const swExtra = typeof sw.extra === "string" ? JSON.parse(sw.extra) : (sw.extra ?? {});
-                if (swExtra.cachedPrompt) {
-                  await chats.updateSwipeExtra(staleMsg.id, sw.index, { cachedPrompt: null });
+                if (swExtra.cachedPrompt || swExtra.conversationTwoPass) {
+                  await chats.updateSwipeExtra(staleMsg.id, sw.index, {
+                    cachedPrompt: null,
+                    conversationTwoPass: null,
+                  });
                 }
               }
             }

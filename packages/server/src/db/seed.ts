@@ -9,7 +9,12 @@ import { createPromptsStorage } from "../services/storage/prompts.storage.js";
 import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
 import { importMarinara } from "../services/import/marinara.importer.js";
 import { choiceBlocks, promptGroups, promptSections } from "./schema/index.js";
-import { DEFAULT_CONVERSATION_PROMPT, DEFAULT_GAME_SYSTEM_PROMPT } from "@marinara-engine/shared";
+import {
+  DEFAULT_CONVERSATION_BRIEFING_PROMPT,
+  DEFAULT_CONVERSATION_PROMPT,
+  DEFAULT_CONVERSATION_WRITER_PROMPT,
+  DEFAULT_GAME_SYSTEM_PROMPT,
+} from "@marinara-engine/shared";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -99,7 +104,11 @@ function withoutRowIdentity(value: unknown): unknown {
   return out;
 }
 
-function stableKeyMap<T extends { id?: unknown }>(rows: T[], prefix: string, getBase: (row: T) => string): Map<string, string> {
+function stableKeyMap<T extends { id?: unknown }>(
+  rows: T[],
+  prefix: string,
+  getBase: (row: T) => string,
+): Map<string, string> {
   const counts = new Map<string, number>();
   const sorted = [...rows].sort((a, b) => {
     const aBase = getBase(a);
@@ -119,7 +128,9 @@ function stableKeyMap<T extends { id?: unknown }>(rows: T[], prefix: string, get
 }
 
 function orderedStableKeys(value: unknown, keyMap: Map<string, string>): string[] {
-  return parseJsonField<string[]>(value, []).map((id) => keyMap.get(id)).filter((id): id is string => Boolean(id));
+  return parseJsonField<string[]>(value, [])
+    .map((id) => keyMap.get(id))
+    .filter((id): id is string => Boolean(id));
 }
 
 function bundledPresetDescription(envelope: BundledPresetEnvelope): string {
@@ -128,6 +139,18 @@ function bundledPresetDescription(envelope: BundledPresetEnvelope): string {
 
 function bundledConversationPrompt(preset: Record<string, unknown>): string {
   return String(preset.conversationPrompt ?? preset.conversation_prompt ?? DEFAULT_CONVERSATION_PROMPT);
+}
+
+function bundledConversationBriefingPrompt(preset: Record<string, unknown>): string {
+  return String(
+    preset.conversationBriefingPrompt ?? preset.conversation_briefing_prompt ?? DEFAULT_CONVERSATION_BRIEFING_PROMPT,
+  );
+}
+
+function bundledConversationWriterPrompt(preset: Record<string, unknown>): string {
+  return String(
+    preset.conversationWriterPrompt ?? preset.conversation_writer_prompt ?? DEFAULT_CONVERSATION_WRITER_PROMPT,
+  );
 }
 
 function bundledGamePrompt(preset: Record<string, unknown>): string {
@@ -152,6 +175,8 @@ function buildPresetSnapshot(args: {
       name: String(preset.name ?? ""),
       description: String(preset.description ?? ""),
       conversationPrompt: bundledConversationPrompt(preset),
+      conversationBriefingPrompt: bundledConversationBriefingPrompt(preset),
+      conversationWriterPrompt: bundledConversationWriterPrompt(preset),
       gamePrompt: bundledGamePrompt(preset),
       variableGroups: parseJsonField(preset.variableGroups, []),
       variableValues: parseJsonField(preset.variableValues, {}),
@@ -166,8 +191,7 @@ function buildPresetSnapshot(args: {
       .map((group) => ({
         key: typeof group.id === "string" ? (groupKeyMap.get(group.id) ?? "") : "",
         name: String(group.name ?? ""),
-        parentGroupKey:
-          typeof group.parentGroupId === "string" ? (groupKeyMap.get(group.parentGroupId) ?? null) : null,
+        parentGroupKey: typeof group.parentGroupId === "string" ? (groupKeyMap.get(group.parentGroupId) ?? null) : null,
         order: numberField(group.order, 100),
         enabled: booleanField(group.enabled, true),
       }))
@@ -262,6 +286,8 @@ async function applyBundledPresetToExisting(
     name: String(preset.name ?? MARINARA_PRESET_NAME),
     description: String(preset.description ?? MARINARA_PRESET_DESCRIPTION),
     conversationPrompt: bundledConversationPrompt(preset),
+    conversationBriefingPrompt: bundledConversationBriefingPrompt(preset),
+    conversationWriterPrompt: bundledConversationWriterPrompt(preset),
     gamePrompt: bundledGamePrompt(preset),
     variableGroups: parseJsonField(preset.variableGroups, []),
     variableValues: parseJsonField(preset.variableValues, {}),
@@ -355,9 +381,7 @@ export async function seedDefaultPreset(db: DB) {
         preset.name === MARINARA_PRESET_NAME && preset.author === MARINARA_PRESET_AUTHOR && preset.isDefault === "true",
     ) ??
     existing.find((preset) => preset.name === MARINARA_PRESET_NAME && preset.author === MARINARA_PRESET_AUTHOR) ??
-    existing.find(
-      (preset) => preset.name === LEGACY_MARINARA_PRESET_NAME && preset.author === MARINARA_PRESET_AUTHOR,
-    );
+    existing.find((preset) => preset.name === LEGACY_MARINARA_PRESET_NAME && preset.author === MARINARA_PRESET_AUTHOR);
 
   const appliedHash = await appSettings.get(MARINARA_PRESET_SEED_HASH_KEY);
   const appliedSnapshotHash = await appSettings.get(MARINARA_PRESET_SNAPSHOT_KEY);
@@ -411,11 +435,7 @@ export async function seedDefaultPreset(db: DB) {
 
   if (
     existingMarinaraPreset &&
-    (await migrateExistingMarinaraConversationPrompt(
-      storage,
-      existingMarinaraPreset,
-      bundledConversationPromptValue,
-    ))
+    (await migrateExistingMarinaraConversationPrompt(storage, existingMarinaraPreset, bundledConversationPromptValue))
   ) {
     logger.info("[seed] Updated the legacy Marinara Conversation prompt lead sentence");
   }
@@ -451,6 +471,8 @@ export async function seedDefaultPreset(db: DB) {
   await storage.setDefault(presetId);
   await storage.update(presetId, {
     conversationPrompt: bundledConversationPrompt(bundled.envelope.data.preset),
+    conversationBriefingPrompt: bundledConversationBriefingPrompt(bundled.envelope.data.preset),
+    conversationWriterPrompt: bundledConversationWriterPrompt(bundled.envelope.data.preset),
     gamePrompt: bundledGamePrompt(bundled.envelope.data.preset),
     defaultChoices: parseJsonField(bundled.envelope.data.preset.defaultChoices, {}),
   });

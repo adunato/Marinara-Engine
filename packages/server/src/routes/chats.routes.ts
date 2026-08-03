@@ -13,11 +13,13 @@ import {
   compileChatSummaryEntries,
   createChatSummaryEntry,
   DEFAULT_CONVERSATION_PROMPT,
+  DEFAULT_CONVERSATION_WRITER_PROMPT,
   DEFAULT_GAME_SYSTEM_PROMPT,
   markAutonomousUnreadSchema,
   replaceChatContextSourcesSchema,
   nameToXmlTag,
   normalizeChatSummaryEntries,
+  normalizeConversationTwoPassSettings,
   resolveMacros,
   stripMacroComments,
   summariesPatchSchema,
@@ -2107,7 +2109,15 @@ export async function chatsRoutes(app: FastifyInstance) {
     const readCachedPrompt = (
       extra: Record<string, unknown>,
       allowHistoricalCache = false,
-    ): { messages: Array<{ role: string; content: string }>; generationInfo?: Record<string, unknown> } | null => {
+    ): {
+      messages: Array<{ role: string; content: string }>;
+      generationInfo?: Record<string, unknown>;
+      twoPass?: {
+        curatorInput: Array<{ role: string; content: string }>;
+        briefing: string;
+        writerInput: Array<{ role: string; content: string }>;
+      };
+    } | null => {
       const cachedPrompt = Array.isArray(extra.cachedPrompt)
         ? extra.cachedPrompt
             .map((entry) => {
@@ -2131,9 +2141,26 @@ export async function chatsRoutes(app: FastifyInstance) {
         return null;
       }
 
+      const twoPassRecord = isRecord(extra.conversationTwoPass) ? extra.conversationTwoPass : null;
+      const readPromptMessages = (value: unknown): Array<{ role: string; content: string }> =>
+        Array.isArray(value)
+          ? value
+              .map((entry) =>
+                isRecord(entry) && typeof entry.role === "string" && typeof entry.content === "string"
+                  ? { role: entry.role, content: entry.content }
+                  : null,
+              )
+              .filter((entry): entry is { role: string; content: string } => entry !== null)
+          : [];
+      const curatorInput = readPromptMessages(twoPassRecord?.curatorInput);
+      const writerInput = readPromptMessages(twoPassRecord?.writerInput);
+      const briefing = typeof twoPassRecord?.briefing === "string" ? twoPassRecord.briefing : "";
       return {
         messages: cachedPrompt,
         generationInfo: isRecord(extra.generationInfo) ? extra.generationInfo : undefined,
+        ...(curatorInput.length > 0 && writerInput.length > 0 && briefing
+          ? { twoPass: { curatorInput, briefing, writerInput } }
+          : {}),
       };
     };
 
@@ -2180,6 +2207,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           source: "cached",
           exact: true,
           generationInfo: cached.generationInfo ?? null,
+          twoPass: cached.twoPass ?? null,
           agentNote: requestedMessage
             ? "This is the exact cached text prompt sent for the selected turn."
             : "This is the cached text prompt saved after provider preparation for the active assistant swipe.",
@@ -2355,6 +2383,7 @@ export async function chatsRoutes(app: FastifyInstance) {
               ? ownerSpatialProjection.lorebookEntryIds
               : [];
           if (chatMode === "conversation") {
+            const twoPassSettings = normalizeConversationTwoPassSettings(chatMeta);
             const customPrompt =
               typeof chatMeta.customSystemPrompt === "string" && chatMeta.customSystemPrompt.trim()
                 ? (chatMeta.customSystemPrompt as string).trim()
@@ -2366,6 +2395,37 @@ export async function chatsRoutes(app: FastifyInstance) {
             const conversationPromptTemplate =
               customPrompt ?? (selectedConversationPrompt || DEFAULT_CONVERSATION_PROMPT);
             const charNameList = promptMacroContext.characters.join(", ") || "Character";
+            if (twoPassSettings.pipeline === "two_pass") {
+              const selectedWriterPrompt = presetStringField(
+                preset as Record<string, unknown> | null,
+                "conversationWriterPrompt",
+              );
+              const writerPromptTemplate =
+                twoPassSettings.customWriterPrompt ?? (selectedWriterPrompt || DEFAULT_CONVERSATION_WRITER_PROMPT);
+              const renderedWriterPrompt = resolveMacros(
+                writerPromptTemplate
+                  .replace(/\{\{charName\}\}/g, charNameList)
+                  .replace(/\{\{userName\}\}/g, personaName),
+                promptMacroContext,
+              );
+              return {
+                messages: [
+                  { role: "system", content: renderedWriterPrompt },
+                  {
+                    role: "user",
+                    content:
+                      "<conversation_briefing>\nGenerated only during an actual Two-pass response.\n</conversation_briefing>",
+                  },
+                ],
+                chatMode,
+                parameters: null,
+                source: "live_preview",
+                exact: false,
+                generationInfo: { conversationPipeline: "two_pass" },
+                agentNote:
+                  "Two-pass live preview shows the isolated writer boundary. Generate a response to inspect the exact curator input, briefing, and writer input.",
+              };
+            }
             const renderedConversationPrompt = resolveMacros(
               conversationPromptTemplate
                 .replace(/\{\{charName\}\}/g, charNameList)
@@ -2929,6 +2989,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     "chatSummaryFingerprint",
     "contextInjections",
     "conversationCommandContent",
+    "conversationTwoPass",
     "encryptedReasoning",
     "geminiParts",
     "generationInfo",

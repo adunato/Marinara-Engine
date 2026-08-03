@@ -25,6 +25,7 @@ function fmtTokens(n: number): string {
 }
 
 interface GenerationInfo {
+  conversationPipeline?: "standard" | "two_pass";
   model?: string;
   provider?: string;
   temperature?: number | null;
@@ -40,6 +41,14 @@ interface GenerationInfo {
   tokensCacheWritePrompt?: number | null;
   durationMs?: number | null;
   finishReason?: string | null;
+  curator?: {
+    model?: string;
+    provider?: string;
+    maxTokens?: number | null;
+    tokensPrompt?: number | null;
+    tokensCompletion?: number | null;
+    durationMs?: number | null;
+  } | null;
 }
 
 interface PeekPromptModalProps {
@@ -50,9 +59,18 @@ interface PeekPromptModalProps {
     source?: "cached" | "live_preview" | "raw_messages";
     exact?: boolean;
     generationInfo?: GenerationInfo | null;
+    twoPass?: {
+      curatorInput: Array<{ role: string; content: string }>;
+      briefing: string;
+      writerInput: Array<{ role: string; content: string }>;
+    } | null;
     agentNote?: string;
   };
   onClose: () => void;
+}
+
+function formatPromptMessages(messages: Array<{ role: string; content: string }>): string {
+  return messages.map((message) => `[${message.role.toUpperCase()}]\n${message.content}`).join("\n\n");
 }
 
 function sourceLabel(data: PeekPromptModalProps["data"]): string {
@@ -557,6 +575,13 @@ export function PeekPromptModal({ data, onClose }: PeekPromptModalProps) {
             <span className="min-w-0 text-[0.625rem] text-[var(--muted-foreground)]">
               {sections.length} section{sections.length !== 1 ? "s" : ""} &middot; ~{fmtTokens(totalTokens)} tokens
             </span>
+            {gen?.conversationPipeline === "two_pass" && (
+              <span
+                className={cn("rounded-md px-2 py-0.5 text-[0.5625rem] font-bold uppercase", PROMPT_TAG_ACTIVE_CLASS)}
+              >
+                Two-pass
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -577,6 +602,12 @@ export function PeekPromptModal({ data, onClose }: PeekPromptModalProps) {
                       <span className="text-[var(--muted-foreground)] font-normal">{gen.provider} / </span>
                     ) : null}
                     {gen.model}
+                  </span>
+                )}
+                {gen?.curator?.model && (
+                  <span className="text-[var(--muted-foreground)]">
+                    Curator: {gen.curator.provider ? `${gen.curator.provider} / ` : ""}
+                    {gen.curator.model}
                   </span>
                 )}
                 <span className="text-[var(--muted-foreground)]">
@@ -606,6 +637,31 @@ export function PeekPromptModal({ data, onClose }: PeekPromptModalProps) {
           {data.agentNote && (
             <div className="rounded-lg border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-3 py-2 text-[0.6875rem] text-[var(--marinara-chat-chrome-panel-text)]">
               Note: {data.agentNote}
+            </div>
+          )}
+          {data.twoPass && (
+            <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/20 p-2">
+              <div className="px-1 text-[0.625rem] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
+                Two-pass diagnostics
+              </div>
+              <CollapsibleBlock
+                label="Curator Input"
+                content={formatPromptMessages(data.twoPass.curatorInput)}
+                defaultOpen={false}
+                roleColor={PROMPT_TAG_CLASS}
+              />
+              <CollapsibleBlock
+                label="Conversation Briefing"
+                content={data.twoPass.briefing}
+                defaultOpen={false}
+                roleColor={PROMPT_TAG_ACTIVE_CLASS}
+              />
+              <CollapsibleBlock
+                label="Writer Input"
+                content={formatPromptMessages(data.twoPass.writerInput)}
+                defaultOpen={false}
+                roleColor={PROMPT_TAG_ACTIVE_CLASS}
+              />
             </div>
           )}
           {sections.map((s, i) =>

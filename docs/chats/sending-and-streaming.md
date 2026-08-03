@@ -19,11 +19,11 @@ Sending needs a working connection. A connection is your link to an AI provider 
 
 The **Send on Enter** setting lives in **Settings**, under the **General** tab, in the **Input & Editing** section. It has one toggle per chat mode:
 
-| Chat mode | Default | What Enter does when on |
-|---|---|---|
-| Roleplay | Off | Enter sends the message |
-| Conversations | On | Enter sends the message |
-| Game | On | Enter sends the message |
+| Chat mode     | Default | What Enter does when on |
+| ------------- | ------- | ----------------------- |
+| Roleplay      | Off     | Enter sends the message |
+| Conversations | On      | Enter sends the message |
+| Game          | On      | Enter sends the message |
 
 When a mode's toggle is off, pressing Enter adds a new line instead. You then click **Send** to post the message. Roleplay is off by default because roleplay messages are often long and need line breaks.
 
@@ -45,11 +45,11 @@ The AI can only "see" an image if the connected model supports vision. If your m
 
 Streaming shows the reply appearing word by word as it generates, instead of waiting for the whole reply at once. The streaming controls live in **Settings**, under the **General** tab, in the **Responses** section:
 
-| Setting | Default | What it does |
-|---|---|---|
-| **Enable streaming** | On | Shows the reply word by word as it generates |
-| **Streaming speed** | 50 | Sets how fast streamed text renders on screen |
-| **Trim incomplete model endings** | Off | Trims a trailing unfinished sentence before saving |
+| Setting                           | Default | What it does                                       |
+| --------------------------------- | ------- | -------------------------------------------------- |
+| **Enable streaming**              | On      | Shows the reply word by word as it generates       |
+| **Streaming speed**               | 50      | Sets how fast streamed text renders on screen      |
+| **Trim incomplete model endings** | Off     | Trims a trailing unfinished sentence before saving |
 
 **Streaming speed** is a slider from 1 to 100. A lower value gives a slower typewriter effect so you can read along. A higher value shows text almost instantly. Marinara smooths bursty token delivery while the model is writing, then uses your selected speed to finish the reply. This setting does not change how fast the model itself writes.
 
@@ -69,9 +69,13 @@ While the server prepares the prompt, a short progress line cycles through these
 - **Recalling memories...**
 - **Running agents...**
 - **Retrieving knowledge...**
+- **Preparing conversation briefing...**
+- **Writing response...**
 - **Generating...**
 
 Each label matches a step Marinara runs before or during the reply. The line clears once the first word of the reply streams in. Some steps only run when a chat uses that feature, so you may not see every label.
+
+The briefing and writing labels appear only when a Conversation uses the Two-pass message-generation pipeline. Curator output never streams into the transcript; visible text begins with the writer call.
 
 If a character's presence is set to a busy or away status, a waiting indicator appears instead of the typing dots. The reply starts once the character is available again.
 

@@ -289,10 +289,61 @@ export function shouldIncludeConversationSummaryMemories(metadata: unknown): boo
 
 export const CHAT_SUMMARY_OUTPUT_TOKENS = { MIN: 1, MAX: 32768, DEFAULT: 4096 } as const;
 
+export type ConversationGenerationPipeline = "standard" | "two_pass";
+
+export type ConversationTwoPassSettings = {
+  pipeline: ConversationGenerationPipeline;
+  curatorConnectionId: string | null;
+  curatorMaxOutputTokens: number;
+  customBriefingPrompt: string | null;
+  customWriterPrompt: string | null;
+};
+
+export const CONVERSATION_CURATOR_OUTPUT_TOKENS = { MIN: 256, MAX: 32768, DEFAULT: 8192 } as const;
+
+function optionalTrimmedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+export function normalizeConversationTwoPassSettings(metadata: unknown): ConversationTwoPassSettings {
+  let value = metadata;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      value = {};
+    }
+  }
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const configuredMaxTokens = Math.floor(Number(raw.conversationCuratorMaxOutputTokens));
+  return {
+    pipeline: raw.conversationGenerationPipeline === "two_pass" ? "two_pass" : "standard",
+    curatorConnectionId: optionalTrimmedString(raw.conversationCuratorConnectionId),
+    curatorMaxOutputTokens: Number.isFinite(configuredMaxTokens)
+      ? Math.min(
+          CONVERSATION_CURATOR_OUTPUT_TOKENS.MAX,
+          Math.max(CONVERSATION_CURATOR_OUTPUT_TOKENS.MIN, configuredMaxTokens),
+        )
+      : CONVERSATION_CURATOR_OUTPUT_TOKENS.DEFAULT,
+    customBriefingPrompt: optionalTrimmedString(raw.customConversationBriefingPrompt),
+    customWriterPrompt: optionalTrimmedString(raw.customConversationWriterPrompt),
+  };
+}
+
 export type GameStoryboardViewerDisplayMode = "floating" | "background";
 
 /** Extra metadata stored on a chat. */
 export interface ChatMetadata {
+  /** Conversation response pipeline. Missing defaults to the existing one-pass pipeline. */
+  conversationGenerationPipeline?: ConversationGenerationPipeline;
+  /** Optional connection override used only for the Conversation context-curation pass. */
+  conversationCuratorConnectionId?: string | null;
+  /** Maximum output tokens for the hidden Conversation context-curation pass. */
+  conversationCuratorMaxOutputTokens?: number | null;
+  /** Chat-local override for the Conversation Briefing prompt. */
+  customConversationBriefingPrompt?: string | null;
+  /** Chat-local override for the isolated Conversation Writer prompt. */
+  customConversationWriterPrompt?: string | null;
   /** Compiled enabled rolling summary text for context injection. Derived from summaryEntries when present. */
   summary: string | null;
   /** Structured rolling summary entries. Missing means legacy summary-only metadata. */
@@ -765,6 +816,14 @@ export interface MessageExtra {
   tokenCount: number | null;
   /** Generation metadata */
   generationInfo: GenerationInfo | null;
+  /** Hidden two-pass Conversation diagnostics; never rendered as transcript content. */
+  conversationTwoPass?: {
+    sourceHash: string;
+    curatorInput: Array<{ role: string; content: string }>;
+    briefing: string;
+    writerInput: Array<{ role: string; content: string }>;
+    writerInputHash: string;
+  } | null;
   /** User-uploaded or generated attachments associated with this message. */
   attachments?: MessageAttachment[] | null;
   /** Persisted translated text for this message, if the user generated one. */
@@ -851,6 +910,7 @@ export interface MessageExtra {
 
 /** Metadata about how a message was generated. */
 export interface GenerationInfo {
+  conversationPipeline?: ConversationGenerationPipeline;
   model: string;
   provider: string;
   temperature: number | null;
@@ -860,6 +920,14 @@ export interface GenerationInfo {
   tokensCacheWritePrompt?: number | null;
   durationMs: number | null;
   finishReason: string | null;
+  curator?: {
+    model: string;
+    provider: string;
+    maxTokens: number;
+    tokensPrompt: number | null;
+    tokensCompletion: number | null;
+    durationMs: number;
+  } | null;
 }
 
 /** A swipe (alternate response) for a message. */

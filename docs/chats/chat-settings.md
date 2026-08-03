@@ -31,6 +31,14 @@ Pick a saved connection from the dropdown. You can also pick **Random**. It choo
 
 To learn how to create a connection in the first place, see [Connecting to an AI Provider](../connections/connecting-to-a-provider.md).
 
+## Conversation message-generation pipeline
+
+Conversation chats include a **Message generation pipeline** setting. **Standard** is the default and sends the normal Conversation prompt to the chat model. **Two-pass** first sends the same resolved context sources to a hidden context-curator call, then sends only the resulting Conversation Briefing to the response writer.
+
+When Two-pass is active, Chat Settings shows its curator connection, curator output limit, Conversation Briefing prompt, and Conversation Writer prompt. The curator uses the chat connection unless you select an override; an override sends the resolved Conversation context to that connection's provider. The regular Conversation prompt remains editable but is labelled as unused until you switch back to Standard.
+
+The two prompts can come from the selected prompt preset or from chat-local edits. Prompt Patch agents cannot modify the isolated writer prompt and are skipped while Two-pass is active.
+
 ## Chat Settings Presets
 
 At the top of the panel is a **Chat Settings Presets** bar. A Chat Settings Preset is a saved bundle of a chat's settings that you can reuse on other chats. Choose a saved preset from the dropdown to apply it to the current chat.

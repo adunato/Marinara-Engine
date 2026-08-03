@@ -85,6 +85,8 @@ export function createPromptsStorage(db: DB) {
         name: input.name,
         description: input.description ?? "",
         conversationPrompt: input.conversationPrompt ?? "",
+        conversationBriefingPrompt: input.conversationBriefingPrompt ?? "",
+        conversationWriterPrompt: input.conversationWriterPrompt ?? "",
         gamePrompt: input.gamePrompt ?? "",
         sectionOrder: JSON.stringify([]),
         groupOrder: JSON.stringify([]),
@@ -105,6 +107,10 @@ export function createPromptsStorage(db: DB) {
       if (data.name !== undefined) updateFields.name = data.name;
       if (data.description !== undefined) updateFields.description = data.description;
       if (data.conversationPrompt !== undefined) updateFields.conversationPrompt = data.conversationPrompt;
+      if (data.conversationBriefingPrompt !== undefined)
+        updateFields.conversationBriefingPrompt = data.conversationBriefingPrompt;
+      if (data.conversationWriterPrompt !== undefined)
+        updateFields.conversationWriterPrompt = data.conversationWriterPrompt;
       if (data.gamePrompt !== undefined) updateFields.gamePrompt = data.gamePrompt;
       if (data.sectionOrder !== undefined) updateFields.sectionOrder = JSON.stringify(data.sectionOrder);
       if (data.groupOrder !== undefined) updateFields.groupOrder = JSON.stringify(data.groupOrder);
@@ -149,6 +155,8 @@ export function createPromptsStorage(db: DB) {
         name: `${preset.name} (Copy)`,
         description: preset.description,
         conversationPrompt: preset.conversationPrompt,
+        conversationBriefingPrompt: preset.conversationBriefingPrompt,
+        conversationWriterPrompt: preset.conversationWriterPrompt,
         gamePrompt: preset.gamePrompt,
         variableGroups: JSON.parse(preset.variableGroups as string),
         variableValues: JSON.parse(preset.variableValues as string),

@@ -5,9 +5,11 @@ import {
   resolveProviderReasoningEffort,
   resolveMacros,
   stripMacroComments,
+  DEFAULT_CONVERSATION_WRITER_PROMPT,
   DEFAULT_CONVERSATION_PROMPT,
   DEFAULT_GAME_SYSTEM_PROMPT,
   normalizeGameStoryboardKeyframeCount,
+  normalizeConversationTwoPassSettings,
   type GenerationParameterSendMap,
   type LorebookEntryTimingState,
 } from "@marinara-engine/shared";
@@ -1325,6 +1327,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
 
     if (chatMode === "conversation") {
+      const twoPassSettings = normalizeConversationTwoPassSettings(chatMeta);
       const customPrompt =
         typeof chatMeta.customSystemPrompt === "string" && chatMeta.customSystemPrompt.trim()
           ? (chatMeta.customSystemPrompt as string)
@@ -1339,20 +1342,41 @@ export async function registerDryRunRoute(app: FastifyInstance) {
           .map((id) => characterNamesById.get(id))
           .filter((name): name is string => Boolean(name))
           .join(", ") || "Character";
-      const conversationPromptTemplate = customPrompt ?? (selectedConversationPrompt || DEFAULT_CONVERSATION_PROMPT);
-      const renderedConversationPrompt = resolvePromptMacros(
-        conversationPromptTemplate.replace(/\{\{charName\}\}/g, charNameList).replace(/\{\{userName\}\}/g, personaName),
-      );
-      finalMessages = [
-        {
-          role: "system",
-          content: formatConversationInstructionsForWrap(
-            `${renderedConversationPrompt}\n${CONVERSATION_NO_REPEAT_INSTRUCTION}`,
-            wrapFormat,
-          ),
-        },
-        ...finalMessages,
-      ];
+      if (twoPassSettings.pipeline === "two_pass") {
+        const presetWriterPrompt = presetStringField(
+          effectivePreset as Record<string, unknown> | null,
+          "conversationWriterPrompt",
+        );
+        const writerPromptTemplate =
+          twoPassSettings.customWriterPrompt ?? (presetWriterPrompt || DEFAULT_CONVERSATION_WRITER_PROMPT);
+        const renderedWriterPrompt = resolvePromptMacros(
+          writerPromptTemplate.replace(/\{\{charName\}\}/g, charNameList).replace(/\{\{userName\}\}/g, personaName),
+        );
+        finalMessages = [
+          { role: "system", content: renderedWriterPrompt },
+          {
+            role: "user",
+            content: "<conversation_briefing>\nGenerated during the actual Two-pass call.\n</conversation_briefing>",
+          },
+        ];
+      } else {
+        const conversationPromptTemplate = customPrompt ?? (selectedConversationPrompt || DEFAULT_CONVERSATION_PROMPT);
+        const renderedConversationPrompt = resolvePromptMacros(
+          conversationPromptTemplate
+            .replace(/\{\{charName\}\}/g, charNameList)
+            .replace(/\{\{userName\}\}/g, personaName),
+        );
+        finalMessages = [
+          {
+            role: "system",
+            content: formatConversationInstructionsForWrap(
+              `${renderedConversationPrompt}\n${CONVERSATION_NO_REPEAT_INSTRUCTION}`,
+              wrapFormat,
+            ),
+          },
+          ...finalMessages,
+        ];
+      }
     }
     if (chatMode === "game") {
       const setupConfig =

@@ -182,8 +182,10 @@ import type {
 } from "@marinara-engine/shared";
 import {
   CHARACTER_MIND_AGENT_ID,
+  CONVERSATION_CURATOR_OUTPUT_TOKENS,
   DAILY_INTENTIONS_AGENT_ID,
   DAILY_MEMORY_AGENT_ID,
+  normalizeConversationTwoPassSettings,
   normalizeSpotifySourceType,
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
@@ -970,6 +972,7 @@ export function ChatSettingsDrawer({
     () => (typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {})),
     [chat.metadata],
   );
+  const conversationTwoPassSettings = useMemo(() => normalizeConversationTwoPassSettings(metadata), [metadata]);
   const noodleTimelineContextEnabled = metadata.noodleTimelineContextEnabled === true;
   const renderNoodleTimelineContextToggle = () => (
     <button
@@ -4684,7 +4687,35 @@ export function ChatSettingsDrawer({
                 promptPresets={promptPresetOptions}
                 selectedPresetName={selectedModePromptPreset?.name ?? null}
                 selectedPresetPrompt={selectedModePromptPreset?.conversationPrompt ?? ""}
+                selectedPresetBriefingPrompt={selectedModePromptPreset?.conversationBriefingPrompt ?? ""}
+                selectedPresetWriterPrompt={selectedModePromptPreset?.conversationWriterPrompt ?? ""}
+                pipeline={conversationTwoPassSettings.pipeline}
+                curatorConnectionId={conversationTwoPassSettings.curatorConnectionId ?? ""}
+                curatorMaxOutputTokens={conversationTwoPassSettings.curatorMaxOutputTokens}
+                customBriefingPrompt={conversationTwoPassSettings.customBriefingPrompt ?? ""}
+                customWriterPrompt={conversationTwoPassSettings.customWriterPrompt ?? ""}
+                connections={chatGenerationConnectionsList}
                 onCustomPromptChange={(id, customSystemPrompt) => updateMeta.mutate({ id, customSystemPrompt })}
+                onPipelineChange={(conversationGenerationPipeline) =>
+                  updateMeta.mutate({ id: chat.id, conversationGenerationPipeline })
+                }
+                onCuratorConnectionChange={(conversationCuratorConnectionId) =>
+                  updateMeta.mutate({ id: chat.id, conversationCuratorConnectionId })
+                }
+                onCuratorMaxOutputTokensChange={(value) => {
+                  if (!Number.isFinite(value)) return;
+                  const conversationCuratorMaxOutputTokens = Math.min(
+                    CONVERSATION_CURATOR_OUTPUT_TOKENS.MAX,
+                    Math.max(CONVERSATION_CURATOR_OUTPUT_TOKENS.MIN, Math.floor(value)),
+                  );
+                  updateMeta.mutate({ id: chat.id, conversationCuratorMaxOutputTokens });
+                }}
+                onCustomBriefingPromptChange={(customConversationBriefingPrompt) =>
+                  updateMeta.mutate({ id: chat.id, customConversationBriefingPrompt })
+                }
+                onCustomWriterPromptChange={(customConversationWriterPrompt) =>
+                  updateMeta.mutate({ id: chat.id, customConversationWriterPrompt })
+                }
                 onPromptPresetChange={handleModePromptPresetChange}
                 onOpenPromptPreset={openSelectedModePromptPreset}
               />

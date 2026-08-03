@@ -52,6 +52,10 @@ export interface PromptPreset {
   description: string;
   /** Conversation-mode system prompt template. Empty means use the built-in fallback. */
   conversationPrompt: string;
+  /** Conversation-mode first-pass context curator prompt template. */
+  conversationBriefingPrompt: string;
+  /** Conversation-mode isolated response writer prompt template. */
+  conversationWriterPrompt: string;
   /** Game-mode GM prompt template. Empty means use the built-in fallback. */
   gamePrompt: string;
   /** Ordered list of section IDs defining the prompt structure */

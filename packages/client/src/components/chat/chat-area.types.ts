@@ -49,6 +49,7 @@ export type PeekPromptData = {
   source?: "cached" | "live_preview" | "raw_messages";
   exact?: boolean;
   generationInfo?: {
+    conversationPipeline?: "standard" | "two_pass";
     model?: string;
     provider?: string;
     temperature?: number | null;
@@ -64,6 +65,19 @@ export type PeekPromptData = {
     tokensCacheWritePrompt?: number | null;
     durationMs?: number | null;
     finishReason?: string | null;
+    curator?: {
+      model?: string;
+      provider?: string;
+      maxTokens?: number | null;
+      tokensPrompt?: number | null;
+      tokensCompletion?: number | null;
+      durationMs?: number | null;
+    } | null;
+  } | null;
+  twoPass?: {
+    curatorInput: Array<{ role: string; content: string }>;
+    briefing: string;
+    writerInput: Array<{ role: string; content: string }>;
   } | null;
   agentNote?: string;
 };
