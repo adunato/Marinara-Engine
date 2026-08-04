@@ -4548,6 +4548,63 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "conversation prompt prose between macros does not suppress card fields",
+    run() {
+      const messages: ChatMLMessage[] = [
+        { role: "system", content: "Stable system prompt." },
+        { role: "user", content: "Hello." },
+      ];
+
+      injectIdentityFallbackMessages({
+        messages,
+        charInfo: [
+          {
+            id: "char-conversation-prose",
+            name: "Conversation Character",
+            description: "CHAR_DESCRIPTION_FROM_CARD",
+            personality: "CHAR_PERSONALITY_FROM_CARD",
+            backstory: "CHAR_BACKSTORY_FROM_CARD",
+            appearance: "CHAR_APPEARANCE_FROM_CARD",
+            scenario: "CHAR_SCENARIO_FROM_CARD",
+            mesExample: "",
+            creatorNotes: "",
+            systemPrompt: "",
+            firstMes: "",
+            postHistoryInstructions: "",
+            tags: [],
+            talkativeness: 0.5,
+            avatarPath: null,
+            avatarCrop: null,
+          },
+        ],
+        promptTargetCharacterId: null,
+        promptMacroContext: {
+          user: "Mari",
+          char: "Conversation Character",
+          characters: ["Conversation Character"],
+          variables: {},
+        },
+        wrapFormat: "xml",
+        personaName: "Mari",
+        personaDescription: "",
+        personaFields: {},
+        persona: null,
+        promptTemplateSources: [
+          "You are {{charName}}. Stay in character based on your personality and description. {{commands}}",
+        ],
+        resolvePromptMacros: (value) => value,
+        isConversation: true,
+      });
+
+      const promptText = messages.map((message) => message.content).join("\n");
+      assert.match(promptText, /CHAR_DESCRIPTION_FROM_CARD/);
+      assert.match(promptText, /CHAR_PERSONALITY_FROM_CARD/);
+      assert.match(promptText, /CHAR_BACKSTORY_FROM_CARD/);
+      assert.match(promptText, /CHAR_APPEARANCE_FROM_CARD/);
+      assert.match(promptText, /CHAR_SCENARIO_FROM_CARD/);
+    },
+  },
+  {
     name: "character marker selections follow editor order without disturbing advanced fields",
     run() {
       assert.deepEqual(
