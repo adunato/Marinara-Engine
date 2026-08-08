@@ -1,5 +1,6 @@
 import {
   BUILT_IN_AGENTS,
+  CORE_BUILT_IN_AGENT_MANIFESTS,
   DEFAULT_AGENT_TOOLS,
   getDefaultAgentPrompt,
   getDefaultBuiltInAgentSettings,
@@ -77,6 +78,13 @@ type AgentConnectionResolution = {
   unavailableReason?: string;
   connectionName?: string;
 };
+
+// Core managed agents have native runtimes. The mutable built-in registry is
+// refreshed during app startup, but this static guard must hold even while that
+// registry is unavailable or has not yet been populated.
+const CORE_MANAGED_AGENT_TYPES = new Set(
+  CORE_BUILT_IN_AGENT_MANIFESTS.filter((agent) => agent.execution === "managed").map((agent) => agent.id),
+);
 
 function readTrimmedString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -301,6 +309,7 @@ export async function resolveAgentPipelineAgents({
       !isAgentConfigDeleted(agent.settings) &&
       !isBuiltInAgentRuntimeDisabled(agent.type as string) &&
       !isRetiredBuiltInAgentId(agent.type as string) &&
+      !CORE_MANAGED_AGENT_TYPES.has(agent.type as string) &&
       BUILT_IN_AGENTS.find((builtIn) => builtIn.id === agent.type)?.execution !== "managed",
   );
   const resolvedAgents: ResolvedAgent[] = [];
