@@ -274,6 +274,7 @@ import {
 } from "./sprite-display-modes";
 import {
   AgentAddSetupFields,
+  ExpressionSetupFields,
   applyAgentAddSetupToAgentSettings,
   buildAgentAddMetadataPatch,
   buildInitialAgentAddSetupState,
@@ -2578,6 +2579,36 @@ export function ChatSettingsDrawer({
     [chatSpriteSubjects, charName, charTitle],
   );
 
+  const expressionSetupState = useMemo<AgentAddSetupState>(() => {
+    const state = buildInitialAgentAddSetupState({
+      agentId: "expression",
+      settings: mergeBuiltInAgentSettings("expression", agentConfigsByType.get("expression")?.settings),
+      metadata,
+      musicPlayerSource,
+      roleplaySpriteScale,
+    });
+    return {
+      ...state,
+      spritePosition,
+      expressionAvatarsEnabled,
+      expressionSpriteScale,
+      fullBodySpriteScale,
+      expressionSpriteOpacity,
+      fullBodySpriteOpacity,
+    };
+  }, [
+    agentConfigsByType,
+    expressionAvatarsEnabled,
+    expressionSpriteOpacity,
+    expressionSpriteScale,
+    fullBodySpriteOpacity,
+    fullBodySpriteScale,
+    metadata,
+    musicPlayerSource,
+    roleplaySpriteScale,
+    spritePosition,
+  ]);
+
   const charAvatarCrop = useCallback((c: { data: unknown }) => {
     try {
       const parsed = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
@@ -2831,6 +2862,46 @@ export function ChatSettingsDrawer({
       });
     },
     [chat.id, onSpriteVisualSettingsChange, updateMeta],
+  );
+
+  const updateExpressionSetup = useCallback(
+    (patch: Partial<AgentAddSetupState>) => {
+      const metadataPatch: Record<string, unknown> = {};
+      if (patch.spriteDisplayModes) metadataPatch.spriteDisplayModes = patch.spriteDisplayModes;
+      if (patch.spriteCharacterIds) metadataPatch.spriteCharacterIds = patch.spriteCharacterIds;
+      if (Object.keys(metadataPatch).length > 0) updateMeta.mutate({ id: chat.id, ...metadataPatch });
+
+      if (typeof patch.expressionAvatarsEnabled === "boolean") {
+        if (onSpriteVisualSettingsChange) {
+          onSpriteVisualSettingsChange({ expressionAvatarsEnabled: patch.expressionAvatarsEnabled });
+        } else {
+          updateMeta.mutate({ id: chat.id, expressionAvatarsEnabled: patch.expressionAvatarsEnabled });
+        }
+      }
+      if (patch.spritePosition) setSpriteSide(patch.spritePosition);
+      if (typeof patch.expressionSpriteScale === "number") {
+        setExpressionSpriteScale(Math.round(patch.expressionSpriteScale * 100));
+      }
+      if (typeof patch.fullBodySpriteScale === "number") {
+        setFullBodySpriteScale(Math.round(patch.fullBodySpriteScale * 100));
+      }
+      if (typeof patch.expressionSpriteOpacity === "number") {
+        setExpressionSpriteOpacity(Math.round(patch.expressionSpriteOpacity * 100));
+      }
+      if (typeof patch.fullBodySpriteOpacity === "number") {
+        setFullBodySpriteOpacity(Math.round(patch.fullBodySpriteOpacity * 100));
+      }
+    },
+    [
+      chat.id,
+      onSpriteVisualSettingsChange,
+      setExpressionSpriteOpacity,
+      setExpressionSpriteScale,
+      setFullBodySpriteOpacity,
+      setFullBodySpriteScale,
+      setSpriteSide,
+      updateMeta,
+    ],
   );
 
   // ── Character drag-and-drop reordering ──
@@ -4072,31 +4143,33 @@ export function ChatSettingsDrawer({
     const inactiveAgents = categoryAgents.filter((agent) => !activeAgentIds.includes(agent.id));
     return (
       <AgentCategorySection label={label} icon={icon} description={description} count={activeAgents.length}>
-        {activeAgents.length > 0 && (
+        {activeAgents.some((agent) => agent.id !== "expression") && (
           <div className="mb-1.5 flex flex-col gap-1">
-            {activeAgents.map((agent) => (
-              <div
-                key={agent.id}
-                data-chat-agent-entry={agent.id}
-                className="flex items-start gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
-              >
-                <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
-                <div className="min-w-0 flex-1">
-                  <span className="block truncate text-xs">{agent.name}</span>
-                  <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
-                    {agent.description}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void toggleAgent(agent.id)}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                  title="Remove from chat"
+            {activeAgents
+              .filter((agent) => agent.id !== "expression")
+              .map((agent) => (
+                <div
+                  key={agent.id}
+                  data-chat-agent-entry={agent.id}
+                  className="flex items-start gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
                 >
-                  <Trash2 size="0.6875rem" />
-                </button>
-              </div>
-            ))}
+                  <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-xs">{agent.name}</span>
+                    <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
+                      {agent.description}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void toggleAgent(agent.id)}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                    title="Remove from chat"
+                  >
+                    <Trash2 size="0.6875rem" />
+                  </button>
+                </div>
+              ))}
           </div>
         )}
         {inactiveAgents.length > 0 ? (
@@ -6369,6 +6442,21 @@ export function ChatSettingsDrawer({
                   icon: <Puzzle size="0.75rem" />,
                   description: "Add specialized Conversation helpers such as daily memories.",
                 })}
+                {metadata.enableAgents && expressionActive && (
+                  <AgentSettingsCard
+                    id={getAgentSettingsMenuId(chat.id, "expression")}
+                    icon={renderRoleplayAgentMenuIcon("expression")}
+                    title={expressionAgentMeta.name}
+                    description={expressionAgentMeta.description}
+                    onRemove={getRoleplayAgentMenuRemoveHandler("expression", expressionAgentMeta.name)}
+                  >
+                    <ExpressionSetupFields
+                      value={expressionSetupState}
+                      spriteSubjects={agentAddSpriteSubjects}
+                      onChange={updateExpressionSetup}
+                    />
+                  </AgentSettingsCard>
+                )}
                 {renderDailyMemoryAgentSettings()}
                 {renderDailyIntentionsAgentSettings()}
                 {renderCharacterMindAgentSettings()}

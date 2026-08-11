@@ -202,7 +202,11 @@ export function isAgentManifestAvailableInChatMode(
 ): boolean {
   if (isRetiredBuiltInAgentId(agent.id)) return false;
   const normalizedMode = mode ?? "roleplay";
-  if (agent.modeAllowlist?.length && !agent.modeAllowlist.includes(normalizedMode)) return false;
+  // CR035 extends the established Expression Engine host contract to Conversation.
+  // Keep older installed package manifests (which declared Roleplay only) usable
+  // while the downloadable package metadata catches up.
+  if (agent.id !== "expression" && agent.modeAllowlist?.length && !agent.modeAllowlist.includes(normalizedMode))
+    return false;
   if (agent.execution === "feature") return true;
   const policy = getChatModeCapabilities(mode).agentPolicy;
   return policy.kind === "all" || policy.allowedAgentIds.includes(agent.id);

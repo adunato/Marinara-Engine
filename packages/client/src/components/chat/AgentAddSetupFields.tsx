@@ -474,11 +474,7 @@ export function buildAgentAddMetadataPatch(
       setup.includeCharacterAppearance,
       defaults?.includeCharacterAppearance,
     );
-    applyIllustratorDefault(
-      "illustratorUseAvatarReferences",
-      setup.useAvatarReferences,
-      defaults?.useAvatarReferences,
-    );
+    applyIllustratorDefault("illustratorUseAvatarReferences", setup.useAvatarReferences, defaults?.useAvatarReferences);
   }
   if (agentId === "haptic") {
     patch.enableHapticFeedback = setup.hapticFeedbackEnabled;
@@ -925,7 +921,7 @@ function SpriteRangeSlider({
   );
 }
 
-function ExpressionSetupFields({
+export function ExpressionSetupFields({
   value,
   spriteSubjects,
   disabled,

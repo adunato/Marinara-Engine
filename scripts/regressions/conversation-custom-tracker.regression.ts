@@ -15,7 +15,16 @@ assert.deepEqual(CONVERSATION_ALLOWED_AGENT_IDS, [
   "daily-memory",
   "daily-intentions",
   "character-mind",
+  "expression",
 ]);
+assert.equal(
+  isAgentManifestAvailableInChatMode("conversation", {
+    id: "expression",
+    execution: "pipeline",
+    modeAllowlist: ["roleplay"],
+  }),
+  true,
+);
 assert.equal(
   isAgentManifestAvailableInChatMode("conversation", {
     id: "custom-tracker",

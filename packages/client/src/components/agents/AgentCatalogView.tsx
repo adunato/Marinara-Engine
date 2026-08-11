@@ -51,7 +51,7 @@ const OFFICIAL_PACKAGE_MODES: Readonly<Record<string, readonly CatalogMode[]>> =
   background: ["roleplay"],
   "character-tracker": ["roleplay"],
   "custom-tracker": ["conversation", "roleplay"],
-  expression: ["roleplay"],
+  expression: ["conversation", "roleplay"],
   "hierarchical-maps": ["roleplay", "game"],
   "persona-stats": ["roleplay"],
   quest: ["roleplay"],
