@@ -1696,7 +1696,13 @@ export async function chatsRoutes(app: FastifyInstance) {
     if (typeof content !== "string") return reply.status(400).send({ error: "content is required" });
     const updated = await storage.updateMessageContent(req.params.messageId, content);
     if (!updated) return reply.status(404).send({ error: "Message not found" });
-    return updated;
+    // A manual rewrite invalidates affect classified from the previous text.
+    return (
+      (await storage.updateMessageExtra(req.params.messageId, {
+        spriteExpressions: null,
+        characterEmotions: null,
+      })) ?? updated
+    );
   });
 
   // Update message extra (partial merge) — also syncs to the active swipe

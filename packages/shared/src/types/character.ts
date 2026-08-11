@@ -63,7 +63,29 @@ export interface CharacterExtensions {
   /** Marinara Engine (Conversation mode ONLY): behavior directive + insertion strategy.
    *  Never read in RP/VN/Game. */
   convoBehavior?: ConvoBehaviorConfig;
+  /** Marinara Engine: author-defined emotion states used by the Expression Engine and {{charEmotion}}. */
+  emotionProfile?: CharacterEmotionProfile;
   [key: string]: unknown;
+}
+
+/** One author-defined emotional state for a character. */
+export interface CharacterEmotionState {
+  /** Stable normalized identifier referenced by {{charEmotion}} conditionals. */
+  id: string;
+  /** Human-readable editor label. */
+  label: string;
+  /** Guidance supplied to the post-generation Expression Engine. */
+  description: string;
+  /** Optional Expression Engine sprite-expression mapping. */
+  spriteExpression?: string | null;
+}
+
+/** Character-card extension configuring post-generation emotion classification. */
+export interface CharacterEmotionProfile {
+  enabled: boolean;
+  /** The valid state used until a generated message persists a newer state. */
+  defaultStateId: string;
+  states: CharacterEmotionState[];
 }
 
 /** Where a Convo-mode behavior directive is inserted into the conversation prompt. */

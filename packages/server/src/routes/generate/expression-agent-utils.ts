@@ -284,7 +284,11 @@ export function completeRequiredSpriteExpressionEntries<T extends SpriteExpressi
   const completed = [...expressions];
   const presentIds = new Set(
     completed
-      .map((entry) => (typeof entry.characterId === "string" ? entry.characterId.trim() : ""))
+      .map((entry) =>
+        typeof entry.characterId === "string" && typeof entry.expression === "string" && entry.expression.trim()
+          ? entry.characterId.trim()
+          : "",
+      )
       .filter((id) => id.length > 0),
   );
 
@@ -299,12 +303,19 @@ export function completeRequiredSpriteExpressionEntries<T extends SpriteExpressi
     const expression = pickFallbackExpression(character.expressions, sourceText);
     if (!expression) continue;
 
-    completed.push({
-      characterId: character.characterId,
-      characterName: character.characterName,
-      expression,
-      transition: "crossfade",
-    } as T);
+    const existing = completed.find((entry) => entry.characterId === characterId);
+    if (existing) {
+      existing.characterName = character.characterName;
+      existing.expression = expression;
+      existing.transition = "crossfade";
+    } else {
+      completed.push({
+        characterId: character.characterId,
+        characterName: character.characterName,
+        expression,
+        transition: "crossfade",
+      } as T);
+    }
     presentIds.add(characterId);
     warnings.push({
       message: `Expression agent omitted ${character.characterName} — filled missing required expression "${expression}"`,

@@ -15,6 +15,7 @@ import {
   isBuiltInAgentRuntimeDisabled,
   isRetiredBuiltInAgentId,
   normalizeWorldCustomFields,
+  normalizeCharacterEmotionProfile,
   normalizeAgentPhaseValue,
   normalizeAgentPromptTemplateSelectionMap,
   resolveGameSetupArtStylePrompt,
@@ -140,6 +141,17 @@ import {
   normalizeSpriteDisplayModes,
   validateSpriteExpressionEntries,
 } from "./expression-agent-utils.js";
+import {
+  buildAvailableEmotionCharacters,
+  buildEmotionProfilesByCharacterId,
+  collectLatestCharacterEmotions,
+  completeRequiredCharacterEmotionEntries,
+  resolveCharacterEmotionStateMap,
+  resolveConversationAffectTargetIds,
+  resolveMappedSpriteExpression,
+  validateCharacterEmotionEntries,
+  type AvailableEmotionCharacter,
+} from "../../services/generation/character-emotion-runtime.js";
 import {
   suppressesReferencePromptLine,
   mergeIllustratorNegativePrompt,
@@ -608,16 +620,28 @@ async function buildRetryAgentContext(args: {
       avatarPath: typeof charRow.avatarPath === "string" ? charRow.avatarPath : null,
       avatarCrop: extensions.avatarCrop ?? null,
       rpgStats: normalizeCharacterRpgStats(extensions.rpgStats),
+      emotionProfile: normalizeCharacterEmotionProfile(extensions.emotionProfile) ?? undefined,
     });
   }
 
   const personaContext = await resolvePersonaContext(chars, chat);
+  const persistedCharacterEmotions = collectLatestCharacterEmotions(recentMessages);
+  for (const character of charInfo) {
+    const profile = character.emotionProfile;
+    character.emotion =
+      profile?.enabled === true && profile.states.some((state) => state.id === persistedCharacterEmotions[character.id])
+        ? persistedCharacterEmotions[character.id]
+        : profile?.enabled === true
+          ? profile.defaultStateId
+          : "";
+  }
   const promptMacroContext = await buildPromptMacroContext({
     db,
     characterIds,
     personaName: personaContext.personaName,
     personaDescription: personaContext.personaDescription,
     personaFields: personaContext.personaFields,
+    characterEmotions: persistedCharacterEmotions,
     variables: {},
     groupScenarioOverrideText:
       typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
@@ -826,6 +850,9 @@ async function buildRetryAgentContext(args: {
 
   // If the expression agent is being retried, load available sprite expressions per character
   if (resolvedAgentTypes.has("expression")) {
+    const emotionProfiles = buildEmotionProfilesByCharacterId(agentContext.characters);
+    const previousEmotionStates = resolveCharacterEmotionStateMap(recentMessages, emotionProfiles);
+    const availableEmotions = buildAvailableEmotionCharacters(agentContext.characters, previousEmotionStates);
     try {
       const spriteDisplayModes = normalizeSpriteDisplayModes(chatMeta.spriteDisplayModes);
       const selectedSpriteIds = new Set(
@@ -880,15 +907,31 @@ async function buildRetryAgentContext(args: {
       ) {
         expressionTargetIds.add(personaContext.personaId);
       }
+      const affectTargetIds =
+        chatMode === "conversation"
+          ? resolveConversationAffectTargetIds(
+              resolvedLastAssistantContent,
+              agentContext.characters,
+              [...expressionTargetIds],
+            )
+          : [...expressionTargetIds];
       const targetedSprites =
-        expressionTargetIds.size > 0
-          ? perChar.filter((sprite) => expressionTargetIds.has(sprite.characterId))
+        affectTargetIds.length > 0
+          ? perChar.filter((sprite) => affectTargetIds.includes(sprite.characterId))
           : perChar;
-      if (targetedSprites.length > 0 || expressionTargetIds.size > 0) {
+      if (targetedSprites.length > 0 || affectTargetIds.length > 0) {
         agentContext.memory._availableSprites = targetedSprites;
-        if (expressionTargetIds.size > 0) {
-          agentContext.memory._expressionTargetIds = [...expressionTargetIds];
+        if (targetedSprites.length > 0) {
+          agentContext.memory._expressionTargetIds = targetedSprites.map((sprite) => sprite.characterId);
         }
+      }
+      const targetedEmotions =
+        affectTargetIds.length > 0
+          ? availableEmotions.filter((character) => affectTargetIds.includes(character.characterId))
+          : availableEmotions;
+      if (targetedEmotions.length > 0) {
+        agentContext.memory._availableEmotions = targetedEmotions;
+        agentContext.memory._emotionTargetIds = targetedEmotions.map((character) => character.characterId);
       }
     } catch (err) {
       logger.warn(err, "[retry-agents] Failed to load available sprites for retry");
@@ -3346,12 +3389,19 @@ async function applyRetryResultEffects(args: {
       result.data &&
       typeof result.data === "object"
     ) {
-      const spriteData = result.data as { expressions?: Array<{ characterId: string; expression: string }> };
+      const spriteData = result.data as {
+        expressions?: Array<{ characterId: string; expression?: string; emotionStateId?: string }>;
+      };
       const exprMap: Record<string, string> = {};
+      const emotionMap: Record<string, string> = {};
       const personaExprMap: Record<string, string> = {};
       const personaId = typeof agentContext.memory._personaId === "string" ? agentContext.memory._personaId : null;
       if (Array.isArray(spriteData.expressions)) {
         for (const e of spriteData.expressions) {
+          if (typeof e.emotionStateId === "string" && (!personaId || e.characterId !== personaId)) {
+            emotionMap[e.characterId] = e.emotionStateId;
+          }
+          if (typeof e.expression !== "string") continue;
           if (personaId && e.characterId === personaId) {
             personaExprMap[e.characterId] = e.expression;
           } else {
@@ -3361,8 +3411,11 @@ async function applyRetryResultEffects(args: {
       }
       try {
         const chatsDb = createChatsStorage(app.db);
-        if (Object.keys(exprMap).length > 0) {
-          await chatsDb.updateMessageExtraForSwipe(retryMessageId, retrySwipeIndex, { spriteExpressions: exprMap });
+        if (Object.keys(exprMap).length > 0 || Object.keys(emotionMap).length > 0) {
+          await chatsDb.updateMessageExtraForSwipe(retryMessageId, retrySwipeIndex, {
+            ...(Object.keys(exprMap).length > 0 ? { spriteExpressions: exprMap } : {}),
+            ...(Object.keys(emotionMap).length > 0 ? { characterEmotions: emotionMap } : {}),
+          });
         }
         if (Object.keys(personaExprMap).length > 0) {
           const personaMessageId = await findLastUserMessageIdBefore(chatsDb, chatId, retryMessageId);
@@ -3878,22 +3931,53 @@ export async function registerRetryAgentsRoute(app: FastifyInstance) {
             expressions?: Array<{
               characterId: string;
               characterName?: string;
-              expression: string;
+              expression?: string;
               transition?: string;
+              emotionStateId?: string;
             }>;
           };
           const availableSprites = agentContext.memory._availableSprites as
             | Array<{ characterId: string; characterName: string; expressions: string[] }>
             | undefined;
-          if (Array.isArray(availableSprites)) {
-            const rawExpressions = Array.isArray(spriteData.expressions) ? spriteData.expressions : [];
+          const availableEmotions = agentContext.memory._availableEmotions as AvailableEmotionCharacter[] | undefined;
+          const rawExpressions = Array.isArray(spriteData.expressions) ? spriteData.expressions : [];
+          if (Array.isArray(availableSprites) || Array.isArray(availableEmotions)) {
             const validation = validateSpriteExpressionEntries(rawExpressions, availableSprites);
-            let validatedExpressions = validation.expressions;
+            const emotionValidation = validateCharacterEmotionEntries(rawExpressions, availableEmotions);
+            const mergedByCharacterId = new Map<string, (typeof rawExpressions)[number]>();
+            for (const entry of validation.expressions) {
+              if (typeof entry.characterId === "string") mergedByCharacterId.set(entry.characterId, entry);
+            }
+            for (const entry of emotionValidation.emotions) {
+              if (typeof entry.characterId !== "string") continue;
+              mergedByCharacterId.set(entry.characterId, {
+                ...mergedByCharacterId.get(entry.characterId),
+                ...entry,
+              });
+            }
+            let validatedExpressions = [...mergedByCharacterId.values()];
             if (!Array.isArray(spriteData.expressions) && rawExpressions.length === 0) {
               logger.warn("[retry-agents] Expression agent returned no expression entries — filling required targets");
             }
             for (const warning of validation.warnings) {
               logger.warn("[retry-agents] %s", warning.message);
+            }
+            for (const warning of emotionValidation.warnings) {
+              logger.warn("[retry-agents] %s", warning.message);
+            }
+            validatedExpressions = completeRequiredCharacterEmotionEntries(
+              validatedExpressions,
+              availableEmotions,
+              normalizeRequiredSpriteExpressionIds(agentContext.memory._emotionTargetIds),
+            );
+            for (const entry of validatedExpressions) {
+              if (typeof entry.characterId !== "string" || typeof entry.emotionStateId !== "string") continue;
+              const mapped = resolveMappedSpriteExpression(entry.characterId, entry.emotionStateId, availableEmotions);
+              const spriteOwner = availableSprites?.find((character) => character.characterId === entry.characterId);
+              const canonicalMapped = spriteOwner?.expressions.find(
+                (expression) => expression.toLocaleLowerCase() === mapped?.toLocaleLowerCase(),
+              );
+              if (canonicalMapped) entry.expression = canonicalMapped;
             }
             const requiredExpressionTargetIds = normalizeRequiredSpriteExpressionIds(
               agentContext.memory._expressionTargetIds,
@@ -3924,8 +4008,8 @@ export async function registerRetryAgentsRoute(app: FastifyInstance) {
               }
             }
             spriteData.expressions = validatedExpressions;
-          } else if (!Array.isArray(availableSprites)) {
-            // No sprite catalog loaded — drop expressions entirely so unvalidated data is never forwarded
+          } else {
+            // No configured sprite or emotion catalog loaded - drop unvalidated data.
             spriteData.expressions = [];
           }
         }

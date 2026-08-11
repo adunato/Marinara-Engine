@@ -306,6 +306,17 @@ import {
   normalizeSpriteDisplayModes,
   validateSpriteExpressionEntries,
 } from "./generate/expression-agent-utils.js";
+import {
+  buildAvailableEmotionCharacters,
+  buildEmotionProfilesByCharacterId,
+  collectLatestCharacterEmotions,
+  completeRequiredCharacterEmotionEntries,
+  resolveCharacterEmotionStateMap,
+  resolveConversationAffectTargetIds,
+  resolveMappedSpriteExpression,
+  validateCharacterEmotionEntries,
+  type AvailableEmotionCharacter,
+} from "../services/generation/character-emotion-runtime.js";
 import { logger, logDebugOverride } from "../lib/logger.js";
 import {
   buildHistoricalLorebookKeeperContext,
@@ -1243,6 +1254,9 @@ export async function generateRoutes(app: FastifyInstance) {
         chatMessages = chatMessages.filter((m: any) => m.id !== input.regenerateMessageId);
         lorebookKeeperMessages = lorebookKeeperMessages.filter((m: any) => m.id !== input.regenerateMessageId);
       }
+      // Resolve affect from the active branch before context truncation. The card
+      // schema validates/defaults the raw state later while building macro data.
+      const persistedCharacterEmotions = collectLatestCharacterEmotions(chatMessages);
       const promptLastGenerationType = resolvePromptLastGenerationType(input);
       const promptIdleDuration = resolvePromptIdleDuration(chatMessages, {
         excludeMessageId: currentTurnUserMessageId,
@@ -1703,6 +1717,7 @@ export async function generateRoutes(app: FastifyInstance) {
           personaPhoneticName,
           personaDescription,
           personaFields,
+          characterEmotions: persistedCharacterEmotions,
           variables: {
             gameStoryboardKeyframeCount: String(
               normalizeGameStoryboardKeyframeCount(chatMeta.gameStoryboardKeyframeCount),
@@ -2876,6 +2891,15 @@ export async function generateRoutes(app: FastifyInstance) {
 
         const charInfo = await loadCharacterPromptInfo({ chars, characterIds, chatMode });
         for (const character of charInfo) {
+          const profile = character.emotionProfile;
+          character.emotion =
+            profile?.enabled === true && profile.states.some((state) => state.id === persistedCharacterEmotions[character.id])
+              ? persistedCharacterEmotions[character.id]
+              : profile?.enabled === true
+                ? profile.defaultStateId
+                : "";
+        }
+        for (const character of charInfo) {
           const resolveCharacterPromptText = (value: string): string =>
             resolveHistoryMessageMacros([{ content: value, characterId: character.id }])[0]?.content ?? value;
           character.description = resolveCharacterPromptText(character.description);
@@ -3584,6 +3608,12 @@ export async function generateRoutes(app: FastifyInstance) {
 
         // If the expression agent is enabled, load available sprite expressions per character
         if (resolvedAgents.some((a) => a.type === "expression")) {
+          const emotionProfiles = buildEmotionProfilesByCharacterId(agentContext.characters);
+          const previousEmotionStates = resolveCharacterEmotionStateMap(chatMessages, emotionProfiles);
+          const availableEmotions = buildAvailableEmotionCharacters(agentContext.characters, previousEmotionStates);
+          if (availableEmotions.length > 0) {
+            agentContext.memory._availableEmotions = availableEmotions;
+          }
           try {
             const spriteDisplayModes = normalizeSpriteDisplayModes(chatMeta.spriteDisplayModes);
             const selectedSpriteIds = new Set(
@@ -7120,11 +7150,25 @@ export async function generateRoutes(app: FastifyInstance) {
           if (personaId && getLatestUserExpressionSource() && Array.isArray(agentContext.memory._availableSprites)) {
             generatedExpressionTargetIds.add(personaId);
           }
-          if (generatedExpressionTargetIds.size > 0 && Array.isArray(agentContext.memory._availableSprites)) {
+          const generatedAffectTargetIds =
+            chatMode === "conversation"
+              ? resolveConversationAffectTargetIds(combinedResponse, charInfo, [...generatedExpressionTargetIds])
+              : [...generatedExpressionTargetIds];
+          if (generatedAffectTargetIds.length > 0 && Array.isArray(agentContext.memory._availableSprites)) {
             agentContext.memory._availableSprites = (
               agentContext.memory._availableSprites as Array<{ characterId: string }>
-            ).filter((sprite) => generatedExpressionTargetIds.has(sprite.characterId));
-            agentContext.memory._expressionTargetIds = [...generatedExpressionTargetIds];
+            ).filter((sprite) => generatedAffectTargetIds.includes(sprite.characterId));
+            agentContext.memory._expressionTargetIds = (
+              agentContext.memory._availableSprites as Array<{ characterId: string }>
+            ).map((sprite) => sprite.characterId);
+          }
+          if (generatedAffectTargetIds.length > 0 && Array.isArray(agentContext.memory._availableEmotions)) {
+            agentContext.memory._availableEmotions = (
+              agentContext.memory._availableEmotions as Array<{ characterId: string }>
+            ).filter((character) => generatedAffectTargetIds.includes(character.characterId));
+            agentContext.memory._emotionTargetIds = (
+              agentContext.memory._availableEmotions as Array<{ characterId: string }>
+            ).map((character) => character.characterId);
           }
           if (hasPostProcessingAgents) {
             reply.raw.write(`data: ${JSON.stringify({ type: "agent_start", data: { phase: "post_generation" } })}\n\n`);
@@ -7158,6 +7202,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 characterName?: string;
                 expression?: string;
                 transition?: string;
+                emotionStateId?: string;
               }>;
             };
             const availableSprites = agentContext.memory._availableSprites as
@@ -7165,12 +7210,46 @@ export async function generateRoutes(app: FastifyInstance) {
               | undefined;
             const rawExpressions = Array.isArray(spriteData.expressions) ? spriteData.expressions : [];
             const validation = validateSpriteExpressionEntries(rawExpressions, availableSprites);
-            let validatedExpressions = validation.expressions as typeof spriteData.expressions;
+            const availableEmotions = agentContext.memory._availableEmotions as AvailableEmotionCharacter[] | undefined;
+            const emotionValidation = validateCharacterEmotionEntries(rawExpressions, availableEmotions);
+            const mergedByCharacterId = new Map<
+              string,
+              NonNullable<typeof spriteData.expressions>[number]
+            >();
+            for (const entry of validation.expressions) {
+              if (typeof entry.characterId === "string") mergedByCharacterId.set(entry.characterId, entry);
+            }
+            for (const entry of emotionValidation.emotions) {
+              if (typeof entry.characterId !== "string") continue;
+              mergedByCharacterId.set(entry.characterId, {
+                ...mergedByCharacterId.get(entry.characterId),
+                ...entry,
+              });
+            }
+            let validatedExpressions = [...mergedByCharacterId.values()];
             if (!Array.isArray(spriteData.expressions) && rawExpressions.length === 0) {
               logger.warn("[generate] Expression agent returned no expression entries — filling required targets");
             }
             for (const warning of validation.warnings) {
               logger.warn("[generate] %s", warning.message);
+            }
+            for (const warning of emotionValidation.warnings) {
+              logger.warn("[generate] %s", warning.message);
+            }
+            const requiredEmotionTargetIds = normalizeRequiredSpriteExpressionIds(agentContext.memory._emotionTargetIds);
+            validatedExpressions = completeRequiredCharacterEmotionEntries(
+              validatedExpressions,
+              availableEmotions,
+              requiredEmotionTargetIds,
+            );
+            for (const entry of validatedExpressions) {
+              if (typeof entry.characterId !== "string" || typeof entry.emotionStateId !== "string") continue;
+              const mapped = resolveMappedSpriteExpression(entry.characterId, entry.emotionStateId, availableEmotions);
+              const spriteOwner = availableSprites?.find((character) => character.characterId === entry.characterId);
+              const canonicalMapped = spriteOwner?.expressions.find(
+                (expression) => expression.toLocaleLowerCase() === mapped?.toLocaleLowerCase(),
+              );
+              if (canonicalMapped) entry.expression = canonicalMapped;
             }
             const requiredExpressionTargetIds = normalizeRequiredSpriteExpressionIds(
               agentContext.memory._expressionTargetIds,
@@ -7190,7 +7269,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   sourceTextByCharacterId,
                 },
               );
-              validatedExpressions = completion.expressions as typeof spriteData.expressions;
+              validatedExpressions = completion.expressions as NonNullable<typeof spriteData.expressions>;
               for (const warning of completion.warnings) {
                 logger.warn("[generate] %s", warning.message);
               }
@@ -7442,42 +7521,9 @@ export async function generateRoutes(app: FastifyInstance) {
                   characterName?: string;
                   expression?: string;
                   transition?: string;
+                  emotionStateId?: string;
                 }>;
               };
-              const availableSprites = agentContext.memory._availableSprites as
-                | Array<{ characterId: string; characterName: string; expressions: string[] }>
-                | undefined;
-              if (Array.isArray(spriteData.expressions)) {
-                const validation = validateSpriteExpressionEntries(spriteData.expressions, availableSprites);
-                let validatedExpressions = validation.expressions as typeof spriteData.expressions;
-                for (const warning of validation.warnings) {
-                  logger.warn("[generate] %s", warning.message);
-                }
-                const requiredExpressionTargetIds = normalizeRequiredSpriteExpressionIds(
-                  agentContext.memory._expressionTargetIds,
-                );
-                if (requiredExpressionTargetIds.length > 0) {
-                  const latestUserExpressionSource = getLatestUserExpressionSource();
-                  const sourceTextByCharacterId = new Map<string, string>();
-                  if (personaId && latestUserExpressionSource) {
-                    sourceTextByCharacterId.set(personaId, latestUserExpressionSource);
-                  }
-                  const completion = completeRequiredSpriteExpressionEntries(
-                    validatedExpressions ?? [],
-                    availableSprites,
-                    requiredExpressionTargetIds,
-                    {
-                      defaultSourceText: combinedResponse,
-                      sourceTextByCharacterId,
-                    },
-                  );
-                  validatedExpressions = completion.expressions as typeof spriteData.expressions;
-                  for (const warning of completion.warnings) {
-                    logger.warn("[generate] %s", warning.message);
-                  }
-                }
-                spriteData.expressions = validatedExpressions;
-              }
               // Persist validated expressions onto the message/swipe extra so they survive page refresh
               // and swipe switching. The chat-level metadata is also updated for backward compat.
               const persistedExpressions =
@@ -7485,19 +7531,33 @@ export async function generateRoutes(app: FastifyInstance) {
                   (entry): entry is { characterId: string; expression: string } =>
                     typeof entry.characterId === "string" && typeof entry.expression === "string",
                 ) ?? [];
-              if (persistedExpressions.length > 0) {
-                const exprMap: Record<string, string> = {};
-                const personaExprMap: Record<string, string> = {};
-                for (const e of persistedExpressions) {
-                  if (personaId && e.characterId === personaId) {
-                    personaExprMap[e.characterId] = e.expression;
-                  } else {
-                    exprMap[e.characterId] = e.expression;
-                  }
-                }
+              const persistedEmotions =
+                spriteData.expressions?.filter(
+                  (entry): entry is { characterId: string; emotionStateId: string } =>
+                    typeof entry.characterId === "string" && typeof entry.emotionStateId === "string",
+                ) ?? [];
+              if (persistedExpressions.length > 0 || persistedEmotions.length > 0) {
+                const exprMap = Object.fromEntries(
+                  persistedExpressions
+                    .filter((entry) => !personaId || entry.characterId !== personaId)
+                    .map((entry) => [entry.characterId, entry.expression]),
+                );
+                const emotionMap = Object.fromEntries(
+                  persistedEmotions
+                    .filter((entry) => !personaId || entry.characterId !== personaId)
+                    .map((entry) => [entry.characterId, entry.emotionStateId]),
+                );
+                const personaExprMap = Object.fromEntries(
+                  persistedExpressions
+                    .filter((entry) => !!personaId && entry.characterId === personaId)
+                    .map((entry) => [entry.characterId, entry.expression]),
+                );
                 try {
-                  if (Object.keys(exprMap).length > 0) {
-                    await chats.updateMessageExtraForSwipe(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
+                  if (Object.keys(exprMap).length > 0 || Object.keys(emotionMap).length > 0) {
+                    await chats.updateMessageExtraForSwipe(messageId, targetSwipeIndex, {
+                      ...(Object.keys(exprMap).length > 0 ? { spriteExpressions: exprMap } : {}),
+                      ...(Object.keys(emotionMap).length > 0 ? { characterEmotions: emotionMap } : {}),
+                    });
                   }
                   if (Object.keys(personaExprMap).length > 0) {
                     const personaMessageId =

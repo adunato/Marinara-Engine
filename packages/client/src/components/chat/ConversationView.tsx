@@ -42,7 +42,7 @@ import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../
 import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
 import { useConversationCustomEmojis } from "../../hooks/use-conversation-custom-emojis";
 import { useConversationCustomStickers } from "../../hooks/use-conversation-custom-stickers";
-import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
+import type { CharacterMap, ExpressionAvatarResolver, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 import {
   normalizeTextForMatch,
   parseGroupedSpeakerSegments,
@@ -103,6 +103,7 @@ interface ConversationViewProps {
   };
   onConcludeScene?: (sceneChatId: string) => void;
   onAbandonScene?: (sceneChatId: string) => void;
+  expressionAvatarResolver?: ExpressionAvatarResolver;
 }
 
 /** Return a display label for a day separator */
@@ -306,6 +307,7 @@ export function ConversationView({
   sceneInfo,
   onConcludeScene,
   onAbandonScene,
+  expressionAvatarResolver,
 }: ConversationViewProps) {
   useRenderTimer("convo-messages"); // [#3104 diagnostic]
   const streamingChatId = useChatStore((s) => s.streamingChatId);
@@ -1277,6 +1279,7 @@ export function ConversationView({
                 visibleSegmentCount={visibleSegmentCount}
                 bubbleGroupPosition={item.bubbleGroupPosition}
                 originalContent={originalContent}
+                expressionAvatarResolver={expressionAvatarResolver}
               />
               {regenerationDraftMessage && (
                 <ConversationMessage
@@ -1302,6 +1305,7 @@ export function ConversationView({
                   contentParts={liveStreamContentParts}
                   visiblePartCount={liveStreamContentParts?.length}
                   bubbleGroupPosition="single"
+                  expressionAvatarResolver={expressionAvatarResolver}
                 />
               )}
             </Fragment>
@@ -1332,6 +1336,7 @@ export function ConversationView({
             contentParts={liveStreamContentParts}
             visiblePartCount={liveStreamContentParts?.length}
             bubbleGroupPosition="single"
+            expressionAvatarResolver={expressionAvatarResolver}
           />
         )}
 

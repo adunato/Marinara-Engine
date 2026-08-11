@@ -7,6 +7,7 @@
 
 import {
   resolveMacros,
+  normalizeCharacterEmotionProfile,
   stripMacroComments,
   type CharacterMacroProfile,
   type CharacterData,
@@ -31,6 +32,8 @@ export interface BuildPromptMacroContextInput {
   personaDescription?: string;
   personaFields?: PersonaFields;
   variables?: Record<string, string>;
+  /** Per-character emotion snapshot resolved from the active message/swipe history. */
+  characterEmotions?: Record<string, string>;
   groupScenarioOverrideText?: string | null;
   lastInput?: string;
   chatId?: string;
@@ -192,7 +195,11 @@ function parseCharacterData(raw: unknown): CharacterData | null {
   return null;
 }
 
-export async function resolveCharacterMacroData(db: DB, characterIds: string[]): Promise<CharacterMacroData> {
+export async function resolveCharacterMacroData(
+  db: DB,
+  characterIds: string[],
+  characterEmotions: Readonly<Record<string, string>> = {},
+): Promise<CharacterMacroData> {
   if (characterIds.length === 0) return { names: [], phoneticNames: [], profiles: [], profilesById: new Map() };
 
   const chars = createCharactersStorage(db);
@@ -215,6 +222,14 @@ export async function resolveCharacterMacroData(db: DB, characterIds: string[]):
     phoneticNames.push(phoneticName || data.name || "Character");
 
     const description = data.description ?? "";
+    const emotionProfile = normalizeCharacterEmotionProfile(data.extensions?.emotionProfile);
+    const configuredEmotion = characterEmotions[id];
+    const emotion =
+      emotionProfile?.enabled === true
+        ? typeof configuredEmotion === "string" && emotionProfile.states.some((state) => state.id === configuredEmotion)
+          ? configuredEmotion
+          : emotionProfile.defaultStateId
+        : "";
     const profile = {
       name: data.name ?? "Character",
       phoneticName,
@@ -226,6 +241,7 @@ export async function resolveCharacterMacroData(db: DB, characterIds: string[]):
       example: data.mes_example ?? "",
       systemPrompt: data.system_prompt ?? "",
       postHistoryInstructions: data.post_history_instructions ?? "",
+      emotion,
     };
 
     profiles.push(profile);
@@ -242,6 +258,7 @@ export async function resolveCharacterMacroData(db: DB, characterIds: string[]):
         example: profile.example,
         systemPrompt: profile.systemPrompt,
         postHistoryInstructions: profile.postHistoryInstructions,
+        emotion: profile.emotion,
       };
     }
   }
@@ -250,9 +267,9 @@ export async function resolveCharacterMacroData(db: DB, characterIds: string[]):
 }
 
 export async function buildPromptMacroContext(input: BuildPromptMacroContextInput): Promise<MacroContext> {
-  const characterMacroData = await resolveCharacterMacroData(input.db, input.characterIds);
+  const characterMacroData = await resolveCharacterMacroData(input.db, input.characterIds, input.characterEmotions);
   const groupCharacterMacroData = input.groupCharacterIds
-    ? await resolveCharacterMacroData(input.db, input.groupCharacterIds)
+    ? await resolveCharacterMacroData(input.db, input.groupCharacterIds, input.characterEmotions)
     : characterMacroData;
   const variables = input.variables ?? {};
 
@@ -293,6 +310,7 @@ function characterFieldsFromProfile(profile: CharacterMacroProfile): NonNullable
     example: profile.example ?? "",
     systemPrompt: profile.systemPrompt ?? "",
     postHistoryInstructions: profile.postHistoryInstructions ?? "",
+    emotion: profile.emotion ?? "",
   };
 }
 

@@ -21,7 +21,7 @@ import { resolveMessageMacros } from "../../lib/chat-macros";
 import { useTranslate } from "../../hooks/use-translate";
 import { api } from "../../lib/api-client";
 import { chatKeys } from "../../hooks/use-chats";
-import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
+import type { CharacterMap, ExpressionAvatarResolver, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 import { GenerationReplayDetailsModal, hasGenerationReplayDetails } from "./GenerationReplayDetailsModal";
 import {
   HiddenFromAIConversationButton,
@@ -108,6 +108,7 @@ interface ConversationMessageProps {
   isSelected?: boolean;
   onToggleSelect?: (toggle: MessageSelectionToggle) => void;
   hasDraftInput?: boolean;
+  expressionAvatarResolver?: ExpressionAvatarResolver;
 }
 
 // ── Shell component ──────────────────────────────────────────────
@@ -148,6 +149,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   isSelected,
   onToggleSelect,
   hasDraftInput = false,
+  expressionAvatarResolver,
 }: ConversationMessageProps) {
   // ── Local state ──
   const [editing, setEditing] = useState(false);
@@ -231,6 +233,9 @@ export const ConversationMessage = memo(function ConversationMessage({
   }, [chatCharacterIds, scopedCharacterMap]);
   const resolvedCharacterInfo =
     message.characterId !== null ? (charInfo ?? fallbackChatCharacterEntry?.info ?? null) : null;
+  const resolvedCharacterId = charInfo
+    ? message.characterId
+    : (message.characterId !== null ? fallbackChatCharacterEntry?.id ?? null : null);
   const primaryCharInfo =
     resolvedCharacterInfo ??
     (scopedCharacterMap
@@ -238,17 +243,25 @@ export const ConversationMessage = memo(function ConversationMessage({
       : null);
 
   const msgPersona = isUser && !plainUserMessages && extra.personaSnapshot ? extra.personaSnapshot : null;
-  const avatarUrl = isUser
+  const baseAvatarUrl = isUser
     ? plainUserMessages
       ? null
       : (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null)
     : (resolvedCharacterInfo?.avatarUrl ?? null);
+  const resolveExpressionAvatar = useCallback(
+    (characterId: string) => expressionAvatarResolver?.(message as Message, characterId) ?? null,
+    [expressionAvatarResolver, message],
+  );
+  const expressionAvatarUrl = !isUser && resolvedCharacterId ? resolveExpressionAvatar(resolvedCharacterId) : null;
+  const avatarUrl = expressionAvatarUrl ?? baseAvatarUrl;
   const personaAvatarCrop = isUser
     ? plainUserMessages
       ? null
       : (parseAvatarCropJson(msgPersona?.avatarCrop) ?? personaInfo?.avatarCrop ?? null)
     : null;
-  const avatarCropStyle = isUser
+  const avatarCropStyle = expressionAvatarUrl
+    ? {}
+    : isUser
     ? getAvatarCropStyle(personaAvatarCrop)
     : getAvatarCropStyle(resolvedCharacterInfo?.avatarCrop);
   const displayName = isUser
@@ -445,6 +458,14 @@ export const ConversationMessage = memo(function ConversationMessage({
     }
     return map;
   }, [scopedCharacterMap, message.characterId]);
+  const characterIdByInfo = useMemo(() => {
+    if (!scopedCharacterMap) return null;
+    const map = new Map<NonNullable<ReturnType<CharacterMap["get"]>>, string>();
+    for (const [id, info] of scopedCharacterMap) {
+      if (info) map.set(info, id);
+    }
+    return map;
+  }, [scopedCharacterMap]);
 
   const mentionNames = useMemo(() => {
     if (!scopedCharacterMap) return [] as string[];
@@ -703,7 +724,7 @@ export const ConversationMessage = memo(function ConversationMessage({
             width: anchor.width,
             height: anchor.height,
           },
-          avatarUrl,
+          avatarUrl: baseAvatarUrl,
           avatarCrop: isUser ? personaAvatarCrop : (resolvedCharacterInfo?.avatarCrop ?? null),
           displayName: headerDisplayName,
           nameColor: nameColor ?? null,
@@ -720,10 +741,12 @@ export const ConversationMessage = memo(function ConversationMessage({
     displayName: headerDisplayName,
     avatarUrl,
     avatarCropStyle,
+    resolveExpressionAvatar,
     nameColor,
     onOpenAboutMe,
     mentionNames,
     charByName,
+    characterIdByInfo,
     quoteFormat,
     renderedContent,
     renderedContentParts,

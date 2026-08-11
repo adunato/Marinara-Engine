@@ -1634,7 +1634,7 @@ export function ChatArea() {
   const expressionAvatarsPreferenceEnabled =
     (localSpriteVisualSettings.expressionAvatarsEnabled ?? chatMeta.expressionAvatarsEnabled) === true;
   const expressionAvatarsEnabled =
-    isRoleplay &&
+    (isRoleplay || chatMode === "conversation") &&
     expressionAvatarsPreferenceEnabled &&
     expressionAgentEnabled &&
     (chatCharIds.length > 0 || !!personaInfo?.id);
@@ -3170,6 +3170,7 @@ export function ChatArea() {
             onSelectAllAboveSelection={handleSelectAllAboveSelection}
             onSelectAllBelowSelection={handleSelectAllBelowSelection}
             lastAssistantMessageId={lastAssistantMessageId}
+            expressionAvatarResolver={expressionAvatarResolver}
           />
         </Suspense>
         <ImagePromptReviewModal

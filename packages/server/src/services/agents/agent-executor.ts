@@ -1643,7 +1643,6 @@ function buildKnowledgeRetrievalAgentMessages(
   userParts.push(`Now return the requested format.`);
   userParts.push(``);
   userParts.push(buildAgentOutputFormatBlock([config], context, new Map([[config.type, template]])));
-
   return [
     { role: "system", content: systemParts.join("\n"), contextKind: "prompt" },
     { role: "user", content: userParts.join("\n"), contextKind: "history" },
@@ -1908,7 +1907,7 @@ function buildExpressionAgentMessages(config: AgentExecConfig, template: string,
   systemParts.push(`<role>`);
   systemParts.push(`You are a specialized expression-selection agent. Keep the request compact and return only JSON.`);
   systemParts.push(
-    `Return exactly one expression for every owner in <available_sprites>. Use <latest_user_message> for the active user persona, and still include the persona when listed even if <assistant_response> does not describe their face. Use <assistant_response> for assistant or character expressions.`,
+    `Return exactly one entry for every requested owner. For owners in <available_sprites>, include expression. For owners in <available_emotions>, include emotionStateId using one exact configured state ID. An entry may include both. Use <latest_user_message> for the active user persona and <assistant_response> for assistant or character affect.`,
   );
   systemParts.push(`</role>`);
   systemParts.push(``);
@@ -1921,6 +1920,11 @@ function buildExpressionAgentMessages(config: AgentExecConfig, template: string,
   if (spritesBlock) {
     systemParts.push(``);
     systemParts.push(spritesBlock);
+  }
+  const emotionsBlock = buildAvailableEmotionsBlock(context);
+  if (emotionsBlock) {
+    systemParts.push(``);
+    systemParts.push(emotionsBlock);
   }
 
   const latestAssistant = findLatestAssistantMessage(context);
@@ -1955,10 +1959,16 @@ function buildExpressionAgentMessages(config: AgentExecConfig, template: string,
   userParts.push(`</assistant_response>`);
   userParts.push(``);
   userParts.push(
-    `Now return the requested format with exactly one expression entry for every owner listed in <available_sprites>.`,
+    `Now return JSON with exactly one entry for every owner listed in <available_sprites> or <available_emotions>. Include emotionStateId for every owner in <available_emotions>.`,
   );
   userParts.push(``);
   userParts.push(buildAgentOutputFormatBlock([config], context, new Map([[config.type, template]])));
+  if (emotionsBlock) {
+    userParts.push(``);
+    userParts.push(
+      `Host-required extension: each item for <available_emotions> must add "emotionStateId" beside characterId/characterName (and beside expression when present). Use an exact ID from that character's configured list; do not omit this field.`,
+    );
+  }
 
   return [
     { role: "system", content: systemParts.join("\n"), contextKind: "prompt" },
@@ -2248,6 +2258,26 @@ function buildAvailableSpritesBlock(context: AgentContext): string {
   return parts.join("\n");
 }
 
+function buildAvailableEmotionsBlock(context: AgentContext): string {
+  if (!context.memory._availableEmotions) return "";
+  const characters = context.memory._availableEmotions as Array<{
+    characterId: string;
+    characterName: string;
+    previousStateId: string;
+    states: Array<{ id: string; label: string; description: string }>;
+  }>;
+  const parts: string[] = [`<available_emotions>`];
+  for (const character of characters) {
+    parts.push(
+      `${character.characterName} (${character.characterId}); previous=${character.previousStateId}: ${character.states
+        .map((state) => `${state.id} (${state.label}: ${state.description})`)
+        .join(", ")}`,
+    );
+  }
+  parts.push(`</available_emotions>`);
+  return parts.join("\n");
+}
+
 /**
  * Build agent-specific context blocks (sprites, backgrounds, source material, etc.)
  * that go into the system message after lore.
@@ -2356,6 +2386,8 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
   if (agentTypes.includes("expression")) {
     const availableSpritesBlock = buildAvailableSpritesBlock(context);
     if (availableSpritesBlock) parts.push(availableSpritesBlock);
+    const availableEmotionsBlock = buildAvailableEmotionsBlock(context);
+    if (availableEmotionsBlock) parts.push(availableEmotionsBlock);
   }
 
   if (context.memory._availableBackgrounds) {

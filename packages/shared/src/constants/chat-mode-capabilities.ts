@@ -93,6 +93,7 @@ export const CONVERSATION_ALLOWED_AGENT_IDS = [
   "daily-memory",
   "daily-intentions",
   "character-mind",
+  "expression",
 ] as const;
 
 // Optional packages are never activated implicitly. Existing chats retain their

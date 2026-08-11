@@ -40,6 +40,7 @@ export function ConversationMessageGrouped({
     groupedSegments,
     visibleSegments,
     charByName,
+    characterIdByInfo,
     mentionNames,
     emojiMap,
     stickerMap,
@@ -83,6 +84,7 @@ export function ConversationMessageGrouped({
     onToggleReactionEntry,
     onToggleSelect,
     isBubbleStyle,
+    resolveExpressionAvatar,
   } = ctx;
 
   // Per-segment add-reaction affordance: always visible on compact/mobile
@@ -162,8 +164,10 @@ export function ConversationMessageGrouped({
       ) : (
         (groupedSegments ?? []).slice(0, visibleSegments).map((grp, i) => {
           const segChar = grp.speaker && charByName ? charByName.get(normalizeTextForMatch(grp.speaker)) : null;
-          const segAvatar = segChar?.avatarUrl ?? null;
-          const segAvatarCropStyle = getAvatarCropStyle(segChar?.avatarCrop);
+          const segCharacterId = segChar ? characterIdByInfo?.get(segChar) : undefined;
+          const segExpressionAvatar = segCharacterId ? resolveExpressionAvatar(segCharacterId) : null;
+          const segAvatar = segExpressionAvatar ?? segChar?.avatarUrl ?? null;
+          const segAvatarCropStyle = segExpressionAvatar ? {} : getAvatarCropStyle(segChar?.avatarCrop);
           const segName = segChar?.convoDisplayName?.trim() || segChar?.name || grp.speaker || "";
           const segColor = segChar?.nameColor;
           const isFirst = i === 0;

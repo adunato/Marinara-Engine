@@ -82,10 +82,10 @@ Tracks the date, time, weather, location, and which characters are present. This
 
 ### Expression Engine
 
-Reads the emotion in the latest reply and picks a matching sprite or expression for the character. A sprite is a character image shown in the scene. Use it for standing character art that changes with the mood.
+Reads the emotion in the latest reply and picks a matching sprite or expression for the character. Cards may also define Emotion States, allowing the same post-processing call to select a durable per-character `charEmotion` value for conditional card text on the next turn. States may optionally map to sprite expressions.
 
 - **Phase**: Post-Processing.
-- **Where it works**: Roleplay.
+- **Where it works**: Roleplay and Conversation.
 - **Key settings**: **Sprite Source** (**Expressions**, **Full-body**, or both), an **Expression Avatars** toggle, a **Sprite Owners** picker, and size and opacity sliders. See [Character sprites](../characters/sprites.md).
 
 ### Quest Tracker

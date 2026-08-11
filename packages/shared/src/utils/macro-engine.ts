@@ -23,6 +23,8 @@ export interface MacroContext {
     example?: string;
     systemPrompt?: string;
     postHistoryInstructions?: string;
+    /** Current configured/persisted character emotion state for {{charEmotion}}. */
+    emotion?: string;
   }>;
   /** Custom variables from prompt toggle groups */
   variables: Record<string, string>;
@@ -51,6 +53,8 @@ export interface MacroContext {
     example?: string;
     systemPrompt?: string;
     postHistoryInstructions?: string;
+    /** Current configured/persisted character emotion state for {{charEmotion}}. */
+    emotion?: string;
   };
   /** Active persona card fields used by {{persona}} */
   personaFields?: {
@@ -112,7 +116,7 @@ export interface SupportedMacroDefinition {
 }
 
 const CHARACTER_MACRO_PATTERN =
-  /\{\{(?:char|charName|charNamePhonetic|charPhonetic|description|personality|backstory|appearance|scenario|example|charSysInfo|charPostHistory)\}\}|\{\{\s*#if\s+[^}]*\b(?:char|charName|charNamePhonetic|charPhonetic|character|speaker|description|personality|backstory|appearance|scenario|example|charSysInfo|charPostHistory)\b/i;
+  /\{\{(?:char|charName|charNamePhonetic|charPhonetic|charEmotion|description|personality|backstory|appearance|scenario|example|charSysInfo|charPostHistory)\}\}|\{\{\s*#if\s+[^}]*\b(?:char|charName|charNamePhonetic|charPhonetic|charEmotion|character|speaker|description|personality|backstory|appearance|scenario|example|charSysInfo|charPostHistory)\b/i;
 const MAX_CHARACTER_FIELD_RESOLUTION_DEPTH = 4;
 const MAX_DICE_COUNT = 1000;
 const MAX_DICE_SIDES = 1_000_000;
@@ -141,6 +145,7 @@ const DEFERRED_CHARACTER_MACRO_TOKENS = {
   char: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}CHAR\x1f`,
   charPhonetic: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}CHAR_PHONETIC\x1f`,
   group: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}GROUP\x1f`,
+  emotion: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}EMOTION\x1f`,
   description: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}DESCRIPTION\x1f`,
   personality: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}PERSONALITY\x1f`,
   backstory: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}BACKSTORY\x1f`,
@@ -491,6 +496,7 @@ function macroContextForCharacterProfile(profile: CharacterMacroProfile, base?: 
       example: profile.example ?? "",
       systemPrompt: profile.systemPrompt ?? "",
       postHistoryInstructions: profile.postHistoryInstructions ?? "",
+      emotion: profile.emotion ?? "",
     },
   };
 }
@@ -507,6 +513,7 @@ export function resolveCharacterScopedMacros(
     .replace(/\{\{char(?:Name)?\}\}/gi, profile.name)
     .replace(/\{\{char(?:Name)?Phonetic\}\}/gi, profile.phoneticName ?? profile.name)
     .replace(/\{\{group\}\}/gi, resolveGroupCharacters(scopedContext))
+    .replace(/\{\{charEmotion\}\}/gi, profile.emotion ?? "")
     .replace(/\{\{description\}\}/gi, () => resolveCharacterFieldValue(profile, "description", depth, baseContext))
     .replace(/\{\{personality\}\}/gi, () => resolveCharacterFieldValue(profile, "personality", depth, baseContext))
     .replace(/\{\{backstory\}\}/gi, () => resolveCharacterFieldValue(profile, "backstory", depth, baseContext))
@@ -530,6 +537,7 @@ export function resolveDeferredCharacterMacros(
   result = result.split(DEFERRED_CHARACTER_MACRO_TOKENS.char).join(profile.name);
   result = result.split(DEFERRED_CHARACTER_MACRO_TOKENS.charPhonetic).join(profile.phoneticName ?? profile.name);
   result = result.split(DEFERRED_CHARACTER_MACRO_TOKENS.group).join(resolveGroupCharacters(scopedContext));
+  result = result.split(DEFERRED_CHARACTER_MACRO_TOKENS.emotion).join(profile.emotion ?? "");
   result = result
     .split(DEFERRED_CHARACTER_MACRO_TOKENS.description)
     .join(resolveCharacterFieldValue(profile, "description", 0, baseContext));
@@ -785,6 +793,8 @@ function resolveConditionalOperand(raw: string, ctx: MacroContext, options: Reso
       return ctx.model ?? "";
     case "chatid":
       return ctx.chatId ?? "";
+    case "charemotion":
+      return ctx.characterFields?.emotion ?? "";
     case "description":
       return ctx.characterFields?.description ?? "";
     case "personality":
@@ -831,7 +841,7 @@ function resolveConditionalOperand(raw: string, ctx: MacroContext, options: Reso
 
 function isCharacterConditionalOperand(raw: string): boolean {
   const normalized = normalizeConditionKey(raw);
-  return /^(char|charname|charphonetic|charnamephonetic|character|characterphonetic|speaker|speakerphonetic|group|description|personality|backstory|appearance|scenario|example|charsysinfo|charposthistory)$/.test(
+  return /^(char|charname|charphonetic|charnamephonetic|charemotion|character|characterphonetic|speaker|speakerphonetic|group|description|personality|backstory|appearance|scenario|example|charsysinfo|charposthistory)$/.test(
     normalized,
   );
 }
@@ -1729,6 +1739,7 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
   result = result.replace(/\{\{char(?:Name)?Phonetic\}\}/gi, characterReplacement("charPhonetic"));
   result = result.replace(/\{\{characters\}\}/gi, ctx.characters.join(", "));
   result = result.replace(/\{\{group\}\}/gi, characterReplacement("group"));
+  result = result.replace(/\{\{charEmotion\}\}/gi, characterReplacement("emotion"));
   result = result.replace(/\{\{description\}\}/gi, characterReplacement("description"));
   result = result.replace(/\{\{personality\}\}/gi, characterReplacement("personality"));
   result = result.replace(/\{\{backstory\}\}/gi, characterReplacement("backstory"));
