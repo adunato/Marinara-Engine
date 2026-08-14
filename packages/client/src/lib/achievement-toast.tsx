@@ -1,17 +1,15 @@
 import { toast } from "sonner";
-import { ACHIEVEMENT_DEFINITION_BY_ID, type AchievementDefinition, type AchievementProgress } from "@marinara-engine/shared";
-
-function getAchievementLabel(achievement: AchievementDefinition) {
-  return achievement.rankLabel ? `${achievement.title} ${achievement.rankLabel}` : achievement.title;
-}
+import { ACHIEVEMENT_DEFINITION_BY_ID, type AchievementProgress } from "@marinara-engine/shared";
+import { translate } from "../localization/i18n";
+import { localizeAchievementTitle } from "./achievement-localization";
 
 export function showAchievementUnlockToasts(progress: AchievementProgress[]) {
   for (const item of progress) {
     const achievement = ACHIEVEMENT_DEFINITION_BY_ID.get(item.id);
     if (!achievement) continue;
 
-    toast.success("Achievement unlocked", {
-      description: getAchievementLabel(achievement),
+    toast.success(translate("ui.achievements.unlocked"), {
+      description: localizeAchievementTitle(translate, achievement),
     });
   }
 }

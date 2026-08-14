@@ -71,6 +71,27 @@ interface GeminiEmbeddingPayload {
 
 type GoogleProviderKind = "google" | "google_vertex";
 
+export function resolveGoogleFunctionCallingMode(toolChoice: ChatOptions["toolChoice"]): "AUTO" | "ANY" {
+  return toolChoice === "required" ? "ANY" : "AUTO";
+}
+
+export function applyGoogleFunctionCallingMode(
+  body: Record<string, unknown>,
+  toolChoice: ChatOptions["toolChoice"],
+): void {
+  const toolConfig = isRecord(body.toolConfig) ? body.toolConfig : {};
+  const functionCallingConfig = isRecord(toolConfig.functionCallingConfig)
+    ? toolConfig.functionCallingConfig
+    : {};
+  body.toolConfig = {
+    ...toolConfig,
+    functionCallingConfig: {
+      ...functionCallingConfig,
+      mode: resolveGoogleFunctionCallingMode(toolChoice),
+    },
+  };
+}
+
 interface GoogleServiceAccountKey {
   client_email?: string;
   private_key?: string;
@@ -91,6 +112,25 @@ function normalizeGoogleBaseUrl(baseUrl: string): string {
     return url.toString().replace(/\/+$/, "");
   } catch {
     return trimmed;
+  }
+}
+
+export function normalizeGoogleGenerativeLanguageBaseUrl(baseUrl: string): string {
+  const normalized = normalizeGoogleBaseUrl(baseUrl);
+  try {
+    const url = new URL(normalized);
+    const pathname = url.pathname.replace(/\/+$/, "").replace(/\/v1(?=\/|$)/i, "/v1beta");
+    url.pathname = /\/v\d/i.test(pathname) ? pathname : `${pathname}/v1beta`;
+    // Base-URL query or fragment text cannot safely precede model endpoint suffixes.
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    const clean = normalized
+      .split(/[?#]/, 1)[0]!
+      .replace(/\/+$/, "")
+      .replace(/\/v1(?=\/|$)/i, "/v1beta");
+    return /\/v\d/i.test(clean) ? clean : `${clean}/v1beta`;
   }
 }
 
@@ -201,6 +241,40 @@ function capGeminiThinkingBudget(requestedBudget: number, maxOutputTokens: numbe
   const visibleReserve = Math.min(4096, Math.max(1024, Math.floor(maxOutputTokens * 0.5)));
   const maxThinkingBudget = Math.max(0, Math.floor(maxOutputTokens) - visibleReserve);
   return Math.max(0, Math.min(requestedBudget, maxThinkingBudget));
+}
+
+function supportsGeminiThinkingDisable(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return (
+    /^gemini-2\.5-flash(?:-lite)?(?:$|-preview|-latest)/u.test(normalized) ||
+    normalized.startsWith("gemini-2.0-flash-thinking")
+  );
+}
+
+export function resolveGeminiThinkingConfig(
+  model: string,
+  options: Pick<ChatOptions, "enableThinking" | "reasoningEffort">,
+  maxOutputTokens: number,
+): Record<string, unknown> | undefined {
+  if (options.reasoningEffort === "none") {
+    return supportsGeminiThinkingDisable(model) ? { thinkingBudget: 0, includeThoughts: false } : undefined;
+  }
+  if (!options.enableThinking && !options.reasoningEffort) return undefined;
+
+  if (/gemini-3/i.test(model)) {
+    const levelMap = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
+    return {
+      thinkingLevel: options.reasoningEffort ? levelMap[options.reasoningEffort] : "high",
+      includeThoughts: true,
+    };
+  }
+
+  const budgetMap = { low: 1024, medium: 8192, high: 24576, xhigh: 24576, max: 24576 } as const;
+  const requestedBudget = options.reasoningEffort ? budgetMap[options.reasoningEffort] : 8192;
+  return {
+    thinkingBudget: capGeminiThinkingBudget(requestedBudget, maxOutputTokens),
+    includeThoughts: true,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -494,31 +568,15 @@ export class GoogleProvider extends BaseLLMProvider {
 
     const isGemini3 = /gemini-3/i.test(model);
     const supportsThinking = isGemini3 || /gemini-2\.5|gemini-2\.0-flash-thinking/i.test(model);
-    let thinkingConfig: Record<string, unknown> | undefined;
-    if (
-      this.shouldSendParameter(options, "reasoningEffort") &&
-      supportsThinking &&
-      (options.enableThinking || options.reasoningEffort)
-    ) {
-      if (isGemini3) {
-        const levelMap = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
-        thinkingConfig = {
-          thinkingLevel: options.reasoningEffort ? levelMap[options.reasoningEffort] : "high",
-          includeThoughts: true,
-        };
-      } else {
-        const budgetMap = { low: 1024, medium: 8192, high: 24576, xhigh: 24576, max: 24576 } as const;
-        const requestedBudget = options.reasoningEffort ? budgetMap[options.reasoningEffort] : 8192;
-        const outputMaxTokens = maxTokens ?? 4096;
-        thinkingConfig = {
-          thinkingBudget: capGeminiThinkingBudget(requestedBudget, outputMaxTokens),
-          includeThoughts: true,
-        };
-      }
-    }
+    const thinkingConfig =
+      this.shouldSendParameter(options, "reasoningEffort") && supportsThinking
+        ? resolveGeminiThinkingConfig(model, options, maxTokens ?? 4096)
+        : undefined;
 
-    let base = normalizeGoogleBaseUrl(this.baseUrl);
-    if (this.providerKind === "google" && !/\/v\d/.test(base)) base += "/v1beta";
+    const base =
+      this.providerKind === "google"
+        ? normalizeGoogleGenerativeLanguageBaseUrl(this.baseUrl)
+        : normalizeGoogleBaseUrl(this.baseUrl);
     const url =
       this.providerKind === "google_vertex"
         ? buildGoogleVertexModelUrl(base, model, "generateContent")
@@ -547,7 +605,6 @@ export class GoogleProvider extends BaseLLMProvider {
         ...(options.stop?.length ? { stopSequences: options.stop } : {}),
       },
       tools: formatGoogleTools(options.tools),
-      toolConfig: { functionCallingConfig: { mode: "AUTO" } },
     };
 
     if (systemMessages.length > 0) {
@@ -555,6 +612,7 @@ export class GoogleProvider extends BaseLLMProvider {
     }
 
     this.applyCustomParameters(body, options);
+    applyGoogleFunctionCallingMode(body, options.toolChoice);
     const authHeaders =
       this.providerKind === "google_vertex"
         ? await googleAuthHeadersForVertex(this.apiKey)
@@ -620,33 +678,17 @@ export class GoogleProvider extends BaseLLMProvider {
     const supportsThinking =
       !suppressModelParameters && (isGemini3 || /gemini-2\.5|gemini-2\.0-flash-thinking/i.test(model));
 
-    let thinkingConfig: Record<string, unknown> | undefined;
-    if (
-      this.shouldSendParameter(options, "reasoningEffort") &&
-      supportsThinking &&
-      (options.enableThinking || options.reasoningEffort)
-    ) {
-      if (isGemini3) {
-        const levelMap = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
-        thinkingConfig = {
-          thinkingLevel: options.reasoningEffort ? levelMap[options.reasoningEffort] : "high",
-          includeThoughts: true,
-        };
-      } else {
-        const budgetMap = { low: 1024, medium: 8192, high: 24576, xhigh: 24576, max: 24576 } as const;
-        const requestedBudget = options.reasoningEffort ? budgetMap[options.reasoningEffort] : 8192;
-        const outputMaxTokens = maxTokens ?? 4096;
-        thinkingConfig = {
-          thinkingBudget: capGeminiThinkingBudget(requestedBudget, outputMaxTokens),
-          includeThoughts: true,
-        };
-      }
-    }
+    const thinkingConfig =
+      this.shouldSendParameter(options, "reasoningEffort") && supportsThinking
+        ? resolveGeminiThinkingConfig(model, options, maxTokens ?? 4096)
+        : undefined;
 
     // Ensure the base URL includes the /v1beta path segment required by the Gemini API.
     // Proxies like api.linkapi.ai need this appended (SillyTavern does it automatically).
-    let base = normalizeGoogleBaseUrl(this.baseUrl);
-    if (this.providerKind === "google" && !/\/v\d/.test(base)) base += "/v1beta";
+    const base =
+      this.providerKind === "google"
+        ? normalizeGoogleGenerativeLanguageBaseUrl(this.baseUrl)
+        : normalizeGoogleBaseUrl(this.baseUrl);
 
     // When thinking is enabled, force non-streaming (generateContent) because
     // proxies like linkapi.ai strip thought parts from SSE streams but return
@@ -907,8 +949,10 @@ export class GoogleProvider extends BaseLLMProvider {
     const label = this.providerKind === "google_vertex" ? "Vertex AI Gemini" : "Gemini API";
     const requestModel = model.replace(/^models\//, "") || "gemini-embedding-001";
     const timeoutMs = getEmbeddingRequestTimeoutMs();
-    let base = normalizeGoogleBaseUrl(this.baseUrl);
-    if (this.providerKind === "google" && !/\/v\d/.test(base)) base += "/v1beta";
+    const base =
+      this.providerKind === "google"
+        ? normalizeGoogleGenerativeLanguageBaseUrl(this.baseUrl)
+        : normalizeGoogleBaseUrl(this.baseUrl);
     const url =
       this.providerKind === "google_vertex"
         ? buildGoogleVertexModelUrl(base, requestModel, "embedContent")

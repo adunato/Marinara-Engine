@@ -9,12 +9,11 @@ import { useEffect, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
 import { recordUserMessageActivity } from "../lib/user-presence-activity";
-import { toAutonomousPresenceStatus } from "../lib/user-status";
+import { shouldSuppressAutonomousMessages, toAutonomousPresenceStatus } from "../lib/user-status";
 import { useChatStore } from "../stores/chat.store";
 import { useUIStore, type UserStatus } from "../stores/ui.store";
 import { useGenerate } from "./use-generate";
 import { chatKeys } from "./use-chats";
-import { characterKeys } from "./use-characters";
 
 interface AutonomousCheckResult {
   shouldTrigger: boolean;
@@ -129,7 +128,7 @@ export function useAutonomousMessaging(
       const userStatus = useUIStore.getState().userStatus;
 
       // Don't trigger autonomous messages when user is DND
-      if (userStatus === "dnd") {
+      if (shouldSuppressAutonomousMessages(userStatus)) {
         await recordClientPresence(userStatus);
         schedulePoll();
         return;
@@ -141,8 +140,15 @@ export function useAutonomousMessaging(
           userStatus: toAutonomousPresenceStatus(userStatus),
         });
 
-        // Refresh character data so sidebar status dots update
-        qc.invalidateQueries({ queryKey: characterKeys.list() });
+        // No per-tick character-list invalidation here (#4704): it refetched
+        // the full character list every 30s but never served its stated
+        // purpose — the sidebar status dots read ["characters","summaries"],
+        // which this key doesn't match. Dot freshness actually comes from
+        // chat-metadata status snapshots/overrides plus the summaries query's
+        // staleTime and focus refetches (ConversationPresenceCard's signature
+        // invalidation targets the same mismatched list() key, so it doesn't
+        // refresh the dots either); generation completions invalidate the
+        // character list independently.
 
         if (result.shouldTrigger && result.characterIds.length > 0) {
           const characterId = result.characterIds[0]!;
@@ -157,6 +163,17 @@ export function useAutonomousMessaging(
               const generationStartedAt = busyGenerationStartedAtRef.current;
               busyTimerRef.current = null;
               busyGenerationStartedAtRef.current = undefined;
+              const currentUserStatus = useUIStore.getState().userStatus;
+              if (shouldSuppressAutonomousMessages(currentUserStatus)) {
+                void recordClientPresence(currentUserStatus);
+                if (typeof generationStartedAt === "number") {
+                  void api
+                    .post("/conversation/autonomous/clear-in-progress", { chatId, startedAt: generationStartedAt })
+                    .catch(() => {});
+                }
+                schedulePoll();
+                return;
+              }
               // Re-check guards after delay — user may have started a manual generation
               if (generatingRef.current || useChatStore.getState().abortControllers.has(chatId)) {
                 if (typeof generationStartedAt === "number") {
@@ -167,12 +184,12 @@ export function useAutonomousMessaging(
                 schedulePoll();
                 return;
               }
-              triggerAutonomousGeneration(characterId, result.autonomousIntentKey, true);
+              triggerAutonomousGeneration(characterId, result.autonomousIntentKey, true, generationStartedAt);
             }, delay.delayMs);
             return; // Don't schedule next poll until generation completes
           }
 
-          await triggerAutonomousGeneration(characterId, result.autonomousIntentKey);
+          await triggerAutonomousGeneration(characterId, result.autonomousIntentKey, false, result.generationStartedAt);
           return; // Generation will schedule next poll when done
         }
       } catch {
@@ -186,7 +203,20 @@ export function useAutonomousMessaging(
       characterId: string,
       autonomousIntentKey?: string,
       skipPresenceDelay = false,
+      generationStartedAt?: number,
     ) => {
+      const currentUserStatus = useUIStore.getState().userStatus;
+      if (shouldSuppressAutonomousMessages(currentUserStatus)) {
+        await recordClientPresence(currentUserStatus);
+        if (typeof generationStartedAt === "number") {
+          await api
+            .post("/conversation/autonomous/clear-in-progress", { chatId, startedAt: generationStartedAt })
+            .catch(() => {});
+        }
+        schedulePoll();
+        return;
+      }
+
       generatingRef.current = true;
       let produced: boolean | undefined = false;
       let shouldSchedulePoll = true;
@@ -229,9 +259,20 @@ export function useAutonomousMessaging(
             shouldSchedulePoll = false;
             busyTimerRef.current = setTimeout(
               () => {
-                if (!useChatStore.getState().abortControllers.has(chatId)) {
+                if (
+                  !shouldSuppressAutonomousMessages(useUIStore.getState().userStatus) &&
+                  !useChatStore.getState().abortControllers.has(chatId)
+                ) {
                   triggerAutonomousGeneration(exchange.characterIds[0]!);
                 } else {
+                  if (typeof exchange.generationStartedAt === "number") {
+                    void api
+                      .post("/conversation/autonomous/clear-in-progress", {
+                        chatId,
+                        startedAt: exchange.generationStartedAt,
+                      })
+                      .catch(() => {});
+                  }
                   schedulePoll();
                 }
               },

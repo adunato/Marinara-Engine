@@ -18,9 +18,7 @@ export const TTS_DIALOGUE_PAUSE_DEFAULT_SECONDS = 1;
 
 function normalizeDialoguePauseMs(value: number): number {
   const wholeSeconds = Math.round(value / 1000);
-  return (
-    Math.min(TTS_DIALOGUE_PAUSE_MAX_SECONDS, Math.max(TTS_DIALOGUE_PAUSE_MIN_SECONDS, wholeSeconds)) * 1000
-  );
+  return Math.min(TTS_DIALOGUE_PAUSE_MAX_SECONDS, Math.max(TTS_DIALOGUE_PAUSE_MIN_SECONDS, wholeSeconds)) * 1000;
 }
 
 export const ttsConversationCallAudioInputModeSchema = z.enum(["system", "auto", "transcribe", "local_whisper"]);
@@ -125,6 +123,10 @@ const ttsConfigBaseSchema = z.object({
   elevenLabsStability: z.number().min(0).max(1).default(0.5),
   /** ElevenLabs only: optional language_code. Empty means automatic language detection. */
   elevenLabsLanguageCode: z.string().max(8).default(""),
+  /** ElevenLabs only: generate scene-specific Game Mode sound effects. */
+  elevenLabsGameSoundEffects: z.boolean().default(false),
+  /** ElevenLabs only: generate scene-specific Game Mode music. */
+  elevenLabsGameMusic: z.boolean().default(false),
   voiceMode: ttsVoiceModeSchema.default("single"),
   voiceAssignments: z.array(ttsVoiceAssignmentSchema).default([]),
   narratorVoiceEnabled: z.boolean().default(false),
@@ -173,6 +175,8 @@ export const ttsSourceProfileSchema = ttsConfigBaseSchema.pick({
   speed: true,
   elevenLabsStability: true,
   elevenLabsLanguageCode: true,
+  elevenLabsGameSoundEffects: true,
+  elevenLabsGameMusic: true,
   voiceMode: true,
   voiceAssignments: true,
   narratorVoiceEnabled: true,
@@ -210,6 +214,8 @@ export function ttsSourceProfileFromConfig(config: TTSConfig): TTSSourceProfile 
     speed: config.speed,
     elevenLabsStability: config.elevenLabsStability,
     elevenLabsLanguageCode: config.elevenLabsLanguageCode,
+    elevenLabsGameSoundEffects: config.elevenLabsGameSoundEffects,
+    elevenLabsGameMusic: config.elevenLabsGameMusic,
     voiceMode: config.voiceMode,
     voiceAssignments: config.voiceAssignments,
     narratorVoiceEnabled: config.narratorVoiceEnabled,
@@ -236,6 +242,17 @@ export interface TTSVoicesResponse {
     labels?: Record<string, string | number | boolean | null> | null;
   }>;
   /** True when the list came from the provider; false = local fallback or no provider voices */
+  fromProvider: boolean;
+  source: TTSSource;
+}
+
+/** Returned by GET /api/tts/models */
+export interface TTSModelsResponse {
+  models: Array<{
+    id: string;
+    name: string;
+  }>;
+  /** True when the list came from the provider; false = built-in fallback choices */
   fromProvider: boolean;
   source: TTSSource;
 }

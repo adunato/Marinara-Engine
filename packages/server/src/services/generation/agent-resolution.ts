@@ -3,7 +3,7 @@ import {
   CORE_BUILT_IN_AGENT_MANIFESTS,
   DEFAULT_AGENT_TOOLS,
   getDefaultAgentPrompt,
-  getDefaultBuiltInAgentSettings,
+  isBuiltInAgentHostManaged,
   isBuiltInAgentRuntimeDisabled,
   isAgentConfigDeleted,
   isRetiredBuiltInAgentId,
@@ -12,7 +12,9 @@ import {
   normalizeAgentPhaseValue,
   resolveAgentPromptTemplate,
   findKnownModel,
+  shouldSuppressUnknownModelParameters,
   type APIProvider,
+  type GenerationParameterSendMap,
 } from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 import { createLLMProvider } from "../llm/provider-registry.js";
@@ -30,6 +32,7 @@ import {
 import { parseStoredGenerationParameters } from "../../routes/generate/generate-route-utils.js";
 import { applyTextRewriteAgentChatSettings, normalizeProseGuardianPromptTemplate } from "./prose-guardian-settings.js";
 import { applyKnowledgeAgentChatSettings } from "./knowledge-agent-settings.js";
+import { applyCustomAgentImageChatSettings } from "./custom-agent-image-settings.js";
 import { withConnectionFallbackProvider, type FallbackConnection } from "../llm/connection-fallback-provider.js";
 import type { GenerationFallbackNotifier } from "./fallback-notification.js";
 
@@ -51,6 +54,9 @@ type ResolveAgentPipelineAgentsArgs = {
   chatConnectionId: string;
   chatModel: string;
   chatCustomParameters: Record<string, unknown>;
+  chatTemperature?: number;
+  chatEnabledParameters?: GenerationParameterSendMap;
+  chatSuppressModelParameters: boolean;
   chatMaxOutputTokens: number | null;
   chatMaxParallelJobs: number;
   chatEnableCaching: boolean;
@@ -66,6 +72,9 @@ type AgentProviderCacheEntry = {
   provider: BaseLLMProvider;
   model: string;
   customParameters: Record<string, unknown>;
+  temperature?: number;
+  enabledParameters?: GenerationParameterSendMap;
+  suppressModelParameters: boolean;
   maxOutputTokens: number | null;
   maxParallelJobs: number;
   enableCaching: boolean;
@@ -79,12 +88,16 @@ type AgentConnectionResolution = {
   connectionName?: string;
 };
 
-// Core managed agents have native runtimes. The mutable built-in registry is
+// Core host-managed agents have native runtimes. The mutable built-in registry is
 // refreshed during app startup, but this static guard must hold even while that
 // registry is unavailable or has not yet been populated.
-const CORE_MANAGED_AGENT_TYPES = new Set(
-  CORE_BUILT_IN_AGENT_MANIFESTS.filter((agent) => agent.execution === "managed").map((agent) => agent.id),
+const CORE_HOST_MANAGED_AGENT_TYPES = new Set(
+  CORE_BUILT_IN_AGENT_MANIFESTS.filter((agent) => agent.execution === "host").map((agent) => agent.id),
 );
+
+function isHostManagedAgentType(agentType: string): boolean {
+  return CORE_HOST_MANAGED_AGENT_TYPES.has(agentType) || isBuiltInAgentHostManaged(agentType);
+}
 
 function readTrimmedString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -136,30 +149,62 @@ function parseAgentSettings(settings: unknown): Record<string, unknown> {
   return typeof settings === "object" && !Array.isArray(settings) ? (settings as Record<string, unknown>) : {};
 }
 
-function resolveAgentSettings(agentType: string, settings: unknown): Record<string, unknown> {
-  const parsed = parseAgentSettings(settings);
-  if (!BUILT_IN_AGENTS.some((agent) => agent.id === agentType)) return parsed;
-  return mergeBuiltInAgentSettings(agentType, parsed);
+export function resolveEffectiveAgentSettings(args: {
+  agentType: string;
+  settings: unknown;
+  activeMusicPlayerSource?: "spotify" | "youtube" | "custom" | null;
+  chatMetadata?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const { agentType, activeMusicPlayerSource, chatMetadata } = args;
+  const parsed = parseAgentSettings(args.settings);
+  let settings = BUILT_IN_AGENTS.some((agent) => agent.id === agentType)
+    ? mergeBuiltInAgentSettings(agentType, parsed)
+    : parsed;
+
+  if (agentType === "spotify" && activeMusicPlayerSource) {
+    settings = {
+      ...settings,
+      musicProvider: activeMusicPlayerSource,
+      musicPlayerSource: activeMusicPlayerSource,
+      enabledTools: activeMusicPlayerSource === "spotify" ? [...(DEFAULT_AGENT_TOOLS.spotify ?? [])] : [],
+    };
+  }
+
+  settings = applyTextRewriteAgentChatSettings(agentType, settings, chatMetadata);
+  settings = applyKnowledgeAgentChatSettings(agentType, settings, chatMetadata);
+  settings = applyCustomAgentImageChatSettings(agentType, settings, chatMetadata);
+
+  const usesNonSpotifyMusicSource =
+    agentType === "spotify" &&
+    (settings.musicProvider === "youtube" ||
+      settings.musicPlayerSource === "youtube" ||
+      settings.musicProvider === "custom" ||
+      settings.musicPlayerSource === "custom");
+  // Spotify restores playback tools from an empty array; other built-ins treat
+  // an empty array as an explicit opt-out.
+  if (
+    agentType === "spotify" &&
+    !usesNonSpotifyMusicSource &&
+    (!Array.isArray(settings.enabledTools) || settings.enabledTools.length === 0)
+  ) {
+    settings = { ...settings, enabledTools: [...(DEFAULT_AGENT_TOOLS.spotify ?? [])] };
+  } else if (
+    agentType !== "spotify" &&
+    BUILT_IN_AGENTS.some((agent) => agent.id === agentType) &&
+    !Array.isArray(settings.enabledTools) &&
+    (DEFAULT_AGENT_TOOLS[agentType]?.length ?? 0) > 0
+  ) {
+    settings = { ...settings, enabledTools: [...DEFAULT_AGENT_TOOLS[agentType]!] };
+  }
+
+  return settings;
 }
 
-function applyMusicPlayerSourceToMusicDjSettings(
-  settings: Record<string, unknown>,
-  activeMusicPlayerSource: "spotify" | "youtube" | "custom" | null | undefined,
-): Record<string, unknown> {
-  if (!activeMusicPlayerSource) return settings;
-  return {
-    ...settings,
-    musicProvider: activeMusicPlayerSource,
-    musicPlayerSource: activeMusicPlayerSource,
-    enabledTools: activeMusicPlayerSource === "spotify" ? (DEFAULT_AGENT_TOOLS.spotify ?? []) : [],
-  };
-}
-
-function musicAgentUsesSource(settings: Record<string, unknown>, source: "youtube" | "custom"): boolean {
+export function musicAgentUsesSource(settings: Record<string, unknown>, source: "youtube" | "custom"): boolean {
   return settings.musicProvider === source || settings.musicPlayerSource === source;
 }
 
-function getAgentFallbackPrompt(agentType: string, settings: Record<string, unknown>): string {
+export function getAgentFallbackPrompt(agentType: string, settings: Record<string, unknown>): string {
   if (agentType === "spotify" && musicAgentUsesSource(settings, "youtube")) {
     return getDefaultAgentPrompt("youtube");
   }
@@ -167,10 +212,6 @@ function getAgentFallbackPrompt(agentType: string, settings: Record<string, unkn
     return getDefaultAgentPrompt("local-music");
   }
   return getDefaultAgentPrompt(agentType);
-}
-
-function resolveConnectionCustomParameters(connection: { defaultParameters?: unknown }): Record<string, unknown> {
-  return parseStoredGenerationParameters(connection.defaultParameters)?.customParameters ?? {};
 }
 
 function resolveConnectionMaxOutputTokens(connection: { provider: string; model: string }): number | null {
@@ -185,6 +226,9 @@ async function resolveAgentConnectionProvider(args: {
   fallbackProvider: BaseLLMProvider;
   fallbackModel: string;
   fallbackCustomParameters: Record<string, unknown>;
+  fallbackTemperature?: number;
+  fallbackEnabledParameters?: GenerationParameterSendMap;
+  fallbackSuppressModelParameters: boolean;
   fallbackMaxOutputTokens: number | null;
   fallbackMaxParallelJobs: number;
   fallbackEnableCaching: boolean;
@@ -211,6 +255,9 @@ async function resolveAgentConnectionProvider(args: {
       provider,
       model: args.fallbackModel,
       customParameters: args.fallbackCustomParameters,
+      temperature: args.fallbackTemperature,
+      enabledParameters: args.fallbackEnabledParameters,
+      suppressModelParameters: args.fallbackSuppressModelParameters,
       maxOutputTokens: args.fallbackMaxOutputTokens,
       maxParallelJobs: args.fallbackMaxParallelJobs,
       enableCaching: args.fallbackEnableCaching,
@@ -255,6 +302,7 @@ async function resolveAgentConnectionProvider(args: {
     agentConn.treatAsLocalEndpoint === "true",
     agentConn.defaultParameters,
   );
+  const storedParameters = parseStoredGenerationParameters(agentConn.defaultParameters);
   const resolved = {
     provider: withConnectionFallbackProvider({
       primary: primaryProvider,
@@ -265,7 +313,10 @@ async function resolveAgentConnectionProvider(args: {
       onFallback: args.onFallback,
     }),
     model,
-    customParameters: resolveConnectionCustomParameters(agentConn),
+    customParameters: storedParameters?.customParameters ?? {},
+    temperature: storedParameters?.temperature,
+    enabledParameters: storedParameters?.enabledParameters,
+    suppressModelParameters: shouldSuppressUnknownModelParameters(agentConn.provider, model),
     maxOutputTokens: resolveConnectionMaxOutputTokens({ provider: agentConn.provider, model }),
     maxParallelJobs: Number(agentConn.maxParallelJobs) || 1,
     enableCaching: agentConn.enableCaching === "true",
@@ -288,6 +339,9 @@ export async function resolveAgentPipelineAgents({
   chatConnectionId,
   chatModel,
   chatCustomParameters,
+  chatTemperature,
+  chatEnabledParameters,
+  chatSuppressModelParameters,
   chatMaxOutputTokens,
   chatMaxParallelJobs,
   chatEnableCaching,
@@ -307,23 +361,26 @@ export async function resolveAgentPipelineAgents({
   const enabledConfigs = configuredAgents.filter(
     (agent) =>
       !isAgentConfigDeleted(agent.settings) &&
+      !isHostManagedAgentType(agent.type as string) &&
       !isBuiltInAgentRuntimeDisabled(agent.type as string) &&
-      !isRetiredBuiltInAgentId(agent.type as string) &&
-      !CORE_MANAGED_AGENT_TYPES.has(agent.type as string) &&
-      BUILT_IN_AGENTS.find((builtIn) => builtIn.id === agent.type)?.execution !== "managed",
+      !isRetiredBuiltInAgentId(agent.type as string),
   );
   const resolvedAgents: ResolvedAgent[] = [];
   const agentProviderCache = new Map<string | null, AgentProviderCacheEntry>();
-  const localSidecarAvailableForTrackers =
-    sidecarModelService.getConfig().useForTrackers && sidecarModelService.getConfiguredModelRef() !== null;
+  // An agent may explicitly select the local sidecar even when the global
+  // "use for trackers" switch is off. The provider starts it on demand.
+  const localSidecarAvailableForTrackers = sidecarModelService.getConfiguredModelRef() !== null;
 
   if (localSidecarAvailableForTrackers) {
     agentProviderCache.set(LOCAL_SIDECAR_CONNECTION_ID, {
       provider: getLocalSidecarProvider(),
       model: LOCAL_SIDECAR_MODEL,
       customParameters: {},
+      temperature: sidecarModelService.getConfig().temperature,
+      enabledParameters: { temperature: true },
+      suppressModelParameters: false,
       maxOutputTokens: null,
-      maxParallelJobs: 1,
+      maxParallelJobs: sidecarModelService.getConfig().maxParallelJobs,
       enableCaching: false,
       anthropicExtendedCacheTtl: false,
       cachingAtDepth: 5,
@@ -359,30 +416,12 @@ export async function resolveAgentPipelineAgents({
   for (const cfg of enabledConfigs) {
     if (hasPerChatAgentList && !perChatAgentSet.has(cfg.type)) continue;
 
-    let settings = resolveAgentSettings(cfg.type as string, cfg.settings);
-    if (cfg.type === "spotify") {
-      settings = applyMusicPlayerSourceToMusicDjSettings(settings, activeMusicPlayerSource);
-    }
-    settings = applyTextRewriteAgentChatSettings(cfg.type as string, settings, chatMetadata);
-    settings = applyKnowledgeAgentChatSettings(cfg.type as string, settings, chatMetadata);
-    if (
-      cfg.type === "spotify" &&
-      settings.musicProvider !== "youtube" &&
-      settings.musicPlayerSource !== "youtube" &&
-      settings.musicProvider !== "custom" &&
-      settings.musicPlayerSource !== "custom" &&
-      (!Array.isArray(settings.enabledTools) || settings.enabledTools.length === 0)
-    ) {
-      settings.enabledTools = DEFAULT_AGENT_TOOLS.spotify ?? [];
-    }
-    if (
-      cfg.type !== "spotify" &&
-      BUILT_IN_AGENTS.some((agent) => agent.id === cfg.type) &&
-      !Array.isArray(settings.enabledTools) &&
-      (DEFAULT_AGENT_TOOLS[cfg.type as string]?.length ?? 0) > 0
-    ) {
-      settings.enabledTools = [...DEFAULT_AGENT_TOOLS[cfg.type as string]!];
-    }
+    const settings = resolveEffectiveAgentSettings({
+      agentType: cfg.type as string,
+      settings: cfg.settings,
+      activeMusicPlayerSource,
+      chatMetadata,
+    });
     let selectedPromptTemplate = resolveAgentPromptTemplate({
       promptTemplate: normalizeProseGuardianPromptTemplate(cfg.type as string, cfg.promptTemplate),
       fallbackPromptTemplate: getAgentFallbackPrompt(cfg.type as string, settings),
@@ -414,6 +453,9 @@ export async function resolveAgentPipelineAgents({
       fallbackProvider: chatProvider,
       fallbackModel: chatModel,
       fallbackCustomParameters: chatCustomParameters,
+      fallbackTemperature: chatTemperature,
+      fallbackEnabledParameters: chatEnabledParameters,
+      fallbackSuppressModelParameters: chatSuppressModelParameters,
       fallbackMaxOutputTokens: chatMaxOutputTokens,
       fallbackMaxParallelJobs: chatMaxParallelJobs,
       fallbackEnableCaching: chatEnableCaching,
@@ -443,6 +485,7 @@ export async function resolveAgentPipelineAgents({
       id: cfg.id,
       type: cfg.type,
       name: cfg.name,
+      isCustomAgent: !BUILT_IN_AGENTS.some((agent) => agent.id === cfg.type),
       phase: normalizeAgentPhaseValue(cfg.phase),
       promptTemplate: selectedPromptTemplate,
       connectionId: effectiveConnectionId,
@@ -450,6 +493,9 @@ export async function resolveAgentPipelineAgents({
       provider: resolvedProvider.entry.provider,
       model: resolvedProvider.entry.model,
       customParameters: resolvedProvider.entry.customParameters,
+      temperature: resolvedProvider.entry.temperature,
+      enabledParameters: resolvedProvider.entry.enabledParameters,
+      suppressModelParameters: resolvedProvider.entry.suppressModelParameters,
       maxOutputTokens: resolvedProvider.entry.maxOutputTokens,
       maxParallelJobs: resolvedProvider.entry.maxParallelJobs,
       enableCaching: resolvedProvider.entry.enableCaching,
@@ -464,6 +510,7 @@ export async function resolveAgentPipelineAgents({
       ? BUILT_IN_AGENTS.filter((agent) => {
           if (resolvedTypes.has(agent.id)) return false;
           if (deletedBuiltInTypes.has(agent.id)) return false;
+          if (isHostManagedAgentType(agent.id)) return false;
           if (isBuiltInAgentRuntimeDisabled(agent.id)) return false;
           return perChatAgentSet.has(agent.id);
         })
@@ -495,6 +542,9 @@ export async function resolveAgentPipelineAgents({
       fallbackProvider: chatProvider,
       fallbackModel: chatModel,
       fallbackCustomParameters: chatCustomParameters,
+      fallbackTemperature: chatTemperature,
+      fallbackEnabledParameters: chatEnabledParameters,
+      fallbackSuppressModelParameters: chatSuppressModelParameters,
       fallbackMaxOutputTokens: chatMaxOutputTokens,
       fallbackMaxParallelJobs: chatMaxParallelJobs,
       fallbackEnableCaching: chatEnableCaching,
@@ -517,29 +567,12 @@ export async function resolveAgentPipelineAgents({
     }
     if (defaultAgentConn && builtInConnectionId === defaultAgentConn.id)
       defaultAgentConnectionAgents.push(builtIn.name);
-    let builtInSettings = getDefaultBuiltInAgentSettings(builtIn.id);
-    if (builtIn.id === "spotify") {
-      builtInSettings = applyMusicPlayerSourceToMusicDjSettings(builtInSettings, activeMusicPlayerSource);
-    }
-    builtInSettings = applyTextRewriteAgentChatSettings(builtIn.id, builtInSettings, chatMetadata);
-    builtInSettings = applyKnowledgeAgentChatSettings(builtIn.id, builtInSettings, chatMetadata);
-    if (
-      builtIn.id === "spotify" &&
-      builtInSettings.musicProvider !== "youtube" &&
-      builtInSettings.musicPlayerSource !== "youtube" &&
-      builtInSettings.musicProvider !== "custom" &&
-      builtInSettings.musicPlayerSource !== "custom" &&
-      (!Array.isArray(builtInSettings.enabledTools) || builtInSettings.enabledTools.length === 0)
-    ) {
-      builtInSettings.enabledTools = DEFAULT_AGENT_TOOLS.spotify ?? [];
-    }
-    if (
-      builtIn.id !== "spotify" &&
-      !Array.isArray(builtInSettings.enabledTools) &&
-      (DEFAULT_AGENT_TOOLS[builtIn.id]?.length ?? 0) > 0
-    ) {
-      builtInSettings.enabledTools = [...DEFAULT_AGENT_TOOLS[builtIn.id]!];
-    }
+    const builtInSettings = resolveEffectiveAgentSettings({
+      agentType: builtIn.id,
+      settings: undefined,
+      activeMusicPlayerSource,
+      chatMetadata,
+    });
     let selectedPromptTemplate = resolveAgentPromptTemplate({
       promptTemplate: "",
       fallbackPromptTemplate: getAgentFallbackPrompt(builtIn.id, builtInSettings),
@@ -550,6 +583,7 @@ export async function resolveAgentPipelineAgents({
       id: `builtin:${builtIn.id}`,
       type: builtIn.id,
       name: builtIn.name,
+      isCustomAgent: false,
       phase: normalizeAgentPhaseValue(builtIn.phase),
       promptTemplate: selectedPromptTemplate,
       connectionId: builtInConnectionId,
@@ -557,6 +591,9 @@ export async function resolveAgentPipelineAgents({
       provider: builtInConnection.entry.provider,
       model: builtInConnection.entry.model,
       customParameters: builtInConnection.entry.customParameters,
+      temperature: builtInConnection.entry.temperature,
+      enabledParameters: builtInConnection.entry.enabledParameters,
+      suppressModelParameters: builtInConnection.entry.suppressModelParameters,
       maxOutputTokens: builtInConnection.entry.maxOutputTokens,
       maxParallelJobs: builtInConnection.entry.maxParallelJobs,
       enableCaching: builtInConnection.entry.enableCaching,

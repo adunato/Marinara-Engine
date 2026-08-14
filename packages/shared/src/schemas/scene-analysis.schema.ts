@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_IMAGE_PROMPT_INSTRUCTIONS_LENGTH } from "../constants/defaults.js";
 import type { GameNpc, HudWidget } from "../types/game.js";
 import type { GameActiveState } from "../types/game.js";
 import type { SceneSpotifyTrackCandidate } from "../types/sidecar.js";
@@ -29,6 +30,8 @@ export const sceneAnalysisContextSchema = z.object({
   currentMusic: z.string().nullable(),
   recentMusic: z.array(z.string().max(500)).max(20).optional().default([]),
   useSpotifyMusic: z.boolean().optional().default(false),
+  generateSoundEffects: z.boolean().optional().default(false),
+  generateMusic: z.boolean().optional().default(false),
   availableSpotifyTracks: z.array(sceneSpotifyTrackCandidateSchema).max(50).optional().default([]),
   currentSpotifyTrack: z.string().max(300).nullable().optional().default(null),
   recentSpotifyTracks: z.array(z.string().max(300)).max(20).optional().default([]),
@@ -42,7 +45,7 @@ export const sceneAnalysisContextSchema = z.object({
   canGenerateBackgrounds: z.boolean().optional(),
   canGenerateIllustrations: z.boolean().optional(),
   artStylePrompt: z.string().nullable().optional(),
-  imagePromptInstructions: z.string().max(5_000).nullable().optional(),
+  imagePromptInstructions: z.string().max(MAX_IMAGE_PROMPT_INSTRUCTIONS_LENGTH).nullable().optional(),
 });
 
 export const sceneAnalysisRequestSchema = z.object({

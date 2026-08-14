@@ -3,13 +3,29 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { BUILT_IN_AGENT_MANIFESTS } from "@marinara-engine/shared";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
-import { capabilityPackageManager } from "../services/capability-packages/package-manager.service.js";
+import {
+  capabilityPackageManager,
+  CapabilityPackageVersionMismatchError,
+} from "../services/capability-packages/package-manager.service.js";
 import { capabilityModuleRuntime } from "../services/capability-packages/capability-module-runtime.service.js";
 import { refreshCapabilityAgentRegistry } from "../services/capability-packages/capability-agent-registry.service.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createAgentsStorage } from "../services/storage/agents.storage.js";
 
-const packageParams = z.object({ id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80) });
+const packageParams = z.object({
+  id: z
+    .string()
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    .max(80),
+});
+const packageAssetParams = packageParams.extend({ "*": z.string().min(1).max(240) });
+const packageVersion = z
+  .string()
+  .regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+  .max(80);
+const packageUpdateParams = packageParams.extend({ version: packageVersion });
+const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
+const installBody = z.object({ expectedVersion: packageVersion, expectedArtifactSha256: sha256 });
 
 function removeAgentMapEntries(value: unknown, agentIds: ReadonlySet<string>): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -30,7 +46,12 @@ export function buildCapabilityAgentCleanupPatch(
   const filteredActiveAgentIds = activeAgentIds.filter((agentId) => !agentIds.has(agentId));
   if (filteredActiveAgentIds.length !== activeAgentIds.length) patch.activeAgentIds = filteredActiveAgentIds;
 
-  for (const key of ["agentOverrides", "agentPromptTemplateIds", "knowledgeAgentSources"] as const) {
+  for (const key of [
+    "agentOverrides",
+    "agentPromptTemplateIds",
+    "knowledgeAgentSources",
+    "customAgentImageSettings",
+  ] as const) {
     const filtered = removeAgentMapEntries(metadata[key], agentIds);
     if (filtered) patch[key] = filtered;
   }
@@ -40,7 +61,16 @@ export function buildCapabilityAgentCleanupPatch(
 export async function capabilityPackagesRoutes(app: FastifyInstance) {
   app.get("/catalog", async () => capabilityPackageManager.catalog());
   app.get("/installed", async () => capabilityPackageManager.installed());
+  app.get("/updates/pending", async () => capabilityPackageManager.pendingUpdates());
   app.get("/agents", async () => BUILT_IN_AGENT_MANIFESTS);
+  app.post<{ Params: { id: string; version: string } }>("/:id/updates/:version/decline", async (request, reply) => {
+    if (!requirePrivilegedAccess(request, reply, { feature: "Agent update decline" })) return;
+    const { id, version } = packageUpdateParams.parse(request.params);
+    if (!(await capabilityPackageManager.declineUpdate(id, version))) {
+      return reply.status(409).send({ error: "This Agent update is no longer available" });
+    }
+    return { declined: true };
+  });
   app.get<{ Params: { id: string } }>("/:id/client", async (request, reply) => {
     const { id } = packageParams.parse(request.params);
     const entrypoint = await capabilityPackageManager.clientEntrypoint(id);
@@ -50,18 +80,42 @@ export async function capabilityPackagesRoutes(app: FastifyInstance) {
     reply.header("X-Content-Type-Options", "nosniff");
     return reply.send(await readFile(entrypoint.file));
   });
-  app.post<{ Params: { id: string } }>("/:id/install", async (request, reply) => {
-    if (!requirePrivilegedAccess(request, reply, { feature: "Agent package installation" })) return;
-    const { id } = packageParams.parse(request.params);
-    const installed = await capabilityPackageManager.install(id);
-    try {
-      return installed.manifest.kind.includes("turn-game")
-        ? await capabilityModuleRuntime.activatePackage(app, id)
-        : installed;
-    } finally {
-      await refreshCapabilityAgentRegistry();
-    }
+  app.get<{ Params: { id: string; "*": string } }>("/:id/assets/*", async (request, reply) => {
+    const { id, "*": assetPath } = packageAssetParams.parse(request.params);
+    const asset = await capabilityPackageManager.browserTabAsset(id, assetPath);
+    if (!asset) return reply.status(404).send({ error: "Active package asset not found" });
+    reply.header("Content-Type", asset.contentType);
+    reply.header("Cache-Control", "private, no-cache, must-revalidate");
+    reply.header("X-Content-Type-Options", "nosniff");
+    return reply.send(await readFile(asset.file));
   });
+  app.post<{ Params: { id: string }; Body: { expectedVersion: string; expectedArtifactSha256: string } }>(
+    "/:id/install",
+    async (request, reply) => {
+      if (!requirePrivilegedAccess(request, reply, { feature: "Agent package installation" })) return;
+      const { id } = packageParams.parse(request.params);
+      const { expectedVersion, expectedArtifactSha256 } = installBody.parse(request.body);
+      let installed;
+      try {
+        installed = await capabilityPackageManager.install(id, expectedVersion, expectedArtifactSha256);
+      } catch (error) {
+        if (error instanceof CapabilityPackageVersionMismatchError) {
+          return reply.status(409).send({ error: error.message });
+        }
+        throw error;
+      }
+      try {
+        return installed.manifest.kind.includes("turn-game") && installed.status !== "restart-required"
+          ? await capabilityModuleRuntime.activatePackage(app, id)
+          : installed;
+      } finally {
+        // A restart-required update leaves the prior runtime active in this
+        // process. Keep its agent definitions visible until startup activates
+        // the replacement; refreshing now would make the package disappear.
+        if (installed.status !== "restart-required") await refreshCapabilityAgentRegistry();
+      }
+    },
+  );
   app.delete<{ Params: { id: string } }>("/:id", async (request, reply) => {
     if (!requirePrivilegedAccess(request, reply, { feature: "Agent package removal" })) return;
     const { id } = packageParams.parse(request.params);
@@ -73,7 +127,8 @@ export async function capabilityPackagesRoutes(app: FastifyInstance) {
       let metadata: Record<string, unknown> = {};
       try {
         const parsed = typeof chat.metadata === "string" ? (JSON.parse(chat.metadata) as unknown) : chat.metadata;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) metadata = parsed as Record<string, unknown>;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+          metadata = parsed as Record<string, unknown>;
       } catch {
         continue;
       }

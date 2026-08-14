@@ -23,6 +23,7 @@ import { api } from "../lib/api-client";
 import { normalizeConversationTimeZone } from "../lib/conversation-time-zone";
 import {
   normalizeTrackerPanelSizeProfile,
+  normalizeTrackerStatDisplayMode,
   normalizeTrackerTemperatureUnit,
   normalizeTrackerThoughtBubbleDisplay,
   normalizeScenePromptPreferences,
@@ -40,7 +41,13 @@ type SyncedSettingsObject = ReturnType<typeof pickSyncedSettings>;
 type ServerSettingsPayload = SyncedSettingsObject & { __updatedAt?: number };
 type ParsedSettings = Partial<SyncedSettingsObject> & Record<string, unknown>;
 
-const LOCAL_ONLY_SETTING_KEYS = ["fontSize", "chatFontSize", "trackerPanelOpen"] as const;
+const LOCAL_ONLY_SETTING_KEYS = [
+  "fontSize",
+  "chatFontSize",
+  "trackerPanelOpen",
+  "impersonatePromptTemplate",
+  "activeImpersonatePromptTemplateId",
+] as const;
 
 export function omitLocalOnlySettings(settings: ParsedSettings): ParsedSettings {
   const sanitized = { ...settings };
@@ -48,6 +55,17 @@ export function omitLocalOnlySettings(settings: ParsedSettings): ParsedSettings 
     delete sanitized[key];
   }
   return sanitized;
+}
+
+export function hasMissingSyncedSettings(settings: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
+  return expectedKeys.some((key) => !(key in settings));
+}
+
+export function mergeUndatedSyncedSettings(
+  localSettings: SyncedSettingsObject,
+  serverSettings: ParsedSettings,
+): SyncedSettingsObject {
+  return { ...localSettings, ...serverSettings } as SyncedSettingsObject;
 }
 
 function readLocalUpdatedAt(): number | null {
@@ -154,11 +172,8 @@ export function useSettingsSync() {
         const localFingerprint = serializeSettings(localSettings);
         const defaultFingerprint = serializeSettings(pickSyncedSettings(useUIStore.getInitialState()));
         const localCustomized = hasLocalPersistedUiState() && localFingerprint !== defaultFingerprint;
-        let localUpdatedAt = readLocalUpdatedAt();
-        if (!localUpdatedAt && localCustomized) {
-          localUpdatedAt = Date.now();
-          writeLocalUpdatedAt(localUpdatedAt);
-        }
+        const localUpdatedAt = readLocalUpdatedAt();
+        const hasTrustedLocalTimestamp = localUpdatedAt !== null;
 
         const data = await api.get<AppSettingsResponse>(SETTINGS_PATH);
         if (disposed) return;
@@ -167,6 +182,7 @@ export function useSettingsSync() {
             const parsed = parseServerSettingsValue(data.value);
             if (parsed.settings && typeof parsed.settings === "object") {
               const hadLocalOnlySettings = LOCAL_ONLY_SETTING_KEYS.some((key) => key in parsed.settings);
+              const hadMissingSyncedSettings = hasMissingSyncedSettings(parsed.settings, Object.keys(localSettings));
               parsed.settings = omitLocalOnlySettings(parsed.settings);
 
               // Migrate old flat gradient fields → per-scheme nested (v10 → v11).
@@ -185,53 +201,90 @@ export function useSettingsSync() {
                 delete parsed.settings.convoGradientFrom;
                 delete parsed.settings.convoGradientTo;
               }
-              parsed.settings.trackerPanelSizeProfile = normalizeTrackerPanelSizeProfile(
-                parsed.settings.trackerPanelSizeProfile,
-                parsed.settings.trackerPanelWidth,
-              );
-              delete parsed.settings.trackerPanelWidth;
-              parsed.settings.trackerPanelThoughtBubbleDisplay = normalizeTrackerThoughtBubbleDisplay(
-                parsed.settings.trackerPanelThoughtBubbleDisplay,
-              );
-              parsed.settings.trackerPanelDockedThoughtsAlwaysVisible =
-                parsed.settings.trackerPanelDockedThoughtsAlwaysVisible === true;
-              parsed.settings.trackerTemperatureUnit = normalizeTrackerTemperatureUnit(
-                parsed.settings.trackerTemperatureUnit,
-              );
-              parsed.settings.quoteFormat = normalizeQuoteFormat(parsed.settings.quoteFormat);
-              parsed.settings.imageStyleProfiles = normalizeImageStyleProfileSettings(
-                parsed.settings.imageStyleProfiles,
-              );
-              parsed.settings.scenePromptPreferences = normalizeScenePromptPreferences(
-                parsed.settings.scenePromptPreferences,
-              );
-              parsed.settings.conversationTimeZone = normalizeConversationTimeZone(
-                parsed.settings.conversationTimeZone,
-              );
+              if ("trackerPanelSizeProfile" in parsed.settings || "trackerPanelWidth" in parsed.settings) {
+                parsed.settings.trackerPanelSizeProfile = normalizeTrackerPanelSizeProfile(
+                  parsed.settings.trackerPanelSizeProfile,
+                  parsed.settings.trackerPanelWidth,
+                );
+                delete parsed.settings.trackerPanelWidth;
+              }
+              if ("trackerPanelThoughtBubbleDisplay" in parsed.settings) {
+                parsed.settings.trackerPanelThoughtBubbleDisplay = normalizeTrackerThoughtBubbleDisplay(
+                  parsed.settings.trackerPanelThoughtBubbleDisplay,
+                );
+              }
+              if ("trackerStatDisplayMode" in parsed.settings) {
+                parsed.settings.trackerStatDisplayMode = normalizeTrackerStatDisplayMode(
+                  parsed.settings.trackerStatDisplayMode,
+                );
+              }
+              if ("trackerPanelDockedThoughtsAlwaysVisible" in parsed.settings) {
+                parsed.settings.trackerPanelDockedThoughtsAlwaysVisible =
+                  parsed.settings.trackerPanelDockedThoughtsAlwaysVisible === true;
+              }
+              if ("trackerTemperatureUnit" in parsed.settings) {
+                parsed.settings.trackerTemperatureUnit = normalizeTrackerTemperatureUnit(
+                  parsed.settings.trackerTemperatureUnit,
+                );
+              }
+              if ("quoteFormat" in parsed.settings) {
+                parsed.settings.quoteFormat = normalizeQuoteFormat(parsed.settings.quoteFormat);
+              }
+              if ("imageStyleProfiles" in parsed.settings) {
+                parsed.settings.imageStyleProfiles = normalizeImageStyleProfileSettings(
+                  parsed.settings.imageStyleProfiles,
+                );
+              }
+              if ("scenePromptPreferences" in parsed.settings) {
+                parsed.settings.scenePromptPreferences = normalizeScenePromptPreferences(
+                  parsed.settings.scenePromptPreferences,
+                );
+              }
+              if ("conversationTimeZone" in parsed.settings) {
+                parsed.settings.conversationTimeZone = normalizeConversationTimeZone(
+                  parsed.settings.conversationTimeZone,
+                );
+              }
 
               const serverUpdatedAt = parsed.updatedAt;
               const localIsNewer =
-                localUpdatedAt !== null &&
+                hasTrustedLocalTimestamp &&
                 (serverUpdatedAt === null ? localCustomized : localUpdatedAt > serverUpdatedAt);
 
-              if (localIsNewer) {
+              if (!hasTrustedLocalTimestamp) {
+                // An undated browser cache has no trustworthy ordering signal.
+                // Keep its values only for keys absent from the server, then
+                // rewrite the merged complete profile with a real timestamp.
+                useUIStore.setState(mergeUndatedSyncedSettings(localSettings, parsed.settings));
+                lastPushed = serialize();
+                const rewriteUpdatedAt = Date.now();
+                try {
+                  await api.put(SETTINGS_PATH, {
+                    value: buildServerSettingsValue(pickSyncedSettings(useUIStore.getState()), rewriteUpdatedAt),
+                  });
+                  writeLocalUpdatedAt(rewriteUpdatedAt);
+                } catch {
+                  // Best-effort recovery. The in-memory merge still protects
+                  // server-present preferences for this session.
+                }
+              } else if (localIsNewer) {
                 lastPushed = "";
                 pushNow();
               } else {
                 useUIStore.setState(parsed.settings);
                 lastPushed = serialize();
                 if (serverUpdatedAt !== null) writeLocalUpdatedAt(serverUpdatedAt);
-                if (hadLocalOnlySettings) {
+                if (hadLocalOnlySettings || hadMissingSyncedSettings) {
                   try {
+                    const rewriteUpdatedAt = hadMissingSyncedSettings ? Date.now() : (serverUpdatedAt ?? Date.now());
                     await api.put(SETTINGS_PATH, {
-                      value: buildServerSettingsValue(
-                        pickSyncedSettings(useUIStore.getState()),
-                        serverUpdatedAt ?? Date.now(),
-                      ),
+                      value: buildServerSettingsValue(pickSyncedSettings(useUIStore.getState()), rewriteUpdatedAt),
                     });
+                    writeLocalUpdatedAt(rewriteUpdatedAt);
                   } catch {
-                    // Cleanup is best-effort; this browser still ignores
-                    // legacy local-only values from the server blob.
+                    // Rewriting legacy/incomplete blobs is best-effort. This
+                    // browser still ignores removed keys and retains local
+                    // values for newly synced preferences.
                   }
                 }
               }

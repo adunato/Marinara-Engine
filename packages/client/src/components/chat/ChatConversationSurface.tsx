@@ -72,11 +72,12 @@ type ConversationSurfaceProps = {
   onCloseSettings: () => void;
   onCloseGallery: () => void;
   onIllustrate?: () => void;
+  onIllustrateWithAgent?: (agentType: string) => void | Promise<void>;
   onGenerateSelfie?: (characterId?: string) => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onResetSpritePlacements: () => void;
-  onSpriteSideChange: (side: SpriteSide) => void;
+  onSpriteSideChange: (side: SpriteSide, characterId?: string) => void;
   onToggleSpriteArrange: () => void;
   onDeleteConfirm: () => void;
   onDeleteSwipe: () => void;
@@ -139,6 +140,7 @@ export function ChatConversationSurface({
   onCloseSettings,
   onCloseGallery,
   onIllustrate,
+  onIllustrateWithAgent,
   onGenerateSelfie,
   onWizardFinish,
   onClosePeekPrompt,
@@ -227,6 +229,7 @@ export function ChatConversationSurface({
         onCloseGallery={onCloseGallery}
         onOpenScheduleEditor={onOpenScheduleEditor}
         onIllustrate={onIllustrate}
+        onIllustrateWithAgent={onIllustrateWithAgent}
         onGenerateSelfie={onGenerateSelfie}
         selfieCharacters={chatCharIds
           .map((id) => {

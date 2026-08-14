@@ -4,6 +4,7 @@
 // ──────────────────────────────────────────────
 import { useEffect, useRef, useMemo, useState } from "react";
 import { advanceWeatherFrameClock } from "../../lib/weather-frame-clock";
+import { useReducedAmbientEffects } from "../../hooks/use-reduced-ambient-effects";
 import {
   createWeatherParticle,
   drawWeatherMoon,
@@ -25,6 +26,8 @@ interface WeatherEffectsProps {
   weather?: string | null;
   timeOfDay?: string | null;
   showCelestial?: boolean;
+  /** Freeze ambient rendering while local text generation needs the GPU. */
+  paused?: boolean;
 }
 
 
@@ -32,11 +35,21 @@ interface WeatherEffectsProps {
 // Main component
 // ═══════════════════════════════════════════════
 
-export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: WeatherEffectsProps) {
+export function WeatherEffects({ weather, timeOfDay, showCelestial = true, paused = false }: WeatherEffectsProps) {
+  const reduceAmbientEffects = useReducedAmbientEffects();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const particlesRef = useRef<WeatherParticle[]>([]);
   const frameRef = useRef<number>(0);
+  const workerRef = useRef<Worker | null>(null);
+  const pausedRef = useRef(paused);
+  const resumeFallbackRef = useRef<(() => void) | null>(null);
   const [workerFailed, setWorkerFailed] = useState(false);
+  pausedRef.current = paused;
+
+  useEffect(() => {
+    workerRef.current?.postMessage({ type: "visibility", hidden: document.hidden || paused });
+    resumeFallbackRef.current?.();
+  }, [paused]);
 
   const config = useMemo(() => {
     return resolveWeatherRenderConfig(weather, timeOfDay);
@@ -45,7 +58,8 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
   // Render when we have particles, celestial bodies, or time-based ambient effects
   const shouldDrawCelestial = showCelestial && config.celestial !== "none";
   const shouldRender =
-    config.count > 0 || config.addFireflies || config.addStars || shouldDrawCelestial || config.sunsetGlow;
+    !reduceAmbientEffects &&
+    (config.count > 0 || config.addFireflies || config.addStars || shouldDrawCelestial || config.sunsetGlow);
 
   useEffect(() => {
     if (!shouldRender) return;
@@ -67,6 +81,7 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
         if (!rect || rect.width <= 0 || rect.height <= 0) return;
 
         worker = new Worker(new URL("../../workers/weather-effects.worker.ts", import.meta.url), { type: "module" });
+        workerRef.current = worker;
         const failWorker = () => setWorkerFailed(true);
         worker.onerror = failWorker;
         worker.onmessage = (event: MessageEvent<{ type?: string }>) => {
@@ -112,7 +127,8 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
           });
           if (canvas.parentElement) resizeObserver.observe(canvas.parentElement);
 
-          visibilityHandler = () => worker?.postMessage({ type: "visibility", hidden: document.hidden });
+          visibilityHandler = () =>
+            worker?.postMessage({ type: "visibility", hidden: document.hidden || pausedRef.current });
           document.addEventListener("visibilitychange", visibilityHandler);
           visibilityHandler();
         };
@@ -124,6 +140,7 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
         if (readinessTimer !== null) window.clearTimeout(readinessTimer);
         resizeObserver?.disconnect();
         if (visibilityHandler) document.removeEventListener("visibilitychange", visibilityHandler);
+        if (workerRef.current === worker) workerRef.current = null;
         worker?.terminate();
       };
     }
@@ -170,14 +187,12 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
       }
     }
 
-    let paused = document.hidden;
-
     const tick = (timestamp: number) => {
       if (!running) return;
-      if (paused) {
+      if (document.hidden || pausedRef.current) {
         previousFrameTime = timestamp;
         accumulatedFrameTime = 0;
-        frameRef.current = requestAnimationFrame(tick);
+        frameRef.current = 0;
         return;
       }
 
@@ -276,16 +291,20 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
       frameRef.current = requestAnimationFrame(tick);
     };
 
-    const onVisibilityChange = () => {
-      paused = document.hidden;
+    const ensureFallbackRunning = () => {
+      if (!running || document.hidden || pausedRef.current || frameRef.current !== 0) return;
+      frameRef.current = requestAnimationFrame(tick);
     };
+    resumeFallbackRef.current = ensureFallbackRunning;
+    const onVisibilityChange = ensureFallbackRunning;
     document.addEventListener("visibilitychange", onVisibilityChange);
 
-    frameRef.current = requestAnimationFrame(tick);
+    ensureFallbackRunning();
 
     return () => {
       running = false;
-      cancelAnimationFrame(frameRef.current);
+      if (frameRef.current !== 0) cancelAnimationFrame(frameRef.current);
+      if (resumeFallbackRef.current === ensureFallbackRunning) resumeFallbackRef.current = null;
       window.removeEventListener("resize", resize);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };

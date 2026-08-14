@@ -18,14 +18,16 @@ export interface RuntimeAgentSectionTokens {
 
 const RUNTIME_AGENT_SECTION_TOKEN_PREFIX = "__MARINARA_RUNTIME_AGENT_SECTION__";
 
-export const REVIEWABLE_WRITER_AGENT_TYPES = new Set(
-  BUILT_IN_AGENTS.filter(
-    (agent) =>
-      agent.category === "writer" &&
-      agent.phase === "pre_generation" &&
-      !["director", "knowledge-retrieval", "knowledge-router"].includes(agent.id),
-  ).map((agent) => agent.id),
-);
+const NON_REVIEWABLE_WRITER_AGENT_TYPES = new Set(["director", "knowledge-retrieval", "knowledge-router"]);
+
+export function isReviewableWriterAgentType(agentType: string): boolean {
+  const agent = BUILT_IN_AGENTS.find((entry) => entry.id === agentType);
+  return (
+    agent?.category === "writer" &&
+    agent.phase === "pre_generation" &&
+    !NON_REVIEWABLE_WRITER_AGENT_TYPES.has(agent.id)
+  );
+}
 
 export function formatAgentInjections(injections: AgentInjection[], wrapFormat: string): string {
   if (injections.length === 1) {
@@ -167,19 +169,19 @@ export function splitRuntimeHandledAgentInjections(
   messages: Array<{ content: string }>,
   tokenMap: ReadonlyMap<RuntimeAgentSectionType, RuntimeAgentSectionTokens>,
   injections: AgentInjection[],
-): { fallbackInjections: AgentInjection[]; handledTypes: Set<string> } {
+  options: { omitUnmatched?: boolean } = {},
+): { fallbackInjections: AgentInjection[]; omittedInjections: AgentInjection[] } {
   const fallbackInjections: AgentInjection[] = [];
-  const handledTypes = new Set<string>();
+  const omittedInjections: AgentInjection[] = [];
   for (const injection of injections) {
     const tokens = tokenMap.get(injection.agentType);
     const handledByPresetSection = tokens !== undefined && replaceRuntimeAgentSection(messages, tokens, injection.text);
-    if (handledByPresetSection) {
-      handledTypes.add(injection.agentType);
-    } else {
-      fallbackInjections.push(injection);
+    if (!handledByPresetSection) {
+      if (options.omitUnmatched) omittedInjections.push(injection);
+      else fallbackInjections.push(injection);
     }
   }
-  return { fallbackInjections, handledTypes };
+  return { fallbackInjections, omittedInjections };
 }
 
 export const splitRuntimeHandledAgentInjectionsForTest = splitRuntimeHandledAgentInjections;

@@ -3,8 +3,9 @@
 # ──────────────────────────────────────────────
 
 # ── Stage 1: Build ──
-FROM node:24-slim AS builder
+FROM node:24-trixie-slim@sha256:0711b541c1c33a8a530ac4f0d391baa9a15b3d804695b1b24a47daa5fb60e74d AS builder
 ARG BUILD_COMMIT
+ARG BUILD_BRANCH
 WORKDIR /app
 
 # Copy workspace config first (layer cache for deps)
@@ -34,14 +35,12 @@ COPY packages/client/ packages/client/
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm build
 
-# Bake the git commit into build-meta.json so the app can display it.
+# Bake the git ref into build-meta.json because the runtime image has no .git directory.
 # __dirname in build-info.js resolves to packages/server/dist/config/
-RUN if [ -n "$BUILD_COMMIT" ]; then \
-      echo "{\"commit\":\"$BUILD_COMMIT\"}" > packages/server/dist/config/build-meta.json; \
-    fi
+RUN BUILD_COMMIT="$BUILD_COMMIT" BUILD_BRANCH="$BUILD_BRANCH" node -e 'const fs = require("node:fs"); const meta = {}; if (process.env.BUILD_COMMIT) meta.commit = process.env.BUILD_COMMIT; if (process.env.BUILD_BRANCH) meta.branch = process.env.BUILD_BRANCH; if (Object.keys(meta).length > 0) fs.writeFileSync("packages/server/dist/config/build-meta.json", JSON.stringify(meta));'
 
 # ── Stage 2: Production ──
-FROM node:24-slim AS production
+FROM node:24-trixie-slim@sha256:0711b541c1c33a8a530ac4f0d391baa9a15b3d804695b1b24a47daa5fb60e74d AS production
 WORKDIR /app
 
 # llama-server dynamically links these at runtime
@@ -49,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libssl3 \
       libgomp1 \
       libvulkan1 \
+      bubblewrap \
       python3 \
       python3-venv \
     && rm -rf /var/lib/apt/lists/*
@@ -77,8 +77,12 @@ COPY --from=builder /app/packages/server/dist packages/server/dist
 COPY --from=builder /app/packages/client/dist packages/client/dist
 COPY scripts/docker-entrypoint.mjs /usr/local/bin/marinara-docker-entrypoint.mjs
 COPY scripts/install-backgroundremover.mjs scripts/install-backgroundremover.mjs
+# The storage downgrade escape hatch (#4708) — docs/TROUBLESHOOTING.md tells
+# Docker users to run it in a one-off container, so it must ship in the image.
+COPY scripts/protect-launcher-data.mjs scripts/protect-launcher-data.mjs
 
 # User guides served by the in-app documentation viewer (/api/docs)
+COPY README.md README.md
 COPY docs/ docs/
 
 # Ensure /app/data exists for runtime use (file storage, uploads, generated assets)

@@ -6,18 +6,18 @@
 // The active chat's autonomous messaging is handled by ConversationView.
 
 import { useEffect, useRef } from "react";
-import type { Chat } from "@marinara-engine/shared";
-import type { AvatarCropValue } from "../lib/utils";
+import { normalizeAvatarCrop, type AvatarCrop, type Chat, type Message } from "@marinara-engine/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "../lib/api-client";
-import { toAutonomousPresenceStatus } from "../lib/user-status";
+import { api, ApiError } from "../lib/api-client";
+import { shouldSuppressAutonomousMessages, toAutonomousPresenceStatus } from "../lib/user-status";
 import { useChatStore } from "../stores/chat.store";
 import { useUIStore } from "../stores/ui.store";
 import { showLocalMessageNotification, showNativeMessageNotification } from "../lib/local-notifications";
 import { playConfiguredNotificationPing } from "../lib/notification-sound";
 import { chatKeys } from "./use-chats";
 import { characterKeys } from "./use-characters";
+import { upsertPersistedMessages } from "./use-generate";
 
 interface AutonomousCheckResult {
   shouldTrigger: boolean;
@@ -57,6 +57,47 @@ function parseMeta(chat: RawChat): Record<string, unknown> {
 }
 
 /**
+ * Fetch the ids of chats eligible for background autonomous messaging.
+ *
+ * Prefers the lightweight server-filtered endpoint (#4704). Falls back to the
+ * legacy full-list fetch with local filtering when the endpoint is missing or
+ * returns an unexpected shape (an older server routes the path to GET /:id),
+ * so a new client against an old server keeps working instead of going
+ * silently dead. A definitive 404 latches the fallback for the session so we
+ * don't pay a guaranteed-404 round-trip on every tick; transient errors keep
+ * retrying, and a page reload after a server upgrade resets the latch.
+ */
+let candidatesEndpointUnavailable = false;
+
+async function fetchAutonomousCandidates(): Promise<Array<{ id: string }>> {
+  if (!candidatesEndpointUnavailable) {
+    try {
+      const candidates = await api.get<Array<{ id: string }>>("/chats/autonomous-candidates");
+      if (Array.isArray(candidates) && candidates.every((entry) => entry && typeof entry.id === "string")) {
+        return candidates;
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        candidatesEndpointUnavailable = true;
+        console.debug("[background-autonomous] Server predates /chats/autonomous-candidates; using legacy chat-list polling");
+      }
+      // Fall through to the legacy path either way.
+    }
+  }
+  const allChats = await api.get<RawChat[]>("/chats");
+  return allChats.filter((chat) => {
+    if (chat.mode !== "conversation") return false;
+    try {
+      const meta = parseMeta(chat);
+      if (meta.internalAssistant === "professor-mari") return false;
+      return !!meta.autonomousMessages;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
  * Background polling for autonomous messages on inactive conversation chats.
  * Fetches the chat list on each tick so the effect doesn't depend on
  * external React state (which would reset the timer on every re-render).
@@ -84,37 +125,33 @@ export function useBackgroundAutonomousPolling() {
 
       const activeChatId = useChatStore.getState().activeChatId;
 
-      // Fetch the current chat list directly from the API each tick.
-      // This avoids the effect depending on useChats() data which would
-      // cause frequent timer restarts.
-      let allChats: RawChat[];
+      // Fetch only the autonomous-candidate chat ids (server-filtered, #4704) —
+      // the previous full /chats fetch materialized and serialized every chat
+      // (plus ran the DM-cleanup scans) every 30 seconds. Fetching directly
+      // rather than via useChats() also keeps the effect free of data deps
+      // that would restart the timer.
+      let candidateChats: Array<{ id: string }>;
       try {
-        allChats = await api.get<RawChat[]>("/chats");
+        candidateChats = await fetchAutonomousCandidates();
       } catch {
         schedulePoll();
         return;
       }
 
-      // Find conversation chats with autonomous messaging enabled, excluding active chat
-      const backgroundChats = allChats.filter((chat) => {
+      // Client-side exclusions the server can't know: the open chat and
+      // chats we're already generating for.
+      const backgroundChats = candidateChats.filter((chat) => {
         if (chat.id === activeChatId) return false;
         if (generatingForRef.current.has(chat.id)) return false;
-        if (chat.mode !== "conversation") return false;
-        try {
-          const meta = parseMeta(chat);
-          if (meta.internalAssistant === "professor-mari") return false;
-          return !!meta.autonomousMessages;
-        } catch {
-          return false;
-        }
+        return true;
       });
 
       const userStatus = useUIStore.getState().userStatus;
       const autonomousPresenceStatus = toAutonomousPresenceStatus(userStatus);
 
       // Don't trigger autonomous messages when user is DND
-      if (userStatus === "dnd" || backgroundChats.length === 0) {
-        if (userStatus === "dnd" && backgroundChats.length > 0) {
+      if (shouldSuppressAutonomousMessages(userStatus) || backgroundChats.length === 0) {
+        if (shouldSuppressAutonomousMessages(userStatus) && backgroundChats.length > 0) {
           await Promise.allSettled(
             backgroundChats.map((chat) =>
               api
@@ -149,8 +186,20 @@ export function useBackgroundAutonomousPolling() {
             generatingForRef.current.add(chat.id);
             const doGenerate = async () => {
               let receivedTokens = false;
+              const savedMessages = new Map<string, Message>();
               let shouldClearAutonomousFlag = true;
               try {
+                const currentUserStatus = useUIStore.getState().userStatus;
+                if (shouldSuppressAutonomousMessages(currentUserStatus)) {
+                  await api
+                    .post("/conversation/activity/presence", {
+                      chatId: chat.id,
+                      userStatus: toAutonomousPresenceStatus(currentUserStatus),
+                    })
+                    .catch(() => {});
+                  return;
+                }
+
                 // Re-check guard — a generation may have started for this chat
                 // during the busy delay.
                 if (useChatStore.getState().abortControllers.has(chat.id)) {
@@ -169,7 +218,7 @@ export function useBackgroundAutonomousPolling() {
                 useChatStore.getState().setAbortController(chat.id, abortController);
                 // Use streamEvents to drain the SSE — tokens aren't needed for background chats
                 try {
-                  for await (const _event of api.streamEvents(
+                  for await (const event of api.streamEvents(
                     "/generate",
                     {
                       chatId: chat.id,
@@ -182,9 +231,37 @@ export function useBackgroundAutonomousPolling() {
                     },
                     abortController.signal,
                   )) {
-                    const eventType = (_event as { type: string }).type;
+                    const streamEvent = event as { type: string; data?: unknown };
+                    const eventType = streamEvent.type;
                     if (eventType === "token") receivedTokens = true;
-                    else if (eventType === "generation_discarded") receivedTokens = false;
+                    else if (eventType === "message_saved") {
+                      const savedMessage = streamEvent.data as Message;
+                      if (savedMessage?.id && savedMessage.chatId === chat.id) {
+                        savedMessages.set(savedMessage.id, savedMessage);
+                        if (savedMessage.role === "assistant") receivedTokens = true;
+                      }
+                    } else if (eventType === "text_rewrite") {
+                      const rewrite = streamEvent.data as { editedText?: unknown };
+                      if (typeof rewrite.editedText === "string") {
+                        const latestAssistant = Array.from(savedMessages.values())
+                          .reverse()
+                          .find((message) => message.role === "assistant");
+                        if (latestAssistant) {
+                          const nextExtra = {
+                            ...((latestAssistant.extra ?? {}) as unknown as Record<string, unknown>),
+                          };
+                          delete nextExtra.postProcessingPending;
+                          savedMessages.set(latestAssistant.id, {
+                            ...latestAssistant,
+                            content: rewrite.editedText,
+                            extra: nextExtra as unknown as Message["extra"],
+                          });
+                        }
+                      }
+                    } else if (eventType === "generation_discarded") {
+                      receivedTokens = false;
+                      savedMessages.clear();
+                    }
                   }
                 } finally {
                   if (useChatStore.getState().abortControllers.get(chat.id) === abortController) {
@@ -195,12 +272,11 @@ export function useBackgroundAutonomousPolling() {
                 // Only notify if the generation actually produced a message
                 if (!receivedTokens) return;
 
-                // Reset + refetch messages so the cache has fresh data when the
-                // user navigates to this chat. Without this, TanStack Query
-                // would show stale cached data (missing the new message) until
-                // the background refetch completes — making it look like the
-                // message isn't there even though it was saved.
-                qc.resetQueries({ queryKey: chatKeys.messages(chat.id) });
+                // Paint the exact persisted SSE row before notifying. A reset
+                // leaves a window where the sound and unread badge arrive while
+                // the cached chat still has no message.
+                upsertPersistedMessages(qc, chat.id, Array.from(savedMessages.values()));
+                void qc.invalidateQueries({ queryKey: chatKeys.messages(chat.id) });
                 qc.invalidateQueries({ queryKey: characterKeys.list() });
                 void api
                   .post<Chat>(`/chats/${chat.id}/autonomous-unread`, { characterId })
@@ -215,14 +291,14 @@ export function useBackgroundAutonomousPolling() {
                 // Resolve character name for the notification
                 let charName = "Someone";
                 let charAvatar: string | null = null;
-                let charAvatarCrop: AvatarCropValue | null = null;
+                let charAvatarCrop: AvatarCrop | null = null;
                 try {
                   // Find the triggering character's name
                   const charRow = await api.get<RawCharacter>(`/characters/${characterId}`);
                   if (charRow) {
                     const data = typeof charRow.data === "string" ? JSON.parse(charRow.data) : charRow.data;
                     if (data?.name) charName = data.name;
-                    charAvatarCrop = data?.extensions?.avatarCrop ?? null;
+                    charAvatarCrop = normalizeAvatarCrop(data?.extensions?.avatarCrop);
                     charAvatar = charRow.avatarPath ?? null;
                   }
                 } catch {

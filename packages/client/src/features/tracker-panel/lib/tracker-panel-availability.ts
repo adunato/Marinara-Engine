@@ -14,6 +14,6 @@ export function isTrackerPanelAvailableForChat(
   mode: ChatMode | null | undefined,
   metadata: ChatAgentMetadata | null | undefined,
 ): boolean {
-  if (mode === "roleplay" || mode === "visual_novel") return true;
+  if (mode === "roleplay" || mode === "game") return true;
   return mode === "conversation" && isCustomTrackerActiveForChat(metadata);
 }

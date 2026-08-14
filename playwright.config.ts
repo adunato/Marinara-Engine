@@ -1,4 +1,17 @@
 import { defineConfig, devices } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+import { forceColorValueEnablesColor } from "./e2e/playwright-color-environment.js";
+
+const callerDisabledColors = process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== "";
+const shouldPreventPlaywrightColorOverride =
+  callerDisabledColors && !forceColorValueEnablesColor(process.env.FORCE_COLOR);
+if (shouldPreventPlaywrightColorOverride) {
+  const noColorPreload = `--require=${JSON.stringify(fileURLToPath(new URL("./e2e/respect-no-color.cjs", import.meta.url)))}`;
+  const nodeOptions = process.env.NODE_OPTIONS?.trim();
+  if (!nodeOptions?.includes(noColorPreload)) {
+    process.env.NODE_OPTIONS = nodeOptions ? `${nodeOptions} ${noColorPreload}` : noColorPreload;
+  }
+}
 
 function parsePort(name: string, fallback: number) {
   const raw = process.env[name]?.trim();
@@ -9,7 +22,10 @@ function parsePort(name: string, fallback: number) {
 
 const clientPort = parsePort("PLAYWRIGHT_CLIENT_PORT", 5178);
 const serverPort = parsePort("PLAYWRIGHT_SERVER_PORT", 7971);
+const mobileClientPort = parsePort("PLAYWRIGHT_MOBILE_CLIENT_PORT", 5179);
+const mobileServerPort = parsePort("PLAYWRIGHT_MOBILE_SERVER_PORT", 7972);
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${clientPort}`;
+const mobileBaseURL = process.env.PLAYWRIGHT_MOBILE_BASE_URL ?? `http://127.0.0.1:${mobileClientPort}`;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -31,35 +47,38 @@ export default defineConfig({
     process.env.PLAYWRIGHT_SKIP_WEBSERVER === "true"
       ? undefined
       : {
-          command: "pnpm dev",
+          command: "node ./e2e/start-servers.mjs",
           url: baseURL,
-          reuseExistingServer: !process.env.CI,
+          reuseExistingServer: false,
           timeout: 180_000,
           env: {
             AUTO_CREATE_DEFAULT_CONNECTION: "false",
             AUTO_OPEN_BROWSER: "false",
-            DATA_DIR: "../../.tmp/playwright-data",
             DEV_PRESERVE_SHARED_DIST: "true",
             DEV_SERVER_READY_TIMEOUT_MS: "180000",
             LOG_DISABLE_REQUEST_LOGGING: "true",
             LOG_LEVEL: "silent",
             MARINARA_E2E_DISABLE_RATE_LIMIT: "true",
-            MARINARA_ENV_FILE: "../../.tmp/playwright-data/.env",
-            PORT: String(serverPort),
+            PLAYWRIGHT_CLIENT_PORT: String(clientPort),
+            PLAYWRIGHT_MOBILE_CLIENT_PORT: String(mobileClientPort),
+            PLAYWRIGHT_MOBILE_SERVER_PORT: String(mobileServerPort),
+            PLAYWRIGHT_SERVER_PORT: String(serverPort),
             SKIP_PWA: "true",
+            // Playwright defaults web servers to FORCE_COLOR=1. Honor an
+            // inherited NO_COLOR preference instead of creating a conflict.
+            ...(shouldPreventPlaywrightColorOverride ? { FORCE_COLOR: "0" } : {}),
             VITE_HOST: "127.0.0.1",
             VITE_OPEN_BROWSER: "false",
-            VITE_PORT: String(clientPort),
           },
         },
   projects: [
     {
       name: "desktop-chromium",
-      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
+      use: { ...devices["Desktop Chrome"], baseURL, viewport: { width: 1440, height: 900 } },
     },
     {
       name: "mobile-chromium",
-      use: { ...devices["Pixel 7"], viewport: { width: 390, height: 844 } },
+      use: { ...devices["Pixel 7"], baseURL: mobileBaseURL, viewport: { width: 390, height: 844 } },
     },
   ],
 });

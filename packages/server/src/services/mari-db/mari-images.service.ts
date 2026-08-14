@@ -11,7 +11,7 @@ import { DATA_DIR } from "../../utils/data-dir.js";
 import { newId, now } from "../../utils/id-generator.js";
 import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../../utils/security.js";
 import { generateImage, type ImageGenResult } from "../image/image-generation.js";
-import { resolveConnectionImageDefaults } from "../image/image-generation-defaults.js";
+import { resolveConnectionImageDefaults, resolveConnectionImageQuality } from "../image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../image/image-generation-settings.js";
 import { compileImagePrompt } from "../image/image-prompt-compiler.js";
 import { resolveImageConnectionFallback } from "../generation/media-connection-fallback.js";
@@ -23,6 +23,18 @@ import { createCharacterGalleryStorage } from "../storage/character-gallery.stor
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { buildAssetManifest } from "../game/asset-manifest.service.js";
 import type { MariDbCommandResult } from "@marinara-engine/shared";
+import { deleteChatGalleryImageEverywhere } from "../image/chat-gallery-cascade-deletion.js";
+import {
+  collectPersonaAvatarPaths,
+  mutateAvatarReferencesAndCleanup,
+  removeUnattachedAvatarFile,
+  withAvatarFileLifecycleLock,
+} from "../image/avatar-file-lifecycle.js";
+import {
+  decodeSafePathSegment,
+  resolveOwnedGalleryPath,
+  unlinkGalleryFileIfUnreferenced,
+} from "../image/gallery-file-lifecycle.js";
 
 type Json = Record<string, unknown>;
 
@@ -416,16 +428,16 @@ async function savePreviewAsset(args: {
   return asset;
 }
 
-async function readBackgroundMeta(): Promise<Record<string, { originalName?: string; tags: string[] }>> {
+async function readBackgroundMeta(): Promise<Record<string, { tags: string[] }>> {
   if (!existsSync(BACKGROUND_META_PATH)) return {};
   try {
-    return JSON.parse(await readFile(BACKGROUND_META_PATH, "utf8")) as Record<string, { originalName?: string; tags: string[] }>;
+    return JSON.parse(await readFile(BACKGROUND_META_PATH, "utf8")) as Record<string, { tags: string[] }>;
   } catch {
     return {};
   }
 }
 
-async function writeBackgroundMeta(meta: Record<string, { originalName?: string; tags: string[] }>) {
+async function writeBackgroundMeta(meta: Record<string, { tags: string[] }>) {
   await mkdir(BACKGROUND_DIR, { recursive: true });
   await writeFile(BACKGROUND_META_PATH, JSON.stringify(meta, null, 2), "utf8");
 }
@@ -462,41 +474,69 @@ function safeUrlPath(value: string) {
   }
 }
 
-function decodePathSegment(value: string | undefined) {
-  return decodeURIComponent(value ?? "");
-}
-
 function appImagePathFromUrl(value: string): { path: string; label: string; url: string } | null {
   const pathname = safeUrlPath(value);
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] !== "api") return null;
 
   if (parts[1] === "gallery" && parts[2] === "file" && parts[3] && parts[4]) {
-    const chatId = decodePathSegment(parts[3]);
-    const filename = decodePathSegment(parts[4]);
-    return { path: assertInsideDir(GALLERY_DIR, join(GALLERY_DIR, chatId, filename)), label: `gallery:${chatId}/${filename}`, url: pathname };
+    const chatId = decodeSafePathSegment(parts[3]);
+    const filename = decodeSafePathSegment(parts[4]);
+    if (!chatId || !filename) return null;
+    return {
+      path: resolveOwnedGalleryPath(GALLERY_DIR, join(GALLERY_DIR, chatId), filename),
+      label: `gallery:${chatId}/${filename}`,
+      url: pathname,
+    };
+  }
+  if (
+    parts[1] === "characters" &&
+    parts[2] === "personas" &&
+    parts[3] &&
+    parts[4] === "gallery" &&
+    parts[5] === "file" &&
+    parts[6]
+  ) {
+    const personaId = decodeSafePathSegment(parts[3]);
+    const filename = decodeSafePathSegment(parts[6]);
+    if (!personaId || !filename) return null;
+    const root = join(GALLERY_DIR, "personas", personaId);
+    return {
+      path: resolveOwnedGalleryPath(GALLERY_DIR, root, filename),
+      label: `persona-gallery:${personaId}/${filename}`,
+      url: pathname,
+    };
   }
   if (parts[1] === "characters" && parts[3] === "gallery" && parts[4] === "file" && parts[2] && parts[5]) {
-    const characterId = decodePathSegment(parts[2]);
-    const filename = decodePathSegment(parts[5]);
+    const characterId = decodeSafePathSegment(parts[2]);
+    const filename = decodeSafePathSegment(parts[5]);
+    if (!characterId || !filename) return null;
     const root = join(GALLERY_DIR, "characters", characterId);
-    return { path: assertInsideDir(root, join(root, filename)), label: `character-gallery:${characterId}/${filename}`, url: pathname };
+    return {
+      path: resolveOwnedGalleryPath(GALLERY_DIR, root, filename),
+      label: `character-gallery:${characterId}/${filename}`,
+      url: pathname,
+    };
   }
   if (parts[1] === "avatars" && parts[2] === "file" && parts[3]) {
-    const filename = decodePathSegment(parts[3]);
+    const filename = decodeSafePathSegment(parts[3]);
+    if (!filename) return null;
     return { path: assertInsideDir(AVATAR_DIR, join(AVATAR_DIR, filename)), label: `avatar:${filename}`, url: pathname };
   }
   if (parts[1] === "lorebooks" && parts[2] === "images" && parts[3] === "file" && parts[4]) {
-    const filename = decodePathSegment(parts[4]);
+    const filename = decodeSafePathSegment(parts[4]);
+    if (!filename) return null;
     return { path: assertInsideDir(LOREBOOK_IMAGE_DIR, join(LOREBOOK_IMAGE_DIR, filename)), label: `lorebook-image:${filename}`, url: pathname };
   }
   if (parts[1] === "backgrounds" && parts[2] === "file" && parts[3]) {
-    const filename = decodePathSegment(parts[3]);
+    const filename = decodeSafePathSegment(parts[3]);
+    if (!filename) return null;
     return { path: assertInsideDir(BACKGROUND_DIR, join(BACKGROUND_DIR, filename)), label: `background:${filename}`, url: pathname };
   }
   if (parts[1] === "sprites" && parts[2] && parts[3] === "file" && parts[4]) {
-    const ownerId = decodePathSegment(parts[2]);
-    const filename = decodePathSegment(parts[4]);
+    const ownerId = decodeSafePathSegment(parts[2]);
+    const filename = decodeSafePathSegment(parts[4]);
+    if (!ownerId || !filename) return null;
     const root = join(SPRITES_DIR, ownerId);
     return { path: assertInsideDir(root, join(root, filename)), label: `sprite:${ownerId}/${filename}`, url: pathname };
   }
@@ -686,6 +726,7 @@ export class MariImagesService {
       imageEndpointId: connection.imageEndpointId || undefined,
       comfyWorkflow: connection.comfyuiWorkflow || undefined,
       imageDefaults,
+      quality: resolveConnectionImageQuality(connection),
       fallback,
     });
 
@@ -967,15 +1008,29 @@ export class MariImagesService {
 
   private async assignPersonaAvatar(source: ResolvedImage, personaId: string) {
     const store = createCharactersStorage(this.db);
-    const existing = await store.getPersona(personaId);
-    if (!existing) throw new Error(`Persona not found: ${personaId}`);
     await mkdir(AVATAR_DIR, { recursive: true });
     const filename = `persona-${personaId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${source.ext}`;
     const path = assertInsideDir(AVATAR_DIR, join(AVATAR_DIR, filename));
-    await writeFile(path, source.buffer);
     const avatarPath = `/api/avatars/file/${filename}`;
-    const updated = await store.updatePersona(personaId, { avatarPath });
-    return { avatarPath, row: updated };
+
+    const row = await withAvatarFileLifecycleLock(async () => {
+      const existing = await store.getPersona(personaId);
+      if (!existing) throw new Error(`Persona not found: ${personaId}`);
+      try {
+        await writeFile(path, source.buffer);
+        const updated = await store.updatePersona(
+          personaId,
+          { avatarPath, avatarCrop: "" },
+          { _avatarLifecycleLocked: true },
+        );
+        if (!updated) throw new Error(`Persona not found: ${personaId}`);
+        return updated;
+      } catch (error) {
+        await removeUnattachedAvatarFile({ filePath: path });
+        throw error;
+      }
+    });
+    return { avatarPath, row };
   }
 
   private async assignLorebookImage(source: ResolvedImage, lorebookId: string) {
@@ -1012,7 +1067,7 @@ export class MariImagesService {
     const path = assertInsideDir(BACKGROUND_DIR, join(BACKGROUND_DIR, filename));
     await writeFile(path, source.buffer);
     const meta = await readBackgroundMeta();
-    meta[filename] = { originalName: target.name ?? source.label, tags: target.tags };
+    meta[filename] = { tags: target.tags };
     await writeBackgroundMeta(meta);
     buildAssetManifest();
     return { filename, url: `/api/backgrounds/file/${encodeURIComponent(filename)}`, tags: target.tags };
@@ -1098,13 +1153,8 @@ export class MariImagesService {
         if (deleteFile && existing.avatarPath) await this.deleteKnownAppImage(existing.avatarPath);
         return store.updateAvatar(target.characterId, null);
       }
-      case "persona-avatar": {
-        const store = createCharactersStorage(this.db);
-        const existing = await store.getPersona(target.personaId);
-        if (!existing) throw new Error(`Persona not found: ${target.personaId}`);
-        if (deleteFile && existing.avatarPath) await this.deleteKnownAppImage(existing.avatarPath);
-        return store.updatePersona(target.personaId, { avatarPath: null });
-      }
+      case "persona-avatar":
+        return this.clearPersonaAvatar(target.personaId, deleteFile);
       case "lorebook-image": {
         const store = createLorebooksStorage(this.db);
         const existing = await store.getById(target.lorebookId);
@@ -1124,6 +1174,25 @@ export class MariImagesService {
         if (!target.imageId) throw new Error("character-gallery delete requires --image <id>");
         return this.deleteCharacterGallery(target.characterId, target.imageId);
     }
+  }
+
+  private async clearPersonaAvatar(personaId: string, deleteFile: boolean) {
+    const store = createCharactersStorage(this.db);
+    const { result, filesDeleted } = await mutateAvatarReferencesAndCleanup({
+      db: this.db,
+      collectAvatarPaths: () => collectPersonaAvatarPaths(this.db, [personaId]),
+      mutateReferences: async () => {
+        const updated = await store.updatePersona(
+          personaId,
+          { avatarPath: null, avatarCrop: "" },
+          { _avatarLifecycleLocked: true },
+        );
+        if (!updated) throw new Error(`Persona not found: ${personaId}`);
+        return updated;
+      },
+      cleanupFiles: deleteFile,
+    });
+    return { ...result, filesDeleted };
   }
 
   private async deleteKnownAppImage(value: string) {
@@ -1169,19 +1238,16 @@ export class MariImagesService {
     const store = createGalleryStorage(this.db);
     const image = await store.getById(imageId);
     if (!image || image.chatId !== chatId) throw new Error(`Chat gallery image not found: ${imageId}`);
-    const path = assertInsideDir(GALLERY_DIR, join(GALLERY_DIR, image.filePath));
-    if (existsSync(path)) await unlink(path);
-    await store.remove(imageId);
-    return { deleted: image };
+    const cleanup = await deleteChatGalleryImageEverywhere({ db: this.db, image });
+    return { deleted: image, cleanup };
   }
 
   private async deleteCharacterGallery(characterId: string, imageId: string) {
     const store = createCharacterGalleryStorage(this.db);
     const image = await store.getById(imageId);
     if (!image || image.characterId !== characterId) throw new Error(`Character gallery image not found: ${imageId}`);
-    const path = assertInsideDir(GALLERY_DIR, join(GALLERY_DIR, image.filePath));
-    if (existsSync(path)) await unlink(path);
     await store.remove(imageId);
+    await unlinkGalleryFileIfUnreferenced({ db: this.db, filePath: image.filePath });
     return { deleted: image };
   }
 

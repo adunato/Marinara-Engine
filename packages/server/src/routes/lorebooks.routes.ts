@@ -15,7 +15,6 @@ import {
   createLorebookFolderSchema,
   updateLorebookFolderSchema,
   LOCAL_SIDECAR_CONNECTION_ID,
-  stripMacroComments,
   canReparentFolder,
   type CreateLorebookEntryInput,
   type LorebookEntryTimingState,
@@ -39,6 +38,7 @@ import {
   resolvePromptIdleDuration,
 } from "../services/prompt/index.js";
 import { parseGameStateRow, resolveVisibleGameStateAnchor } from "./generate/generate-route-utils.js";
+import { cardPromptText } from "../services/prompt/card-text.js";
 import {
   syncCharacterBookFromLorebook,
   clearCharacterEmbeddedLorebook,
@@ -69,10 +69,6 @@ function toSafeExportName(name: string, fallback: string) {
     .replace(/\s+/g, " ")
     .trim();
   return sanitized || fallback;
-}
-
-function cardPromptText(value: unknown): string {
-  return typeof value === "string" ? stripMacroComments(value).trim() : "";
 }
 
 type ExportFormat = "native" | "compatible";
@@ -131,6 +127,7 @@ function stSelectiveLogic(value: unknown): number {
 
 function stPosition(value: unknown): number {
   const position = Number(value ?? 0);
+  if (position === 7) return 7;
   if (position === 2) return 4;
   if (position === 1) return 1;
   return 0;
@@ -303,6 +300,7 @@ function buildCompatibleLorebookExport(lb: Record<string, unknown>, entries: Arr
         selectiveLogic: stSelectiveLogic(entry.selectiveLogic),
         order: Number(entry.order ?? 100),
         position: stPosition(entry.position),
+        outletName: String(entry.outletName ?? ""),
         depth: Number(entry.depth ?? 4),
         probability: entry.probability ?? null,
         scanDepth: entry.scanDepth ?? null,
@@ -367,6 +365,7 @@ function buildTransferredEntryInput(
     generationTriggerFilters: entry.generationTriggerFilters,
     additionalMatchingSources: entry.additionalMatchingSources,
     position: entry.position,
+    outletName: entry.outletName,
     depth: entry.depth,
     order,
     role: entry.role,
@@ -1159,11 +1158,18 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     if (!allEntries.length) return { vectorized: 0, total: 0, skipped: 0 };
     const lorebook = (await storage.getById(req.params.id)) as Record<string, unknown> | null;
     if (lorebook?.excludeFromVectorization === true) {
-      return { vectorized: 0, total: allEntries.length, skipped: allEntries.length };
+      return reply.status(409).send({
+        error: "Enable Lorebook vectors and save the Lorebook before vectorizing its entries.",
+      });
     }
     const vectorizableEntries = allEntries.filter(
       (entry) => !(entry as Record<string, unknown>).excludeFromVectorization,
     );
+    if (vectorizableEntries.length === 0) {
+      return reply.status(409).send({
+        error: "Every entry is excluded from vectorization. Include at least one entry before vectorizing.",
+      });
+    }
     const entries = body.onlyMissing
       ? vectorizableEntries.filter((entry) => {
           const embedding = (entry as Record<string, unknown>).embedding;
@@ -1190,6 +1196,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
             resolvedConn.claudeFastMode === "true",
             resolvedConn.treatAsLocalEndpoint === "true",
             resolvedConn.defaultParameters,
+            resolvedConn.id,
           );
         })();
     const embeddingModel = useLocalSidecar ? LOCAL_SIDECAR_MODEL : body.model;

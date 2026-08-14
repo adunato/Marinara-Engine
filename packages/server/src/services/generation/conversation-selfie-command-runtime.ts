@@ -5,12 +5,18 @@ import {
   suppressesReferencePromptLine,
   resolveIllustratorCharacterReferences,
 } from "../image/illustrator-references.js";
-import { compileImagePrompt } from "../image/image-prompt-compiler.js";
+import {
+  compileImagePrompt,
+  formatImageStylePromptGuidance,
+  resolveImageStyleGuidanceText,
+} from "../image/image-prompt-compiler.js";
 import { persistGeneratedImageToEntityGalleries } from "../image/generated-image-entity-gallery.js";
-import { resolveConnectionImageDefaults } from "../image/image-generation-defaults.js";
+import { resolveConnectionImageDefaults, resolveConnectionImageQuality } from "../image/image-generation-defaults.js";
 import { generateImage, saveImageToDisk } from "../image/image-generation.js";
 import { loadImageGenerationUserSettings } from "../image/image-generation-settings.js";
+import { generateIllustratorImageVariants } from "../image/illustrator-image-variants.js";
 import { resolveConversationSelfieSystemPrompt } from "../conversation/selfie-prompt.js";
+import { appendImagePromptInstructions } from "./image-prompt-instructions.js";
 import type { CharacterCommand, SelfieCommand } from "../conversation/character-commands.js";
 import { createGalleryStorage } from "../storage/gallery.storage.js";
 import { createCharacterGalleryStorage } from "../storage/character-gallery.storage.js";
@@ -53,6 +59,25 @@ type PersonaReference = {
   appearance?: string | null;
 } | null;
 
+const GROUP_SELFIE_REQUEST_RE =
+  /\bgroup\s+(?:selfie|photo|picture)\b|\b(?:selfie|photo|picture)\b[^\n.!?]{0,80}\b(?:together|everyone|everybody|all (?:of us|participants|characters))\b/iu;
+
+export function resolveConversationSelfieRequestedNames(args: {
+  speakerName: string;
+  chatCharacters: ReadonlyArray<{ name: string }>;
+  generationGuide?: string | null;
+  commandContext?: string | null;
+  imagePrompt?: string | null;
+}): string[] {
+  const requestText = [args.generationGuide, args.commandContext, args.imagePrompt]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join("\n");
+  const names = GROUP_SELFIE_REQUEST_RE.test(requestText)
+    ? args.chatCharacters.map((character) => character.name)
+    : [args.speakerName];
+  return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+}
+
 export async function handleConversationSelfieCommand(args: {
   command: CharacterCommand;
   characterId: string | null;
@@ -64,6 +89,7 @@ export async function handleConversationSelfieCommand(args: {
   persona: PersonaReference;
   promptConnection: IllustratorPromptConnection;
   promptConnectionId: string;
+  generationGuide?: string | null;
   debugMode?: boolean;
   serviceTier: "flex" | "priority" | null;
   db: DB;
@@ -124,6 +150,9 @@ async function generateSelfie(
   const appearance =
     (typeof extensions?.appearance === "string" && extensions.appearance) ||
     (typeof args.charData?.description === "string" ? args.charData.description : "");
+  const personality = typeof args.charData?.personality === "string" ? args.charData.personality : "";
+  const characterImageInstructions =
+    typeof extensions?.conversationImageInstructions === "string" ? extensions.conversationImageInstructions : "";
 
   const selfieTags = Array.isArray(args.chatMeta.selfieTags) ? (args.chatMeta.selfieTags as string[]) : [];
   const selfiePositivePrompt =
@@ -148,29 +177,48 @@ async function generateSelfie(
     resolveBaseUrl,
     onFallback: reportFallback,
   });
-  const selfieSystemPrompt = await resolveConversationSelfieSystemPrompt({
+  const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
+  const imageSettings = await loadImageGenerationUserSettings(args.db);
+  const configuredStyleProfileId =
+    readNestedString(args.chatMeta.gameSetupConfig, "imageStyleProfileId") ??
+    (typeof args.chatMeta.imageStyleProfileId === "string" ? args.chatMeta.imageStyleProfileId : null);
+  const styleProfileId =
+    (typeof configuredStyleProfileId === "string" && configuredStyleProfileId.trim()
+      ? configuredStyleProfileId.trim()
+      : undefined) ??
+    imageDefaults?.styleProfileId ??
+    imageSettings.styleProfiles.defaultProfileId;
+  // Style is fed to the prompt-building model as guidance so it shapes the
+  // generated prompt, instead of being pasted verbatim into the image prompt.
+  const styleGuidance = resolveImageStyleGuidanceText(imageSettings.styleProfiles, styleProfileId);
+  const baseSelfieSystemPrompt = await resolveConversationSelfieSystemPrompt({
     promptOverridesStorage: createPromptOverridesStorage(args.db),
     chatPromptTemplate: selfiePromptTemplate,
     appearance,
     charName: args.charName,
+    characterImageInstructions,
+    personality,
   });
+  const selfieSystemPrompt = styleGuidance
+    ? `${baseSelfieSystemPrompt}${formatImageStylePromptGuidance(styleGuidance)}`
+    : baseSelfieSystemPrompt;
+  const selfieSystemPromptWithImageInstructions = appendImagePromptInstructions(
+    selfieSystemPrompt,
+    imgConnFull.imagePromptInstructions,
+  );
   const userPrompt = args.command.context
     ? `Context for the selfie: ${args.command.context}`
     : `Generate a casual selfie of ${args.charName} based on the current conversation context.`;
   const debugOverrideEnabled = args.debugMode === true || isDebugAgentsEnabled();
   if (debugOverrideEnabled || logger.isLevelEnabled("debug")) {
-    logDebugOverride(
-      debugOverrideEnabled,
-      "[debug/commands/selfie] prompt-builder system:\n%s",
-      selfieSystemPrompt,
-    );
+    logDebugOverride(debugOverrideEnabled, "[debug/commands/selfie] prompt-builder system:\n%s", selfieSystemPrompt);
     logDebugOverride(debugOverrideEnabled, "[debug/commands/selfie] prompt-builder user:\n%s", userPrompt);
   }
   const promptResult = await promptRuntime.provider.chatComplete(
     [
       {
         role: "system",
-        content: selfieSystemPrompt,
+        content: selfieSystemPromptWithImageInstructions,
       },
       {
         role: "user",
@@ -203,23 +251,35 @@ async function generateSelfie(
   );
   let finalSelfiePrompt = selfiePositivePrompt ? `${imagePrompt}, ${selfiePositivePrompt}` : imagePrompt;
   let selfieReferenceImages: string[] | undefined;
+  let selfieResolvedCharacterIds = args.characterId ? [args.characterId] : [];
   const selfieUseAvatarReferences = args.chatMeta.selfieUseAvatarReferences === true;
   const selfieIncludeCharacterAppearance = args.chatMeta.selfieIncludeCharacterAppearance === true;
   if (selfieUseAvatarReferences || selfieIncludeCharacterAppearance) {
+    const requestedNames = resolveConversationSelfieRequestedNames({
+      speakerName: args.charName,
+      chatCharacters: args.charInfo,
+      generationGuide: args.generationGuide,
+      commandContext: args.command.context,
+      imagePrompt,
+    });
     const referenceResolution = await resolveIllustratorCharacterReferences({
       charactersStore: args.chars,
+      characterGallery: createCharacterGalleryStorage(args.db),
       chatCharacters: args.charInfo.map((character) => ({
         id: character.id,
         name: character.name,
         avatarPath: character.avatarPath,
         appearance: character.appearance,
       })),
-      persona: args.persona,
-      requestedNames: [args.charName],
+      persona: null,
+      requestedNames,
       promptText: [args.charName, args.command.context ?? "", imagePrompt].join("\n"),
       fallbackToChatCharacters: false,
-      maxReferences: 1,
+      maxReferences: 6,
     });
+    selfieResolvedCharacterIds = Array.from(
+      new Set([...selfieResolvedCharacterIds, ...referenceResolution.characterIds]),
+    );
     if (selfieIncludeCharacterAppearance && referenceResolution.appearanceBlock) {
       finalSelfiePrompt += `\n\n${referenceResolution.appearanceBlock}`;
       logger.debug("[selfie] Added character appearance notes for: %s", referenceResolution.appearanceNames.join(", "));
@@ -238,15 +298,6 @@ async function generateSelfie(
   const imgBaseUrl = imgConnFull.baseUrl || "https://image.pollinations.ai";
   const imgApiKey = imgConnFull.apiKey || "";
   const imgSource = imgConnFull.imageGenerationSource || imgModel;
-  const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
-  const imageSettings = await loadImageGenerationUserSettings(args.db);
-  const configuredStyleProfileId =
-    readNestedString(args.chatMeta.gameSetupConfig, "imageStyleProfileId") ??
-    (typeof args.chatMeta.imageStyleProfileId === "string" ? args.chatMeta.imageStyleProfileId : null);
-  const styleProfileId =
-    typeof configuredStyleProfileId === "string" && configuredStyleProfileId.trim()
-      ? configuredStyleProfileId.trim()
-      : imageSettings.styleProfiles.defaultProfileId;
 
   const selfieRes = typeof args.chatMeta.selfieResolution === "string" ? args.chatMeta.selfieResolution : "";
   const [selfieW, selfieH] = selfieRes.split("x").map(Number) as [number, number];
@@ -258,77 +309,89 @@ async function generateSelfie(
     styleProfiles: imageSettings.styleProfiles,
     styleProfileId,
     imageDefaults,
+    omitProfileStyleText: true,
+    omitProfileSubjectTags: true,
   });
-  const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, serviceHint || imgSource, {
-    prompt: compiledSelfiePrompt.prompt,
-    negativePrompt: compiledSelfiePrompt.negativePrompt || undefined,
-    model: imgModel,
-    width: selfieW || imageSettings.selfie.width,
-    height: selfieH || imageSettings.selfie.height,
-    imageEndpointId: imgConnFull.imageEndpointId || undefined,
-    comfyWorkflow: imgConnFull.comfyuiWorkflow || undefined,
-    imageDefaults,
-    referenceImages: selfieReferenceImages,
-    fallback: imageFallback,
-    onFallback: reportFallback,
-  });
-
-  const filePath = saveImageToDisk(args.chatId, imageResult.base64, imageResult.ext);
-  const effectiveImageProvider =
-    imageResult.effectiveConnection?.provider ?? imgConnFull.provider ?? "image_generation";
-  const effectiveImageModel = imageResult.effectiveConnection?.model || imgModel || "unknown";
-  const galleryEntry = await galleryStore.create({
-    chatId: args.chatId,
-    filePath,
-    prompt: compiledSelfiePrompt.prompt,
-    provider: effectiveImageProvider,
-    model: effectiveImageModel,
-    width: selfieW || imageSettings.selfie.width,
-    height: selfieH || imageSettings.selfie.height,
-  });
-  await persistGeneratedImageToEntityGalleries({
-    sourceFilePath: filePath,
-    characterIds: args.characterId ? [args.characterId] : [],
-    characterGallery: createCharacterGalleryStorage(args.db),
-    personaGallery: createPersonaGalleryStorage(args.db),
-    prompt: compiledSelfiePrompt.prompt,
-    provider: effectiveImageProvider,
-    model: effectiveImageModel,
-    width: selfieW || imageSettings.selfie.width,
-    height: selfieH || imageSettings.selfie.height,
+  const imageResults = await generateIllustratorImageVariants({
+    count: args.chatMeta.illustratorImagesPerGeneration,
+    generate: () =>
+      generateImage(imgModel, imgBaseUrl, imgApiKey, serviceHint || imgSource, {
+        prompt: compiledSelfiePrompt.prompt,
+        negativePrompt: compiledSelfiePrompt.negativePrompt || undefined,
+        model: imgModel,
+        width: selfieW || imageSettings.selfie.width,
+        height: selfieH || imageSettings.selfie.height,
+        imageEndpointId: imgConnFull.imageEndpointId || undefined,
+        comfyWorkflow: imgConnFull.comfyuiWorkflow || undefined,
+        imageDefaults,
+        quality: resolveConnectionImageQuality(imgConnFull),
+        referenceImages: selfieReferenceImages,
+        fallback: imageFallback,
+        onFallback: reportFallback,
+      }),
+    onVariantError: (error, index) =>
+      logger.warn(error, "[commands] Selfie variant %d failed for %s", index + 1, args.charName),
   });
 
-  const filename = filePath.split("/").pop()!;
-  const imageUrl = `/api/gallery/file/${args.chatId}/${encodeURIComponent(filename)}`;
-  if (args.messageId) {
-    const generationSwipeIndex = Number.isInteger(args.swipeIndex) ? args.swipeIndex! : 0;
-    const attachment = {
-      type: "image",
-      url: imageUrl,
-      filename: `selfie_${args.charName.toLowerCase().replace(/\s+/g, "_")}.${imageResult.ext}`,
+  for (const [variantIndex, imageResult] of imageResults.entries()) {
+    const filePath = saveImageToDisk(args.chatId, imageResult.base64, imageResult.ext, { shared: true });
+    const effectiveImageProvider =
+      imageResult.effectiveConnection?.provider ?? imgConnFull.provider ?? "image_generation";
+    const effectiveImageModel = imageResult.effectiveConnection?.model || imgModel || "unknown";
+    const galleryEntry = await galleryStore.create({
+      chatId: args.chatId,
+      filePath,
       prompt: compiledSelfiePrompt.prompt,
-      galleryId: galleryEntry?.id,
-    };
-    await args.chats.appendSwipeAttachment(args.messageId, generationSwipeIndex, attachment);
+      provider: effectiveImageProvider,
+      model: effectiveImageModel,
+      width: selfieW || imageSettings.selfie.width,
+      height: selfieH || imageSettings.selfie.height,
+    });
+    await persistGeneratedImageToEntityGalleries({
+      sourceFilePath: filePath,
+      sourceChatImageId: galleryEntry?.id,
+      characterIds: selfieResolvedCharacterIds,
+      characterGallery: createCharacterGalleryStorage(args.db),
+      personaGallery: createPersonaGalleryStorage(args.db),
+      prompt: compiledSelfiePrompt.prompt,
+      provider: effectiveImageProvider,
+      model: effectiveImageModel,
+      width: selfieW || imageSettings.selfie.width,
+      height: selfieH || imageSettings.selfie.height,
+    });
 
-    const currentMsgRow = await args.chats.getMessage(args.messageId);
-    if (currentMsgRow && (currentMsgRow.activeSwipeIndex ?? 0) === generationSwipeIndex) {
-      await args.chats.appendMessageAttachment(args.messageId, attachment);
+    const filename = filePath.split("/").pop()!;
+    const imageUrl = `/api/gallery/file/${args.chatId}/${encodeURIComponent(filename)}`;
+    if (args.messageId) {
+      const generationSwipeIndex = Number.isInteger(args.swipeIndex) ? args.swipeIndex! : 0;
+      const attachment = {
+        type: "image",
+        url: imageUrl,
+        filename: `selfie_${args.charName.toLowerCase().replace(/\s+/g, "_")}_${variantIndex + 1}.${imageResult.ext}`,
+        prompt: compiledSelfiePrompt.prompt,
+        galleryId: galleryEntry?.id,
+      };
+      await args.chats.appendSwipeAttachment(args.messageId, generationSwipeIndex, attachment);
+
+      const currentMsgRow = await args.chats.getMessage(args.messageId);
+      if (currentMsgRow && (currentMsgRow.activeSwipeIndex ?? 0) === generationSwipeIndex) {
+        await args.chats.appendMessageAttachment(args.messageId, attachment);
+      }
     }
-  }
 
-  args.sendEvent({
-    type: "selfie",
-    data: {
-      characterId: args.characterId,
-      characterName: args.charName,
-      messageId: args.messageId,
-      imageUrl,
-      prompt: compiledSelfiePrompt.prompt,
-      galleryId: galleryEntry?.id,
-    },
-  });
-  logger.debug("[commands] Selfie generated for %s", args.charName);
+    args.sendEvent({
+      type: "selfie",
+      data: {
+        characterId: args.characterId,
+        characterName: args.charName,
+        messageId: args.messageId,
+        imageUrl,
+        prompt: compiledSelfiePrompt.prompt,
+        galleryId: galleryEntry?.id,
+      },
+    });
+    logger.debug("[commands] Selfie generated for %s", args.charName);
+  }
 }
 
 function readNestedString(value: unknown, key: string): string | null {

@@ -4,7 +4,7 @@
 // Chunks conversation messages into groups, embeds them, and provides
 // semantic recall: given a query, find the most relevant past
 // conversation fragments from specified chats.
-import { eq, desc, and, gt, inArray, isNotNull, isNull } from "../db/file-query.js";
+import { eq, desc, and, gt, inArray, isNotNull, isNull, lt } from "../db/file-query.js";
 import type { DB } from "../db/connection.js";
 import { messages, memoryChunks } from "../db/schema/index.js";
 import { newId, now } from "../utils/id-generator.js";
@@ -24,6 +24,24 @@ const SIMILARITY_THRESHOLD = 0.25;
 
 /** Maximum number of recalled memories per generation. */
 const DEFAULT_TOP_K = 8;
+const memoryMutationTails = new Map<string, Promise<void>>();
+
+async function serializeMemoryMutation<T>(chatId: string, task: () => Promise<T>): Promise<T> {
+  const previous = memoryMutationTails.get(chatId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  memoryMutationTails.set(chatId, current);
+
+  await previous.catch(() => undefined);
+  try {
+    return await task();
+  } finally {
+    release();
+    if (memoryMutationTails.get(chatId) === current) memoryMutationTails.delete(chatId);
+  }
+}
 
 // ── Cosine similarity ──
 
@@ -64,6 +82,8 @@ export interface RecalledMemory {
 }
 
 export interface MemoryRecallEmbeddingSource {
+  /** Stable identity for the provider/model vector space, when known. */
+  spaceId?: string;
   label: string;
   embed(texts: string[], signal?: AbortSignal): Promise<number[][] | null>;
 }
@@ -72,6 +92,12 @@ export interface MemoryRecallEmbeddingOptions {
   embeddingSource?: MemoryRecallEmbeddingSource | null;
   localEmbedder?: (texts: string[], signal?: AbortSignal) => Promise<number[][] | null>;
   signal?: AbortSignal;
+}
+
+export interface RecallMemoriesOptions extends MemoryRecallEmbeddingOptions {
+  topK?: number;
+  /** Exclude chunks covering this message timestamp or anything newer. */
+  excludeFromMessageAt?: string | null;
 }
 
 export interface ChunkAndEmbedMessagesOptions extends MemoryRecallEmbeddingOptions {
@@ -244,7 +270,7 @@ async function pruneNativeMemoryChunksAfter(
  * Chunk any un-chunked messages for a given chat and embed them.
  * Should be called after generation completes (fire-and-forget).
  */
-export async function chunkAndEmbedMessages(
+async function chunkAndEmbedMessagesUnlocked(
   db: DB,
   chatId: string,
   /** Map from role → display name. Used to format "Name: content" lines. */
@@ -377,6 +403,15 @@ export async function chunkAndEmbedMessages(
   logger.debug("[memory-recall] Created %d chunk(s) for chat %s", embeddableChunks.length, chatId);
 }
 
+export async function chunkAndEmbedMessages(
+  db: DB,
+  chatId: string,
+  nameMap: { userName: string; characterNames: Record<string, string> },
+  options: ChunkAndEmbedMessagesOptions = {},
+): Promise<void> {
+  return serializeMemoryMutation(chatId, () => chunkAndEmbedMessagesUnlocked(db, chatId, nameMap, options));
+}
+
 /**
  * Rebuild all memory-recall chunks for a chat from the current message log.
  */
@@ -388,14 +423,16 @@ export async function rebuildMemoryChunks(
 ): Promise<number> {
   if (isLite) return 0;
 
-  await db.delete(memoryChunks).where(and(eq(memoryChunks.chatId, chatId), isNull(memoryChunks.sourceChatId)));
-  await chunkAndEmbedMessages(db, chatId, nameMap, options);
+  return serializeMemoryMutation(chatId, async () => {
+    await db.delete(memoryChunks).where(and(eq(memoryChunks.chatId, chatId), isNull(memoryChunks.sourceChatId)));
+    await chunkAndEmbedMessagesUnlocked(db, chatId, nameMap, options);
 
-  const rebuilt = await db
-    .select({ id: memoryChunks.id })
-    .from(memoryChunks)
-    .where(and(eq(memoryChunks.chatId, chatId), isNull(memoryChunks.sourceChatId)));
-  return rebuilt.length;
+    const rebuilt = await db
+      .select({ id: memoryChunks.id })
+      .from(memoryChunks)
+      .where(and(eq(memoryChunks.chatId, chatId), isNull(memoryChunks.sourceChatId)));
+    return rebuilt.length;
+  });
 }
 
 /**
@@ -406,7 +443,7 @@ export async function recallMemories(
   db: DB,
   query: string,
   chatIds: string[],
-  options: MemoryRecallEmbeddingOptions & { topK?: number } = {},
+  options: RecallMemoriesOptions = {},
 ): Promise<RecalledMemory[]> {
   if (isLite) return [];
   if (chatIds.length === 0) return [];
@@ -418,6 +455,7 @@ export async function recallMemories(
   if (queryEmbedding.length === 0) return [];
 
   const matchingChatIds = chatIds.slice(0, 50);
+  const excludeFromMessageAt = options.excludeFromMessageAt?.trim() || null;
 
   // Load every embedded chunk in scope before scoring. Applying a recency cap
   // here would exclude old-but-relevant memories before cosine similarity can
@@ -432,7 +470,13 @@ export async function recallMemories(
       lastMessageAt: memoryChunks.lastMessageAt,
     })
     .from(memoryChunks)
-    .where(and(inArray(memoryChunks.chatId, matchingChatIds), isNotNull(memoryChunks.embedding)));
+    .where(
+      and(
+        inArray(memoryChunks.chatId, matchingChatIds),
+        isNotNull(memoryChunks.embedding),
+        excludeFromMessageAt ? lt(memoryChunks.lastMessageAt, excludeFromMessageAt) : undefined,
+      ),
+    );
 
   if (chunks.length === 0) return [];
 

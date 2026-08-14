@@ -117,6 +117,7 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
     temperature: z.number().min(0).max(2).optional(),
     topP: z.number().gt(0).max(1).optional(),
     topK: z.number().int().min(0).max(500).optional(),
+    maxParallelJobs: z.number().int().min(1).max(16).optional(),
     gpuLayers: z.number().int().min(-1).max(1024).optional(),
     enableNativeToolCalls: z.boolean().optional(),
     embeddingPooling: z.enum(SIDECAR_EMBEDDING_POOLING_TYPES).optional(),
@@ -489,6 +490,8 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
         availableBackgrounds: bgTags,
         availableSfx: sfxTags,
         useSpotifyMusic: !!body.context.useSpotifyMusic,
+        generateSoundEffects: !!body.context.generateSoundEffects,
+        generateMusic: !!body.context.generateMusic,
         availableSpotifyTracks: body.context.availableSpotifyTracks ?? [],
         canGenerateBackgrounds: !!body.context.canGenerateBackgrounds,
         validWidgetIds: new Set(
@@ -513,7 +516,7 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
 
       if (body.context.useSpotifyMusic) {
         result.music = null;
-      } else {
+      } else if (!body.context.generateMusic) {
         const scoredMusic = scoreMusic({
           state: (body.context.currentState as GameActiveState) ?? "exploration",
           weather: result.weather ?? body.context.currentWeather ?? null,

@@ -5,6 +5,7 @@ import type { Chat, DailyMemory, DailyMemoryDay } from "@marinara-engine/shared"
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { Modal } from "../ui/Modal";
 import { useDailyMemories, useGenerateDailyMemoryDay, useSaveDailyMemoryDay } from "../../hooks/use-daily-memories";
+import { useTranslation as useUiTranslation } from "react-i18next";
 
 type DraftMemory = Pick<DailyMemory, "id" | "memory" | "importance">;
 
@@ -15,6 +16,7 @@ function cloneDays(days: DailyMemoryDay[]): Record<string, DraftMemory[]> {
 }
 
 export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; open: boolean; onClose: () => void }) {
+  const { t: localizeUi } = useUiTranslation();
   const query = useDailyMemories(chat.id, open);
   const saveDay = useSaveDailyMemoryDay(chat.id);
   const generateDay = useGenerateDailyMemoryDay(chat.id);
@@ -54,9 +56,9 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
     if (
       dirtyDates.length > 0 &&
       !(await showConfirmDialog({
-        title: "Discard daily memory edits?",
-        message: "Your unsaved memory changes will be lost.",
-        confirmLabel: "Discard",
+        title: localizeUi("ui.chat.dailymemorieseditormodal.discardDailyMemoryEdits"),
+        message: localizeUi("ui.chat.dailymemorieseditormodal.yourUnsavedMemoryChangesWillBeLost"),
+        confirmLabel: localizeUi("ui.agents.agenteditor.discard"),
       }))
     ) {
       return;
@@ -73,43 +75,59 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
         });
       }
       await query.refetch();
-      toast.success("Daily memories saved");
+      toast.success(localizeUi("ui.chat.dailymemorieseditormodal.dailyMemoriesSaved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save daily memories");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localizeUi("ui.chat.dailymemorieseditormodal.couldNotSaveDailyMemories"),
+      );
     }
   };
 
   const generate = async (date: string, formed: boolean) => {
     if (formed) {
       const confirmed = await showConfirmDialog({
-        title: `Regenerate memories for ${date}?`,
-        message: "This replaces every memory currently saved for the day.",
-        confirmLabel: "Regenerate",
+        title: localizeUi("ui.chat.dailymemorieseditormodal.regenerateMemoriesForValue1", { value1: date }),
+        message: localizeUi("ui.chat.dailymemorieseditormodal.thisReplacesEveryMemoryCurrentlySavedForTheDay"),
+        confirmLabel: localizeUi("ui.chat.chatmessage.regenerate"),
       });
       if (!confirmed) return;
     }
     try {
       await generateDay.mutateAsync(date);
       await query.refetch();
-      toast.success(formed ? "Daily memories regenerated" : "Daily memories generated");
+      toast.success(
+        formed
+          ? localizeUi("ui.chat.dailymemorieseditormodal.dailyMemoriesRegenerated")
+          : localizeUi("ui.chat.dailymemorieseditormodal.dailyMemoriesGenerated"),
+      );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not generate daily memories");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localizeUi("ui.chat.dailymemorieseditormodal.couldNotGenerateDailyMemories"),
+      );
     }
   };
 
   const deleteDay = async (date: string) => {
     const confirmed = await showConfirmDialog({
-      title: `Delete all memories for ${date}?`,
-      message: "The day remains available and can be generated again later.",
-      confirmLabel: "Delete all",
+      title: localizeUi("ui.chat.dailymemorieseditormodal.deleteAllMemoriesForValue1", { value1: date }),
+      message: localizeUi("ui.chat.dailymemorieseditormodal.theDayRemainsAvailableAndCanBeGeneratedAgain"),
+      confirmLabel: localizeUi("ui.chat.dailymemorieseditormodal.deleteAll"),
     });
     if (!confirmed) return;
     try {
       await saveDay.mutateAsync({ date, memories: [] });
       await query.refetch();
-      toast.success("Day memories deleted");
+      toast.success(localizeUi("ui.chat.dailymemorieseditormodal.dayMemoriesDeleted"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not delete day memories");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localizeUi("ui.chat.dailymemorieseditormodal.couldNotDeleteDayMemories"),
+      );
     }
   };
 
@@ -117,7 +135,7 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
     <Modal
       open={open}
       onClose={() => void close()}
-      title="Daily Memories"
+      title={localizeUi("ui.chat.chatsettingsdrawer.dailyMemories")}
       width="max-w-5xl"
       contentRef={scrollSurfaceRef}
       contentTestId="daily-memories-editor-scroll"
@@ -125,16 +143,22 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
     >
       <div data-testid="daily-memories-editor">
         <div className="border-b border-[var(--border)] px-5 py-3 text-xs text-[var(--muted-foreground)]">
-          Review memories by completed Conversation day. Importance ranges from 1 (low) to 5 (very important).
+          {localizeUi("ui.chat.dailymemorieseditormodal.reviewMemoriesByCompletedConversationDayImportanceRangesFrom")}
         </div>
         <div className="space-y-2 p-4">
           {query.isLoading && (
-            <p className="py-8 text-center text-sm text-[var(--muted-foreground)]">Loading memories…</p>
+            <p className="py-8 text-center text-sm text-[var(--muted-foreground)]">
+              {localizeUi("ui.chat.dailymemorieseditormodal.loadingMemories")}
+            </p>
           )}
-          {query.isError && <p className="py-8 text-center text-sm text-red-400">Could not load daily memories.</p>}
+          {query.isError && (
+            <p className="py-8 text-center text-sm text-red-400">
+              {localizeUi("ui.chat.dailymemorieseditormodal.couldNotLoadDailyMemories")}
+            </p>
+          )}
           {query.data?.days.length === 0 && (
             <p className="py-8 text-center text-sm text-[var(--muted-foreground)]">
-              No completed Conversation days yet.
+              {localizeUi("ui.chat.dailymemorieseditormodal.noCompletedConversationDaysYet")}
             </p>
           )}
           {query.data?.days.map((day) => {
@@ -159,8 +183,14 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
                   <span className="font-medium">{day.date}</span>
                   <span className="ml-auto text-xs text-[var(--muted-foreground)]">
                     {day.formed
-                      ? `${memories.length} ${memories.length === 1 ? "memory" : "memories"}`
-                      : "Not generated"}
+                      ? localizeUi("ui.chat.scheduletimeline.value1Value2", {
+                          value1: memories.length,
+                          value2:
+                            memories.length === 1
+                              ? localizeUi("ui.chat.dailymemorieseditormodal.memory")
+                              : localizeUi("ui.chat.dailymemorieseditormodal.memories"),
+                        })
+                      : localizeUi("ui.characters.characterclipcard.notGenerated")}
                   </span>
                 </button>
                 {isOpen && (
@@ -171,7 +201,10 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
                         className="grid items-end gap-3 rounded-xl bg-[var(--background)]/60 p-3 sm:grid-cols-[minmax(0,1fr)_5rem_2.25rem]"
                       >
                         <textarea
-                          aria-label={`Memory ${index + 1} for ${day.date}`}
+                          aria-label={localizeUi("ui.chat.dailymemorieseditormodal.memoryValue1ForValue2", {
+                            value1: index + 1,
+                            value2: day.date,
+                          })}
                           value={memory.memory}
                           rows={2}
                           onWheel={scrollDialogFromMemory}
@@ -186,9 +219,12 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
                           className="min-h-[4.25rem] resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 text-sm leading-relaxed ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                         />
                         <label className="space-y-1 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-                          <span className="block">Importance</span>
+                          <span className="block">{localizeUi("ui.chat.dailymemorieseditormodal.importance")}</span>
                           <select
-                            aria-label={`Importance for memory ${index + 1} on ${day.date}`}
+                            aria-label={localizeUi(
+                              "ui.chat.dailymemorieseditormodal.importanceForMemoryValue1OnValue2",
+                              { value1: index + 1, value2: day.date },
+                            )}
                             value={memory.importance}
                             onChange={(event) =>
                               setDrafts((current) => ({
@@ -213,7 +249,10 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
                         </label>
                         <button
                           type="button"
-                          aria-label={`Delete memory ${index + 1} from ${day.date}`}
+                          aria-label={localizeUi("ui.chat.dailymemorieseditormodal.deleteMemoryValue1FromValue2", {
+                            value1: index + 1,
+                            value2: day.date,
+                          })}
                           onClick={() =>
                             setDrafts((current) => ({ ...current, [day.date]: memories.filter((_, i) => i !== index) }))
                           }
@@ -234,7 +273,7 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
                         }
                         className="flex items-center gap-1 rounded-lg px-3 py-2 text-xs hover:bg-[var(--accent)]"
                       >
-                        <Plus size={14} /> Add memory
+                        <Plus size={14} /> {localizeUi("ui.chat.dailymemorieseditormodal.addMemory")}
                       </button>
                       <button
                         type="button"
@@ -250,11 +289,11 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
                         )}
                         {generatingDate === day.date
                           ? day.formed
-                            ? "Regenerating..."
-                            : "Generating..."
+                            ? localizeUi("ui.chat.dailymemorieseditormodal.regenerating")
+                            : localizeUi("ui.chat.summarypopover.generating")
                           : day.formed
-                            ? "Regenerate day"
-                            : "Generate memories"}
+                            ? localizeUi("ui.chat.dailymemorieseditormodal.regenerateDay")
+                            : localizeUi("ui.chat.dailymemorieseditormodal.generateMemories")}
                       </button>
                       {day.formed && (
                         <button
@@ -263,7 +302,7 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
                           onClick={() => void deleteDay(day.date)}
                           className="ml-auto flex items-center gap-1 rounded-lg px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-50"
                         >
-                          <Trash2 size={14} /> Delete all
+                          <Trash2 size={14} /> {localizeUi("ui.chat.dailymemorieseditormodal.deleteAll")}
                         </button>
                       )}
                     </div>
@@ -279,7 +318,7 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
             onClick={() => void close()}
             className="rounded-lg px-4 py-2 text-sm hover:bg-[var(--accent)]"
           >
-            Close
+            {localizeUi("ui.chat.maripromptpreviewmodal.close")}
           </button>
           <button
             type="button"
@@ -287,7 +326,7 @@ export function DailyMemoriesEditorModal({ chat, open, onClose }: { chat: Chat; 
             onClick={() => void save()}
             className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
           >
-            <Save size={15} /> Save changes
+            <Save size={15} /> {localizeUi("ui.noodle.stageprofileform.saveChanges")}
           </button>
         </div>
       </div>

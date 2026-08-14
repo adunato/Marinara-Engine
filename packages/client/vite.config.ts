@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
+import { execFileSync } from "node:child_process";
 import path from "path";
 
 const ENABLE_SOURCE_MAPS = process.env.VITE_ENABLE_SOURCEMAP === "true";
@@ -9,15 +10,47 @@ const PWA_DISABLED = Boolean(process.env.SKIP_PWA);
 const DEV_SERVER_PORT = Number.parseInt(process.env.VITE_PORT ?? "5173", 10);
 const DEV_SERVER_HOST = process.env.VITE_HOST?.trim() || undefined;
 const DEV_SERVER_OPEN = process.env.VITE_OPEN_BROWSER !== "false" && process.env.AUTO_OPEN_BROWSER !== "false";
+const BUILD_COMMIT_LENGTH = 12;
+
+function normalizeBuildCommit(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, BUILD_COMMIT_LENGTH) : null;
+}
+
+function resolveBuildCommit() {
+  const environmentCommit =
+    normalizeBuildCommit(process.env.MARINARA_GIT_COMMIT) ??
+    normalizeBuildCommit(process.env.GITHUB_SHA) ??
+    normalizeBuildCommit(process.env.BUILD_COMMIT);
+  if (environmentCommit) return environmentCommit;
+
+  try {
+    return normalizeBuildCommit(
+      execFileSync("git", ["rev-parse", `--short=${BUILD_COMMIT_LENGTH}`, "HEAD"], {
+        cwd: path.resolve(__dirname, "../.."),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }),
+    );
+  } catch {
+    return null;
+  }
+}
+
+const BUILD_COMMIT = resolveBuildCommit();
 
 function manualChunks(id: string) {
   if (!id.includes("node_modules")) return undefined;
 
+  // Keep dynamically selected Lucide glyphs in small alphabetical chunks
+  // instead of pulling the complete icon catalog into one eager vendor file.
+  const lucideIcon = id.match(/lucide-react\/dist\/esm\/icons\/([^/]+)\.js$/u);
+  if (lucideIcon) return `vendor-icons-${lucideIcon[1]?.[0] ?? "misc"}`;
+  if (id.includes("lucide-react")) return "vendor-icons";
   if (id.includes("react") || id.includes("scheduler")) return "vendor-react";
   if (id.includes("@tanstack")) return "vendor-tanstack";
   if (id.includes("framer-motion")) return "vendor-motion";
   if (id.includes("zustand")) return "vendor-state";
-  if (id.includes("lucide-react")) return "vendor-icons";
   if (id.includes("dompurify") || id.includes("sonner")) return "vendor-ui";
 
   return "vendor-misc";
@@ -81,8 +114,17 @@ function pwaStub(): Plugin {
 }
 
 export default defineConfig({
+  define: {
+    __MARINARA_BUILD_COMMIT__: JSON.stringify(BUILD_COMMIT),
+  },
   plugins: [
-    react(),
+    react({
+      babel: {
+        // Keep Babel from auto-compacting large components and printing a noisy
+        // 500 kB deoptimisation warning during local development and UI tests.
+        generatorOpts: process.env.NODE_ENV === "production" ? undefined : { compact: false },
+      },
+    }),
     tailwindcss(),
     bundleBudget(),
     !PWA_DISABLED
@@ -93,7 +135,7 @@ export default defineConfig({
           manifest: false, // We use the static manifest.json in public/
           workbox: {
             // Intentionally exclude html so index.html is not precached and does not interfere with the PWA stale-version/update flow.
-            globPatterns: ["**/*.{js,css,png,svg,ico,woff2}"],
+            globPatterns: ["**/*.{js,css,json,png,svg,ico,woff2}"],
             navigateFallback: null,
             // Keep the offline shell lean. Large decorative sprites and splash art are fetched on demand.
             globIgnores: ["**/sprites/**", "logo.png", "logo-splash.gif"],

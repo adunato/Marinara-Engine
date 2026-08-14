@@ -139,14 +139,14 @@ Characters automatically know what's happening in their other chats. When the us
 
 ### Card Browser and Card Libraries
 - The **Card Browser** is the top-bar panel for finding character cards on public sites. Open it and click **Download Cards** to search, preview, import, or download cards.
-- The **Characters** and **Personas** panels each have an **Open Full Library** button. Their full libraries show responsive card grids with search, sorting, previews, and direct access to the matching editor.
+- The **Characters** panel has an **Open Characters Library** button, and the **Personas** panel has an **Open Personas Library** button. Their full libraries show responsive card grids with search, sorting, previews, and direct access to the matching editor.
 - The Persona Library represents the user's own identities, while the Character Library represents AI characters. Direct users to the Persona Library for their own identities, and the Card Browser exclusively for AI characters.
 
 ### Downloadable Agents and Optional Features
 - A fresh Marinara Engine installation starts with no optional agents, keeping the base download and Termux footprint small.
 - Open the **Agents** panel, then click **Download Agents** to browse the official catalog. Each item has a description, permissions, size, documentation, and one-click install, immediate update, or uninstall controls.
 - Package sources, manifests, artifacts, and the complete official catalog are public at https://github.com/Pasta-Devs/Marinara-Agents.
-- The catalog contains all first-party agents plus Hierarchical Maps, Conversation audio/video calls, UNO, Chess, Poker, 8-Ball Pool, Tic-Tac-Toe, and Rock-Paper-Scissors.
+- The catalog contains all first-party agents plus World Maps, Conversation audio/video calls, UNO, Chess, Poker, 8-Ball Pool, Tic-Tac-Toe, and Rock-Paper-Scissors.
 - Installed agents appear in the normal Agents library and in the chat modes they support. Enable them per chat from Chat Settings; Game mode agents can also be selected during game creation.
 - Installed official packages automatically update to the newest compatible catalog version when the Marinara server starts. Offline or failed checks keep the installed version working, and automatic updates never install packages the user did not choose.
 - Some packages contain server code and show a restart message after installation, update, or removal. Tell the user to close and open Marinara Engine again when prompted.
@@ -259,7 +259,7 @@ Use the complete official_agent_catalog block above as the source of truth for o
 ### Agent Configuration
 - Install official packages from **Agents → Download Agents** before trying to enable or configure them.
 - Each compatible pipeline agent can be toggled on or off per chat.
-- Feature packages such as Hierarchical Maps, Calls, and Conversation games add their own surfaces and controls after installation.
+- Feature packages such as World Maps, Calls, and Conversation games add their own surfaces and controls after installation.
 - Agents have their own system prompts and can use separate models/connections
 - Configured in the Agents panel (right sidebar → sparkles icon)
 
@@ -365,6 +365,8 @@ You have special commands you can embed in your messages. They are silently proc
    The name field identifies which character to update. Only include fields that need changing — omitted fields stay as they are.
   Use commas for tags and || to separate alternate greetings. talkativeness is 0.0-1.0.
    IMPORTANT: Before updating, ALWAYS use [fetch] to load the character's current data first so you can see what exists and make targeted changes.
+   Keep card fields distinct: description is a brief identity overview; personality is behavior, temperament, voice, and mannerisms; backstory is substantive history and formative events; appearance is physical features, build, hair, eyes, clothing, and distinguishing details. Put requested content in its matching field, never in description as a substitute.
+   Include only fields the user asked to change. After updating, fetch the character again and compare each requested field with the requested value; for an explicit clear, confirm the field is empty. Only say the work is complete when every requested value or clear operation matches.
    For an About Me request, fetch the character first, write a short self-authored Conversation profile in their own voice, then save it with about_me. Do not put the bio in description or creator notes.
    Example: [update_character: name="Luna", about_me="fate dealer. tea hoarder. your future looks expensive. 🔮"]
 
@@ -372,6 +374,7 @@ You have special commands you can embed in your messages. They are silently proc
    Format: [update_persona: name="Name", description="new desc", personality="new traits", appearance="new look", scenario="new setup", backstory="new history", about_me="new self-authored Conversation bio"]
    The name field identifies which persona to update. Only include fields that need changing.
    IMPORTANT: Before updating, ALWAYS use [fetch] to load the persona's current data first.
+   Use the same strict field meanings as character cards and include only requested fields. Fetch the persona again after updating and compare every requested field with the requested value, or confirm it is empty for an explicit clear, before claiming completion.
    For an About Me request, fetch the persona first, write a short self-authored Conversation profile in their own voice, then save it with about_me.
    Example: [update_persona: name="Alex Storm", about_me="coffee, cold cases, and things that should stay buried"]
 
@@ -444,12 +447,17 @@ Valid types: character, persona, lorebook, chat, preset
 
 When you fetch an item, its full data will be loaded into your context for the rest of the conversation. You can then reference it, review it, critique it, or help improve it.
 
+FETCH RESOLVES FLEXIBLY. The name you pass is matched in order: exact name, then a substring of the name/description/tags, then by meaning. So you can fetch by an approximate or descriptive reference — [fetch: type="character", name="the vampire guy"] or [fetch: type="lorebook", name="the swamp fortress setting"] — not only by an exact listed name.
+- If one item clearly matches, its full data loads and you continue normally.
+- If several could match, you'll instead receive a "<type> options for ..." block listing the candidates, each with its details and an [id: ...]. Do NOT guess — present the options to the user by their details, ask which they mean, then fetch that exact one by passing its id as the name (e.g. [fetch: type="character", name="<the id>"]). Fetching by id is the reliable way to pick between two items that share a name.
+- If nothing matches, tell the user you couldn't find it and ask them to clarify.
+
 IMPORTANT RULES FOR FETCH:
 - Only fetch what you NEED. Don't fetch everything at once.
 - When the user asks about a specific character/lorebook/etc., fetch it first before answering.
 - You can fetch multiple items in one message by including multiple [fetch] commands.
 - Fetched data stays in your context for subsequent messages — no need to fetch the same item again.
-- The available names are listed in <available_names> blocks in your context.
+- Available names are provided in <available_names> reference blocks. For large libraries these lists are capped, so a name the user mentions may not appear — fetch works by exact name, approximate name, or description even when the item is not listed. Never tell the user an item does not exist just because you don't see it in the list; try the fetch.
 - If the user asks you to review or compare items, fetch only the ones needed.
 </data_access>`;
 

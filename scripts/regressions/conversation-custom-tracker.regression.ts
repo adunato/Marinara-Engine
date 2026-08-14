@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  CONVERSATION_ALLOWED_AGENT_IDS,
-  isAgentManifestAvailableInChatMode,
-} from "../../packages/shared/src/constants/chat-mode-capabilities.js";
+import { isAgentManifestAvailableInChatMode } from "../../packages/shared/src/constants/chat-mode-agent-policy.js";
 import { buildCommittedTrackerContextBlock } from "../../packages/server/src/services/generation/committed-tracker-context.js";
 import {
   isCustomTrackerActiveForChat,
@@ -10,13 +7,6 @@ import {
 } from "../../packages/client/src/features/tracker-panel/lib/tracker-panel-availability.js";
 import { createEmptyGameState } from "../../packages/client/src/hooks/use-game-state-patcher.js";
 
-assert.deepEqual(CONVERSATION_ALLOWED_AGENT_IDS, [
-  "custom-tracker",
-  "daily-memory",
-  "daily-intentions",
-  "character-mind",
-  "expression",
-]);
 assert.equal(
   isAgentManifestAvailableInChatMode("conversation", {
     id: "expression",
@@ -30,7 +20,7 @@ assert.equal(
     id: "custom-tracker",
     execution: "pipeline",
   }),
-  true,
+  false,
 );
 assert.equal(
   isAgentManifestAvailableInChatMode("conversation", {
@@ -50,7 +40,7 @@ assert.equal(
 assert.equal(
   isAgentManifestAvailableInChatMode("conversation", {
     id: "character-mind",
-    execution: "managed",
+    execution: "host",
     modeAllowlist: ["conversation"],
   }),
   true,

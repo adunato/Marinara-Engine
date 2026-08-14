@@ -1,16 +1,22 @@
 // ──────────────────────────────────────────────
 // Onboarding Tutorial — first-time guided tour
 // ──────────────────────────────────────────────
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUIStore, type ChatModeShortcut } from "../../stores/ui.store";
+import { useChatStore } from "../../stores/chat.store";
 import { useTrackAchievement } from "../../hooks/use-achievements";
+import { docsLanguageKeys, useDocsLanguage, type DocsLanguageStatus } from "../../hooks/use-docs-language";
+import { api } from "../../lib/api-client";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronRight } from "lucide-react";
+import { BookOpen, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
+import { useLocalizedUiText } from "../../localization/use-localized-ui-text";
+import { useTranslation as useUiTranslation } from "react-i18next";
 
 // ─── Step definitions ─────────────────────────
 
 type TourPanel =
-  | "bot-browser"
   | "characters"
   | "lorebooks"
   | "presets"
@@ -22,8 +28,13 @@ type TourPanel =
 interface TourStep {
   /** data-tour attribute value of the element to highlight, or null for centered modal */
   target: string | null;
-  title: string;
-  body: string;
+  /** Additional data-tour targets highlighted alongside the primary target */
+  highlightTargets?: string[];
+  title?: string;
+  body?: string;
+  /** Semantic localization keys for newly authored tutorial copy. */
+  titleKey?: string;
+  bodyKey?: string;
   /** Preferred side for the tooltip relative to the highlighted element */
   side?: "top" | "bottom" | "left" | "right";
   /** Right-side panel to open while this step is active */
@@ -32,10 +43,14 @@ interface TourStep {
   chatMode?: ChatModeShortcut;
   /** Open the chat sidebar without changing its mode */
   openSidebar?: boolean;
-  /** Open the Noodle social timeline while this step is active */
-  openNoodle?: boolean;
+  /** Return to the unobstructed Home hub while this step is active */
+  openHome?: boolean;
+  /** Keep the tutorial card centered while still spotlighting its target */
+  centerCard?: boolean;
   /** Optional settings tab to show when the Settings panel is open */
   settingsTab?: string;
+  /** Render the documentation-language picker inside this step's card */
+  docsLanguagePicker?: boolean;
   /** Professor Mari sprite to display */
   sprite?: { src: string; flip?: boolean };
 }
@@ -48,19 +63,19 @@ const STEPS: TourStep[] = [
     sprite: { src: "/sprites/mari/Mari_wave.png" },
   },
   {
-    target: "panel-bot-browser",
-    title: "Card Browser",
-    body: "The Card Browser lets you find and import downloadable character cards. Start here when you want new characters to add to your library.",
-    side: "bottom",
-    openPanel: "bot-browser",
-    sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
-  },
-  {
     target: "panel-characters",
     title: "Characters",
     body: "Characters are who your AI is going to play or speak as. Create them, edit their descriptions, dialogue examples, organize them into folders, or make them pretty (I can also create those for you).",
     side: "bottom",
     openPanel: "characters",
+    sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
+  },
+  {
+    target: "panel-personas",
+    title: "Personas",
+    body: "Personas define who you are in a chat. Give yourself a name, avatar, description, scenario details, and pretty colors, so characters know who they are speaking to.",
+    side: "bottom",
+    openPanel: "personas",
     sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
   },
   {
@@ -93,14 +108,6 @@ const STEPS: TourStep[] = [
     body: "Agents add optional features without making the base app heavy. Open Download Agents here to browse and install image and video generation, trackers, writers, maps, audio and video calls, and various chat games, then enable the ones you want for each chat. You can update or uninstall them from the same catalog.",
     side: "bottom",
     openPanel: "agents",
-    sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
-  },
-  {
-    target: "panel-personas",
-    title: "Personas",
-    body: "Personas define who you are in a chat. Give yourself a name, avatar, description, scenario details, and pretty colors, so characters know who they are speaking to.",
-    side: "bottom",
-    openPanel: "personas",
     sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
   },
   {
@@ -145,11 +152,28 @@ const STEPS: TourStep[] = [
     sprite: { src: "/sprites/mari/Mari_point_middle_left.png" },
   },
   {
-    target: "noodle-tab",
-    title: "Noodle",
-    body: "Noodle is a fake social media website where you can see invited characters of your choice interacting with each other, posting about their lives, sharing photos, and discussing your latest chats! You can participate too: like and follow them, and share your hot noodles with them. The timeline can update automatically if you choose. To set it up, head to Settings inside the Noodle tab first.",
+    target: "home-hub",
+    titleKey: "onboarding.homeHub.title",
+    bodyKey: "onboarding.homeHub.body",
     side: "bottom",
-    openNoodle: true,
+    openHome: true,
+    sprite: { src: "/sprites/mari/Mari_explaining.png" },
+  },
+  {
+    target: "home-navigation",
+    titleKey: "onboarding.homeNavigation.title",
+    bodyKey: "onboarding.homeNavigation.body",
+    openHome: true,
+    centerCard: true,
+    sprite: { src: "/sprites/mari/Mari_point_middle_left.png" },
+  },
+  {
+    target: "home-documentation",
+    highlightTargets: ["home-tutorial", "home-faq", "home-widgets"],
+    titleKey: "onboarding.homeTools.title",
+    bodyKey: "onboarding.homeTools.body",
+    side: "bottom",
+    openHome: true,
     sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
   },
   {
@@ -169,6 +193,15 @@ const STEPS: TourStep[] = [
     openPanel: "connections",
     sprite: { src: "/sprites/mari/Mari_greet.png" },
   },
+  {
+    target: "home-documentation",
+    title: "One Last Thing: Guide Language",
+    body: "The highlighted Documentation button on Home opens Marinara's built-in guides. Pick a language below, and I'll use it whenever you open them. You can change this anytime in Settings under General. Guides that are not translated yet will show in English.",
+    side: "top",
+    openHome: true,
+    docsLanguagePicker: true,
+    sprite: { src: "/sprites/mari/Mari_explaining.png" },
+  },
 ];
 
 // ─── Spotlight overlay helpers ────────────────
@@ -178,6 +211,10 @@ interface Rect {
   left: number;
   width: number;
   height: number;
+}
+
+interface SpotlightRect extends Rect {
+  target: string;
 }
 
 const PAD = 8; // px padding around the spotlight cutout
@@ -191,12 +228,30 @@ const TUTORIAL_SECONDARY_BUTTON_CLASS =
   "rounded-lg px-3 py-1.5 text-xs text-[var(--marinara-chat-chrome-panel-muted)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-panel-text)]";
 const TUTORIAL_PRIMARY_BUTTON_CLASS =
   "flex items-center gap-1.5 rounded-lg border border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] px-4 py-1.5 text-xs font-medium text-[var(--marinara-chat-chrome-button-text-active)] shadow-sm transition-all hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] active:scale-95";
+const TUTORIAL_DOCUMENTATION_BUTTON_CLASS =
+  "flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] px-4 py-2.5 text-sm font-semibold text-[var(--marinara-chat-chrome-button-text-active)] shadow-sm transition-all hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marinara-chat-chrome-focus-ring)] active:scale-[0.98]";
 
-function getTargetRect(target: string): Rect | null {
+function getTargetRect(target: string): SpotlightRect | null {
   const el = document.querySelector(`[data-tour="${target}"]`);
   if (!el) return null;
   const r = el.getBoundingClientRect();
-  return { top: r.top, left: r.left, width: r.width, height: r.height };
+  return { target, top: r.top, left: r.left, width: r.width, height: r.height };
+}
+
+function spotlightRectsMatch(previous: readonly SpotlightRect[], next: readonly SpotlightRect[]): boolean {
+  return (
+    previous.length === next.length &&
+    previous.every((rect, index) => {
+      const candidate = next[index];
+      return (
+        candidate?.target === rect.target &&
+        candidate.top === rect.top &&
+        candidate.left === rect.left &&
+        candidate.width === rect.width &&
+        candidate.height === rect.height
+      );
+    })
+  );
 }
 
 function getViewportWidth(): number {
@@ -226,7 +281,7 @@ function isPanelTourTarget(target: string | null): boolean {
 }
 
 function isTopbarTourTarget(target: string | null): boolean {
-  return target === "sidebar-toggle" || target === "noodle-tab" || isPanelTourTarget(target);
+  return target === "sidebar-toggle" || isPanelTourTarget(target);
 }
 
 function isChatModeTourTarget(target: string | null): boolean {
@@ -388,13 +443,24 @@ function TourCardContent({
   isLast,
   onNext,
   onSkip,
+  pickerSlot,
 }: {
   step: number;
   currentStep: TourStep;
   isLast: boolean;
   onNext: () => void;
   onSkip: () => void;
+  /** Extra interactive content rendered between the body and the progress dots */
+  pickerSlot?: React.ReactNode;
 }) {
+  const { t: localizeUi } = useUiTranslation();
+  const localize = useLocalizedUiText();
+  const localizedBody = currentStep.bodyKey
+    ? localizeUi(currentStep.bodyKey)
+    : localize(currentStep.body ?? "");
+  const localizedTitle = currentStep.titleKey
+    ? localizeUi(currentStep.titleKey)
+    : localize(currentStep.title ?? "");
   return (
     <>
       {/* Professor Mari sprite */}
@@ -402,7 +468,7 @@ function TourCardContent({
         <div className="mb-2 flex justify-center">
           <img
             src={currentStep.sprite.src}
-            alt="Professor Mari"
+            alt={localizeUi("ui.onboarding.tourcardcontent.professorMari")}
             className="h-32 max-h-[15vh] w-auto object-contain drop-shadow-lg"
             style={currentStep.sprite.flip ? { transform: "scaleX(-1)" } : undefined}
             draggable={false}
@@ -412,12 +478,14 @@ function TourCardContent({
 
       {/* Header */}
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-[var(--marinara-chat-chrome-panel-title)]">{currentStep.title}</h3>
+        <h3 className="text-sm font-semibold text-[var(--marinara-chat-chrome-panel-title)]">
+          {localizedTitle}
+        </h3>
       </div>
 
       {/* Body */}
       <p className="mb-4 break-words text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-muted)]">
-        {currentStep.body.split("\n").map((line, i, arr) => (
+        {localizedBody.split("\n").map((line, i, arr) => (
           <span key={i}>
             {line.split(/(\*\*[^*]+\*\*)/).map((part, j) =>
               part.startsWith("**") && part.endsWith("**") ? (
@@ -432,6 +500,8 @@ function TourCardContent({
           </span>
         ))}
       </p>
+
+      {pickerSlot}
 
       {/* Progress dots */}
       <div className="mb-3 flex items-center justify-center gap-1.5">
@@ -452,10 +522,10 @@ function TourCardContent({
       {/* Buttons */}
       <div className="flex items-center justify-between">
         <button onClick={onSkip} className={TUTORIAL_SECONDARY_BUTTON_CLASS}>
-          {step === 0 ? "Skip Tutorial" : "Skip"}
+          {localize(step === 0 ? "Skip Tutorial" : "Skip")}
         </button>
         <button onClick={onNext} className={TUTORIAL_PRIMARY_BUTTON_CLASS}>
-          {isLast ? "Get Started" : "Next"}
+          {localize(isLast ? "Get Started" : "Next")}
           {!isLast && <ChevronRight size="0.75rem" />}
         </button>
       </div>
@@ -475,20 +545,77 @@ function OnboardingTutorialInner() {
   const setCompleted = useUIStore((s) => s.setHasCompletedOnboarding);
   const openRightPanel = useUIStore((s) => s.openRightPanel);
   const closeRightPanel = useUIStore((s) => s.closeRightPanel);
+  const closeAllDetails = useUIStore((s) => s.closeAllDetails);
   const setSettingsTab = useUIStore((s) => s.setSettingsTab);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const requestChatModeShortcut = useUIStore((s) => s.requestChatModeShortcut);
-  const openNoodle = useUIStore((s) => s.openNoodle);
-  const closeNoodle = useUIStore((s) => s.closeNoodle);
+  const setActiveChatId = useChatStore((s) => s.setActiveChatId);
+  const uiLanguage = useUIStore((s) => s.language);
   const trackAchievement = useTrackAchievement();
+  const { t: localizeUi } = useUiTranslation();
 
   const [step, setStep] = useState(0);
-  const [targetRect, setTargetRect] = useState<Rect | null>(null);
+  const [spotlightRects, setSpotlightRects] = useState<SpotlightRect[]>([]);
   const [isMobileViewport, setIsMobileViewport] = useState(() => getViewportWidth() < MOBILE_BREAKPOINT);
   const rafRef = useRef<number>(0);
 
   const currentStep = STEPS[step];
   const isLast = step === STEPS.length - 1;
+  const targetRect = spotlightRects.find((rect) => rect.target === currentStep.target) ?? null;
+
+  // ── Documentation-language picker (final step) ──
+  const { data: docsLanguageStatus } = useDocsLanguage();
+  const queryClient = useQueryClient();
+  const [docsLanguagePick, setDocsLanguagePick] = useState<string | null>(null);
+  const docsLanguageOptions = useMemo(() => docsLanguageStatus?.available ?? [], [docsLanguageStatus?.available]);
+  const activeDocsLanguage = docsLanguageStatus?.active ?? "en";
+  // Pre-select the user's existing choice whenever one has been made, so an
+  // untouched picker is a guaranteed no-op on tutorial replays. Only on a
+  // genuinely fresh install (nothing configured yet) suggest the UI language.
+  // Match the full lowercased UI locale first (pt-BR → the "pt-br" pack), then
+  // fall back to a base-language match ("pt" would still find "pt-br").
+  const uiLanguageLower = uiLanguage?.toLowerCase() ?? "en";
+  const uiLanguageBase = uiLanguageLower.split("-")[0];
+  const uiMatchedDocsLanguage =
+    docsLanguageOptions.find((option) => option.code === uiLanguageLower)?.code ??
+    docsLanguageOptions.find((option) => option.code.split("-")[0] === uiLanguageBase)?.code;
+  const suggestedDocsLanguage =
+    docsLanguageStatus?.configured || !uiMatchedDocsLanguage ? activeDocsLanguage : uiMatchedDocsLanguage;
+  const effectiveDocsLanguagePick = docsLanguagePick ?? suggestedDocsLanguage;
+
+  /**
+   * Commit the picked docs language when the tour completes via "Get Started".
+   * Fire-and-forget: finishing onboarding must never block on the server, and a
+   * failure only means the user stays on English (fixable later in Settings).
+   */
+  const commitDocsLanguage = useCallback(() => {
+    if (effectiveDocsLanguagePick === activeDocsLanguage) return;
+    const info = docsLanguageOptions.find((option) => option.code === effectiveDocsLanguagePick);
+    const label = info?.label ?? effectiveDocsLanguagePick;
+    // A not-yet-downloaded pack keeps downloading after the tutorial closes;
+    // tell the user so the eventual success/failure toast has context.
+    if (effectiveDocsLanguagePick !== "en" && !(info?.installed ?? false)) {
+      toast.info(localizeUi("settings.application.docsLanguage.downloadingLanguage", { language: label }));
+    }
+    // Plain promise, not a React Query mutation: the tutorial unmounts right
+    // after "Get Started", and v5 drops mutate() callbacks on unmount — these
+    // handlers (and the global sonner toasts) must outlive the component.
+    api
+      .put<DocsLanguageStatus>("/docs/language", { language: effectiveDocsLanguagePick })
+      .then((status) => {
+        queryClient.setQueryData(docsLanguageKeys.status(), status);
+        // "docs" mirrors docsKeys.all in use-docs.ts — every docs query refetches.
+        void queryClient.invalidateQueries({ queryKey: ["docs"] });
+        toast.success(localizeUi("settings.application.docsLanguage.switched", { language: label }));
+      })
+      .catch((err: unknown) => {
+        toast.error(
+          localizeUi("settings.application.docsLanguage.switchFailed", {
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      });
+  }, [activeDocsLanguage, docsLanguageOptions, effectiveDocsLanguagePick, localizeUi, queryClient]);
 
   useEffect(() => {
     const updateViewportMode = () => setIsMobileViewport(getViewportWidth() < MOBILE_BREAKPOINT);
@@ -499,29 +626,27 @@ function OnboardingTutorialInner() {
 
   // ── Side-effects when step changes ──
   useEffect(() => {
-    if (currentStep.openNoodle) {
+    if (currentStep.openHome) {
+      closeAllDetails();
+      setActiveChatId(null);
       closeRightPanel();
       setSidebarOpen(false);
-      openNoodle();
       return;
     }
 
     if (currentStep.chatMode) {
-      closeNoodle();
       closeRightPanel();
       requestChatModeShortcut(currentStep.chatMode);
       return;
     }
 
     if (currentStep.openSidebar) {
-      closeNoodle();
       closeRightPanel();
       setSidebarOpen(true);
       return;
     }
 
     if (currentStep.openPanel) {
-      closeNoodle();
       setSidebarOpen(false);
       openRightPanel(currentStep.openPanel);
       if (currentStep.settingsTab) {
@@ -529,41 +654,35 @@ function OnboardingTutorialInner() {
       }
     }
   }, [
-    closeNoodle,
+    closeAllDetails,
     closeRightPanel,
     currentStep,
-    openNoodle,
     openRightPanel,
     requestChatModeShortcut,
+    setActiveChatId,
     setSettingsTab,
     setSidebarOpen,
   ]);
 
   // Track the target element position (handles resize/scroll)
-  const lastRectRef = useRef<Rect | null>(null);
+  const lastSpotlightRectsRef = useRef<SpotlightRect[]>([]);
   const updateRect = useCallback(() => {
     if (isMobileViewport || !currentStep?.target) {
-      if (lastRectRef.current !== null) {
-        lastRectRef.current = null;
-        setTargetRect(null);
+      if (lastSpotlightRectsRef.current.length > 0) {
+        lastSpotlightRectsRef.current = [];
+        setSpotlightRects([]);
       }
       return;
     }
-    const r = getTargetRect(currentStep.target);
-    // Only update state if the rect actually changed
-    const prev = lastRectRef.current;
-    if (!r && prev) {
-      lastRectRef.current = null;
-      setTargetRect(null);
-    } else if (
-      r &&
-      (!prev || r.top !== prev.top || r.left !== prev.left || r.width !== prev.width || r.height !== prev.height)
-    ) {
-      lastRectRef.current = r;
-      setTargetRect(r);
+    const nextRects = [currentStep.target, ...(currentStep.highlightTargets ?? [])]
+      .map(getTargetRect)
+      .filter((rect): rect is SpotlightRect => rect !== null);
+    if (!spotlightRectsMatch(lastSpotlightRectsRef.current, nextRects)) {
+      lastSpotlightRectsRef.current = nextRects;
+      setSpotlightRects(nextRects);
     }
     rafRef.current = requestAnimationFrame(updateRect);
-  }, [currentStep?.target, isMobileViewport]);
+  }, [currentStep?.highlightTargets, currentStep?.target, isMobileViewport]);
 
   useEffect(() => {
     updateRect();
@@ -575,37 +694,77 @@ function OnboardingTutorialInner() {
     trackAchievement.mutate("tutorial_completed");
   }, [setCompleted, trackAchievement]);
 
+  // "Get Started" on the final step commits the docs-language pick; Skip never does.
   const next = useCallback(() => {
     if (isLast) {
+      commitDocsLanguage();
       finish();
     } else {
       setStep((s) => s + 1);
     }
-  }, [isLast, finish]);
+  }, [isLast, commitDocsLanguage, finish]);
 
-  const isCentered = isMobileViewport || !currentStep.target || !targetRect;
+  const isCentered = isMobileViewport || currentStep.centerCard || !currentStep.target || !targetRect;
   const centeredTopOffset = getTutorialTopOffset();
   const centeredCardMaxHeight = Math.max(220, getViewportHeight() - centeredTopOffset - 16);
 
+  const pickerSlot = currentStep.docsLanguagePicker ? (
+    <div className="mb-4 flex flex-col gap-3 text-left">
+      <button
+        type="button"
+        onClick={() => useUIStore.getState().openModal("docs-viewer")}
+        className={TUTORIAL_DOCUMENTATION_BUTTON_CLASS}
+        title={localizeUi("home.actions.documentationHelp")}
+      >
+        <BookOpen size="1rem" />
+        {localizeUi("home.actions.documentation")}
+      </button>
+      <label
+        htmlFor="onboarding-docs-language"
+        className="text-[0.6875rem] font-medium text-[var(--marinara-chat-chrome-panel-text)]"
+      >
+        {localizeUi("settings.application.docsLanguage.label")}
+      </label>
+      <select
+        id="onboarding-docs-language"
+        value={effectiveDocsLanguagePick}
+        onChange={(event) => setDocsLanguagePick(event.target.value)}
+        className="w-full rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-3 py-2 text-xs text-[var(--marinara-chat-chrome-panel-text)] outline-none focus:ring-1 focus:ring-[var(--marinara-chat-chrome-focus-ring)]"
+      >
+        {(docsLanguageOptions.length > 0 ? docsLanguageOptions : [{ code: "en", label: "English" }]).map((option) => (
+          <option key={option.code} value={option.code}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  ) : undefined;
+
   return (
     <div className="mari-chrome-token-scope pointer-events-none fixed inset-0 z-[9999]">
-      {/* Pulsing highlight ring around the target element */}
-      {!isMobileViewport && targetRect && (
-        <div
-          className="pointer-events-none fixed animate-pulse rounded-xl ring-2 ring-[var(--marinara-chat-chrome-focus-ring)]"
-          style={{
-            top: targetRect.top - PAD,
-            left: targetRect.left - PAD,
-            width: targetRect.width + PAD * 2,
-            height: targetRect.height + PAD * 2,
-            boxShadow: "0 0 16px 4px color-mix(in srgb, var(--marinara-chat-chrome-focus-ring) 40%, transparent)",
-          }}
-        />
-      )}
+      {/* Pulsing highlight rings around the current target elements */}
+      {!isMobileViewport &&
+        spotlightRects.map((rect) => (
+          <div
+            key={rect.target}
+            data-component="OnboardingTutorial.Spotlight"
+            data-tour-target={rect.target}
+            className="pointer-events-none fixed animate-pulse rounded-xl ring-2 ring-[var(--marinara-chat-chrome-focus-ring)]"
+            style={{
+              top: rect.top - PAD,
+              left: rect.left - PAD,
+              width: rect.width + PAD * 2,
+              height: rect.height + PAD * 2,
+              boxShadow:
+                "0 0 16px 4px color-mix(in srgb, var(--marinara-chat-chrome-focus-ring) 40%, transparent)",
+            }}
+          />
+        ))}
 
       {/* Centered steps use a flex wrapper so Framer Motion transforms don't override CSS centering */}
       {isCentered ? (
         <div
+          data-component="OnboardingTutorial.CenteredStage"
           className="pointer-events-none fixed inset-x-0 bottom-3 flex items-center justify-center px-3"
           style={{ top: centeredTopOffset }}
         >
@@ -617,9 +776,10 @@ function OnboardingTutorialInner() {
               exit={{ opacity: 0, y: -8, scale: 0.96 }}
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
               className={TUTORIAL_CARD_CLASS}
+              data-component="OnboardingTutorial.Card"
               style={{ width: Math.min(380, getViewportWidth() - 32), maxHeight: centeredCardMaxHeight }}
             >
-              <TourCardContent step={step} currentStep={currentStep} isLast={isLast} onNext={next} onSkip={finish} />
+              <TourCardContent step={step} currentStep={currentStep} isLast={isLast} onNext={next} onSkip={finish} pickerSlot={pickerSlot} />
             </motion.div>
           </AnimatePresence>
         </div>
@@ -632,9 +792,10 @@ function OnboardingTutorialInner() {
             exit={{ opacity: 0, y: -8, scale: 0.96 }}
             transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
             className={TUTORIAL_CARD_CLASS}
+            data-component="OnboardingTutorial.Card"
             style={computeTooltipStyle(targetRect!, currentStep)}
           >
-            <TourCardContent step={step} currentStep={currentStep} isLast={isLast} onNext={next} onSkip={finish} />
+            <TourCardContent step={step} currentStep={currentStep} isLast={isLast} onNext={next} onSkip={finish} pickerSlot={pickerSlot} />
           </motion.div>
         </AnimatePresence>
       )}

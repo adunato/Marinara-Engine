@@ -72,7 +72,7 @@ export const CORE_BUILT_IN_AGENT_MANIFESTS: readonly BuiltInAgentManifest[] = [
     enabledByDefault: false,
     category: "misc",
     modeAllowlist: ["conversation"],
-    execution: "managed",
+    execution: "host",
     defaultPromptTemplate: DEFAULT_DAILY_MEMORY_PROMPT,
     defaultSettings: {
       handoverHour: 4,
@@ -94,7 +94,7 @@ export const CORE_BUILT_IN_AGENT_MANIFESTS: readonly BuiltInAgentManifest[] = [
     enabledByDefault: false,
     category: "misc",
     modeAllowlist: ["conversation"],
-    execution: "managed",
+    execution: "host",
     defaultSettings: {},
   },
   {
@@ -107,7 +107,7 @@ export const CORE_BUILT_IN_AGENT_MANIFESTS: readonly BuiltInAgentManifest[] = [
     enabledByDefault: false,
     category: "misc",
     modeAllowlist: ["conversation"],
-    execution: "managed",
+    execution: "host",
     defaultSettings: {},
   },
 ];

@@ -3,7 +3,7 @@
 // Replaces the chat area when editing a persona.
 // Sections: Metadata, Card, Convo, Lorebook, Sprites, Gallery, Colors, Stats
 // ──────────────────────────────────────────────
-import { useState, useEffect, useRef, useCallback, type ChangeEvent, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   useCreateCharacter,
@@ -16,12 +16,15 @@ import {
   usePersonaVersions,
   useRestorePersonaVersion,
   useDeletePersonaVersion,
+  useRenamePersonaVersion,
+  useResetPersonaVersions,
   usePersonaGalleryImages,
   usePersonaGalleryClips,
   useUploadPersonaGalleryImage,
   useUploadPersonaGalleryClip,
   useUploadPersonaGalleryVideo,
   useDeletePersonaGalleryImage,
+  useSetPersonaGalleryImageAsAvatar,
   useDeletePersonaGalleryClip,
   useGeneratePersonaCallVideoClips,
   useGeneratePersonaCustomCallVideoClip,
@@ -61,19 +64,33 @@ import {
   Crop,
   Library,
   MessageCircle,
+  Pencil,
+  Check,
 } from "lucide-react";
-import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
-import { showConfirmDialog } from "../../lib/app-dialogs";
+import type { AvatarCrop } from "@marinara-engine/shared";
+import { normalizeAvatarCrop } from "@marinara-engine/shared";
+import { cn, generateClientId, getAvatarCropStyle } from "../../lib/utils";
+import { showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
+import { formatCardVersionTimestamp, getCardVersionTitle } from "../../lib/card-version-history";
+import { dataImageUrlToFile } from "../../lib/data-image-file";
 import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ColorPicker } from "../ui/ColorPicker";
+import { StatIconPicker } from "../ui/StatIconPicker";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import { CallClipGenerationModal } from "../ui/CallClipGenerationModal";
-import { api } from "../../lib/api-client";
+import { api, formatFirstApiValidationIssue } from "../../lib/api-client";
 import { downloadSpriteFile } from "../../lib/sprite-download";
+import { downloadUrlToDevice } from "../../lib/file-download";
 import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../lib/tracker-card-colors";
+import {
+  getStatNameOccurrence,
+  remapStatIconAssignments,
+  resolveStatIconAssignment,
+  setStatIconAssignment,
+} from "../../lib/stat-icon-assignments";
 import { estimateTextTokens, formatEstimatedTokens } from "../../lib/character-token-count";
 import {
   useCharacterSprites,
@@ -90,6 +107,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { SpriteGenerationModal } from "../ui/SpriteGenerationModal";
 import { AvatarGenerationModal } from "../ui/AvatarGenerationModal";
 import { AvatarCropWidget } from "../ui/AvatarCropWidget";
+import { AvatarReplaceActions } from "../ui/AvatarReplaceActions";
+import { EditorAvatarTileActions } from "../ui/EditorAvatarTileActions";
 import { SpriteFrameEditor } from "../ui/SpriteFrameEditor";
 import { SpriteWandCleanupEditor } from "../ui/SpriteWandCleanupEditor";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
@@ -104,8 +123,12 @@ import {
   syncRpgHpFromPools,
   type CharacterData,
   type ConvoBehaviorConfig,
+  type Persona,
   type PersonaCardSnapshot,
   type PersonaCardVersion,
+  type PersonaStatBar,
+  type PersonaStatsConfig,
+  type PersonaUpdateInput,
   type RPGStatPool,
   type RPGStatsConfig,
   type TrackerCardColorConfig,
@@ -113,6 +136,13 @@ import {
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
 import { LorebookAssignmentSection } from "../lorebooks/LorebookAssignmentSection";
 import { ConvoProfileFields } from "../characters/ConvoProfileFields";
+import { useTranslation, useTranslation as useUiTranslation } from "react-i18next";
+import {
+  mergeAuthoritativePersonaEditorDraft,
+  personaEditorFieldsDifferingFromBaseline,
+  pickPersonaEditorFields,
+  reconcileVersionedPersonaEditorSave,
+} from "./persona-editor-transitions";
 
 // ── Tabs ──
 const TABS = [
@@ -167,7 +197,7 @@ const PERSONA_SPRITES_HELP =
   "Upload sprites one by one, or use Upload Folder to bulk-import a folder of PNGs. Each filename becomes the expression name, for example admiration.png becomes admiration. To rotate variants, share a prefix before an underscore, for example happy_01.png and happy_blush.png. Persona sprites can be used in Game Mode and roleplay with the Expression Engine. Use transparent PNGs for best results.";
 
 const PERSONA_COLORS_HELP =
-  "Name color is applied to your persona's display name in chat. Gradients use CSS linear-gradient. Dialogue color applies to text inside dialogue quotation marks and can optionally be bolded from Settings. Box color sets the background color of your persona's message bubble. An empty dialogue color uses the default from Settings > Appearance when enabled; other empty fields use theme colors.";
+  "Name color is applied to your persona's display name in chat. Gradients use CSS linear-gradient. Dialogue color applies to text inside dialogue quotation marks and can optionally be bolded from Settings. Box color sets the background color of your persona's message bubble. An empty dialogue color uses the default from Settings > Appearance; other empty fields use theme colors.";
 
 const PERSONA_STATS_HELP =
   "Status bars represent your persona's physical and mental state, such as hunger, energy, or mood. The Persona Stats agent adjusts values realistically based on what happens in the narrative. Bars are displayed in the HUD widget during chat with color-coded gradients. Values set here serve as the initial defaults for new conversations.";
@@ -187,50 +217,26 @@ interface PersonaFormData {
   scenario: string;
   backstory: string;
   appearance: string;
+  characterSheetImageId: string | null;
+  useCharacterSheetAsReference: boolean;
   nameColor: string;
   dialogueColor: string;
   boxColor: string;
   trackerCardColors: TrackerCardColorConfig;
-  personaStats: string;
+  /** Status bars + RPG stats, kept decoded in form state; serialized at save/snapshot boundaries. */
+  personaStats: PersonaStatsConfig | null;
   tags: string[];
-  savedStatusOptions: string;
+  /** Saved Conversation mode activity/status options, kept decoded in form state. */
+  savedStatusOptions: string[];
   /** Conversation-mode-only fields. */
   convoDisplayName: string;
   aboutMe: string;
   convoBehavior: ConvoBehaviorConfig | null;
-  /** Avatar crop region (parsed from the persona row's JSON-encoded `avatarCrop`).
+  /** Avatar crop region (hydrated from the decoded Persona; kept decoded in form
+   *  state and serialized back to JSON at save/snapshot boundaries).
    *  May be the current source-relative shape, the legacy zoom+offset shape (held
    *  through until the user re-edits via the cropper), or null when unset. */
-  avatarCrop: AvatarCrop | LegacyAvatarCrop | null;
-}
-
-interface PersonaRow {
-  id: string;
-  name: string;
-  comment?: string;
-  phoneticName?: string;
-  creator?: string;
-  personaVersion?: string;
-  creatorNotes?: string;
-  description: string;
-  personality: string;
-  scenario: string;
-  backstory: string;
-  appearance: string;
-  avatarPath: string | null;
-  /** JSON-encoded AvatarCrop, or empty string when unset. */
-  avatarCrop?: string;
-  isActive: string | boolean;
-  nameColor?: string;
-  dialogueColor?: string;
-  boxColor?: string;
-  trackerCardColors?: string;
-  personaStats?: string;
-  tags?: string;
-  savedStatusOptions?: string;
-  convoDisplayName?: string;
-  aboutMe?: string;
-  convoBehavior?: string;
+  avatarCrop: AvatarCrop | null;
 }
 
 function appendNewTags(existingTags: string[], rawInput: string) {
@@ -257,6 +263,88 @@ function formatPersonaFieldValue<K extends keyof PersonaFormData>(
     return formatQuotes(value) as PersonaFormData[K];
   }
   return value;
+}
+
+// ── Editor save/reconciliation model ──
+
+/** Persona mutations the editor coordinates. Only one may run at a time,
+ *  because each writes or removes the same Persona row. */
+type PersonaMutationKind = "save" | "avatar" | "gallery-avatar" | "delete";
+
+/** The decoded PATCH contract this editor writes: the shared update input plus
+ *  the character-sheet fields the Persona route still handles separately. */
+type PersonaUpdatableFields = PersonaUpdateInput & {
+  characterSheetImageId?: string | null;
+  useCharacterSheetAsReference?: boolean;
+};
+
+/** Every form field must map onto the same-named decoded update field. Indexing
+ *  the update contract here is what turns a form key with no matching update
+ *  field — or an incompatible value type — into a compile error instead of a
+ *  silently dropped save. */
+type PersonaUpdateFieldValues = { [K in keyof PersonaFormData]: PersonaUpdatableFields[K] };
+
+/** Draft values as they would be written. The one semantic transform is a blank
+ *  conversation behavior, which is an explicit clear rather than an empty object. */
+function personaUpdateValues(formData: PersonaFormData): PersonaUpdateFieldValues {
+  return {
+    ...formData,
+    convoBehavior: formData.convoBehavior?.instruction?.trim() ? formData.convoBehavior : null,
+  };
+}
+
+/**
+ * Fields whose decoded write-boundary values differ from the authoritative
+ * baseline. A blank conversation behavior and null are therefore equivalent.
+ */
+function personaFieldsDifferingFromBaseline(
+  draft: PersonaFormData,
+  baseline: PersonaFormData,
+): (keyof PersonaFormData)[] {
+  return personaEditorFieldsDifferingFromBaseline(personaUpdateValues(draft), personaUpdateValues(baseline));
+}
+
+function pickPersonaUpdateFields(
+  formData: PersonaFormData,
+  keys: Iterable<keyof PersonaFormData>,
+): Partial<PersonaUpdatableFields> {
+  // `PersonaUpdateFieldValues` proves each copied value is legal for the decoded
+  // update contract; the pure helper retains that key/value relationship.
+  return pickPersonaEditorFields(personaUpdateValues(formData), keys);
+}
+
+/** The authoritative projected Persona, expressed in the editor's form shape. */
+function personaFormFromPersona(persona: Persona): PersonaFormData {
+  return {
+    name: persona.name,
+    comment: persona.comment ?? "",
+    phoneticName: persona.phoneticName ?? "",
+    creator: persona.creator ?? "",
+    personaVersion: persona.personaVersion ?? "1.0",
+    creatorNotes: persona.creatorNotes ?? "",
+    description: persona.description,
+    personality: persona.personality ?? "",
+    scenario: persona.scenario ?? "",
+    backstory: persona.backstory ?? "",
+    appearance: persona.appearance ?? "",
+    characterSheetImageId: persona.characterSheetImageId ?? null,
+    useCharacterSheetAsReference: persona.useCharacterSheetAsReference === true,
+    nameColor: persona.nameColor ?? "",
+    dialogueColor: persona.dialogueColor ?? "",
+    boxColor: persona.boxColor ?? "",
+    trackerCardColors: parseTrackerCardColorConfig(persona.trackerCardColors),
+    personaStats: persona.personaStats ?? null,
+    tags: persona.tags ?? [],
+    savedStatusOptions: persona.savedStatusOptions ?? [],
+    convoDisplayName: persona.convoDisplayName ?? "",
+    aboutMe: persona.aboutMe ?? "",
+    convoBehavior: persona.convoBehavior ?? null,
+    // Defensive: accept either the current source-relative shape or the legacy
+    // zoom+offset shape (already decoded by the persona projector). Anything
+    // malformed is silently dropped so the editor falls back to defaults instead
+    // of producing NaN transforms or an off-screen overlay.
+    avatarCrop: normalizeAvatarCrop(persona.avatarCrop),
+  };
 }
 
 // ── Gallery Tab ──
@@ -294,13 +382,58 @@ function isPersonaCallVideoClip(clip: CharacterGalleryClip) {
   return clip.source === "conversation-call" || clip.source === "conversation-call-custom";
 }
 
-function PersonaGalleryTab({ personaId, personaName }: { personaId: string; personaName?: string }) {
+function PersonaGalleryTab({
+  personaId,
+  personaName,
+  onCreateCharacterSheet,
+  // Assigning a gallery image replaces the Persona avatar, so the editor owns the
+  // call and lends this tab its live mutation-busy state instead of a local flag.
+  editorBusy,
+  galleryAvatarPending,
+  onSetAvatar,
+}: {
+  personaId: string;
+  personaName?: string;
+  onCreateCharacterSheet: () => void;
+  editorBusy: boolean;
+  galleryAvatarPending: boolean;
+  onSetAvatar: (image: PersonaGalleryImage) => void;
+}) {
+  const { t: localizeUi } = useUiTranslation();
   const [mediaTab, setMediaTab] = useState<PersonaGalleryMediaTab>("images");
   const { data: images, isLoading } = usePersonaGalleryImages(personaId);
   const upload = useUploadPersonaGalleryImage(personaId);
   const remove = useDeletePersonaGalleryImage(personaId);
   const tag = useTagPersonaGalleryImage(personaId);
   const [lightbox, setLightbox] = useState<PersonaGalleryImage | null>(null);
+  const [selectingImages, setSelectingImages] = useState(false);
+  const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(() => new Set());
+  const selectedImages = useMemo(
+    () => images?.filter((image) => selectedImageIds.has(image.id)) ?? [],
+    [images, selectedImageIds],
+  );
+
+  useEffect(() => {
+    const availableIds = new Set(images?.map((image) => image.id) ?? []);
+    setSelectedImageIds((current) => {
+      const next = new Set([...current].filter((id) => availableIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [images]);
+
+  const leaveImageSelection = useCallback(() => {
+    setSelectingImages(false);
+    setSelectedImageIds(new Set());
+  }, []);
+
+  const toggleImageSelection = useCallback((imageId: string) => {
+    setSelectedImageIds((current) => {
+      const next = new Set(current);
+      if (next.has(imageId)) next.delete(imageId);
+      else next.add(imageId);
+      return next;
+    });
+  }, []);
 
   const handleUpload = useCallback(
     (files: File[]) => {
@@ -314,9 +447,9 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
     async (image: PersonaGalleryImage) => {
       if (
         !(await showConfirmDialog({
-          title: "Delete Persona Image",
-          message: "Delete this persona gallery image?",
-          confirmLabel: "Delete",
+          title: localizeUi("ui.personas.personagallerytab.deletePersonaImage"),
+          message: localizeUi("ui.personas.personagallerytab.deleteThisPersonaGalleryImage"),
+          confirmLabel: localizeUi("lorebook.editor.batch.delete"),
           tone: "destructive",
         }))
       ) {
@@ -326,18 +459,77 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
         await remove.mutateAsync(image.id);
         if (lightbox?.id === image.id) setLightbox(null);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to delete persona image.");
+        toast.error(
+          err instanceof Error ? err.message : localizeUi("ui.personas.personagallerytab.failedToDeletePersonaImage"),
+        );
       }
     },
-    [lightbox?.id, remove],
+    [lightbox?.id, remove, localizeUi],
   );
+
+  const handleBatchDownload = useCallback(async () => {
+    if (selectedImages.length === 0) return;
+    if (
+      !(await showConfirmDialog({
+        title: localizeUi("ui.gallery.batch.downloadTitle"),
+        message: localizeUi("ui.gallery.batch.downloadMessage", { count: selectedImages.length }),
+        confirmLabel: localizeUi("ui.gallery.batch.download"),
+      }))
+    ) {
+      return;
+    }
+    try {
+      let failedDownloads = 0;
+      for (const [index, image] of selectedImages.entries()) {
+        try {
+          await downloadUrlToDevice(image.url, image.filePath.split("/").pop() || `persona-gallery-${index + 1}.png`);
+        } catch {
+          failedDownloads += 1;
+        }
+      }
+      if (failedDownloads > 0) {
+        toast.error(
+          localizeUi("ui.gallery.batch.downloadPartial", {
+            completed: selectedImages.length - failedDownloads,
+            count: selectedImages.length,
+            failed: failedDownloads,
+          }),
+        );
+        return;
+      }
+      toast.success(localizeUi("ui.gallery.batch.downloadStarted", { count: selectedImages.length }));
+    } catch {
+      toast.error(localizeUi("ui.gallery.batch.downloadFailed"));
+    }
+  }, [localizeUi, selectedImages]);
+
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedImages.length === 0) return;
+    if (
+      !(await showConfirmDialog({
+        title: localizeUi("ui.gallery.batch.deleteTitle"),
+        message: localizeUi("ui.gallery.batch.deleteMessage", { count: selectedImages.length }),
+        confirmLabel: localizeUi("ui.gallery.batch.delete"),
+        tone: "destructive",
+      }))
+    ) {
+      return;
+    }
+    try {
+      for (const image of selectedImages) await remove.mutateAsync(image.id);
+      toast.success(localizeUi("ui.gallery.batch.deleted", { count: selectedImages.length }));
+      leaveImageSelection();
+    } catch {
+      toast.error(localizeUi("ui.personas.personagallerytab.failedToDeletePersonaImage"));
+    }
+  }, [leaveImageSelection, localizeUi, remove, selectedImages]);
 
   return (
     <div className="space-y-6">
       <div className="mb-4">
-        <h2 className="text-lg font-bold">Persona Gallery</h2>
+        <h2 className="text-lg font-bold">{localizeUi("ui.personas.personagallerytab.personaGallery")}</h2>
         <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
-          Keep reference art, alternate looks, and generated videos attached to this persona.
+          {localizeUi("ui.personas.personagallerytab.keepReferenceArtAlternateLooksAndGeneratedVideosAttached")}
         </p>
       </div>
 
@@ -370,8 +562,53 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
 
       {mediaTab === "images" ? (
         <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectingImages) leaveImageSelection();
+                  else setSelectingImages(true);
+                }}
+                className="mari-editor-action inline-flex"
+              >
+                {selectingImages ? <X size="0.875rem" /> : <Check size="0.875rem" />}
+                {localizeUi(selectingImages ? "ui.gallery.batch.cancel" : "ui.gallery.batch.selectImages")}
+              </button>
+              <button
+                type="button"
+                disabled={!images?.length}
+                onClick={() => {
+                  setSelectingImages(true);
+                  setSelectedImageIds(new Set(images?.map((image) => image.id) ?? []));
+                }}
+                className="mari-editor-action inline-flex disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Check size="0.875rem" />
+                {localizeUi("ui.gallery.batch.selectAll")}
+              </button>
+              {selectingImages ? (
+                <span className="text-xs font-semibold text-[var(--muted-foreground)]">
+                  {localizeUi("ui.gallery.batch.selected", { count: selectedImages.length })}
+                </span>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={onCreateCharacterSheet}
+              className="mari-editor-action mari-editor-action--primary inline-flex max-sm:w-full max-sm:justify-center"
+            >
+              <Wand2 size="0.875rem" />
+              {localizeUi("ui.characters.charactersheet.createWithAi")}
+            </button>
+          </div>
+
+          <p className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            {localizeUi("ui.gallery.batch.hint")}
+          </p>
+
           <ImageUploadDropzone
-            label="Upload Persona Images"
+            label={localizeUi("ui.personas.personagallerytab.uploadPersonaImages")}
             pending={upload.isPending}
             pendingLabel="Uploading…"
             dragLabel="Drop persona images to upload"
@@ -381,49 +618,107 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
           />
 
           {isLoading ? (
-            <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="shimmer aspect-square rounded-xl" />
               ))}
             </div>
           ) : images && images.length > 0 ? (
-            <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4">
               {images.map((image) => (
                 <div
                   key={image.id}
-                  className="group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md"
+                  className={cn(
+                    "mari-gallery-card group relative overflow-hidden rounded-xl border bg-[var(--card)] transition-all hover:shadow-md",
+                    selectedImageIds.has(image.id)
+                      ? "border-[var(--primary)] ring-2 ring-[var(--primary)]/45"
+                      : "border-[var(--border)] hover:border-[var(--primary)]/30",
+                  )}
                 >
-                  <CustomEmojiTagButton image={image} onApply={(patch) => tag.mutate({ imageId: image.id, patch })} />
+                  {!selectingImages ? (
+                    <CustomEmojiTagButton image={image} onApply={(patch) => tag.mutate({ imageId: image.id, patch })} />
+                  ) : (
+                    <button
+                      type="button"
+                      aria-pressed={selectedImageIds.has(image.id)}
+                      aria-label={localizeUi("ui.gallery.batch.toggleImage")}
+                      onClick={() => toggleImageSelection(image.id)}
+                      className={cn(
+                        "absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border shadow-lg transition-colors",
+                        selectedImageIds.has(image.id)
+                          ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]"
+                          : "border-white/65 bg-black/55 text-transparent hover:bg-black/75",
+                      )}
+                    >
+                      <Check size="0.9rem" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="block aspect-square w-full bg-[var(--secondary)]"
-                    onClick={() => setLightbox(image)}
+                    onClick={() => (selectingImages ? toggleImageSelection(image.id) : setLightbox(image))}
                   >
                     <img
                       src={image.url}
                       alt={image.prompt || personaName || "Persona image"}
+                      loading="lazy"
+                      decoding="async"
                       className="h-full w-full object-cover"
                     />
                   </button>
-                  <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
-                    <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85">
+                  <div
+                    className={cn(
+                      "absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 transition-opacity",
+                      selectingImages && !selectedImageIds.has(image.id)
+                        ? "pointer-events-none opacity-0"
+                        : "opacity-0 group-hover:opacity-100 group-[&:focus-within]:opacity-100 max-md:opacity-100",
+                    )}
+                  >
+                    <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85 max-md:hidden">
                       {new Date(image.createdAt).toLocaleDateString()}
                     </span>
-                    <div className="flex gap-1">
-                      <a
-                        href={image.url}
-                        download
-                        className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
-                        title="Download"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Download size="0.75rem" />
-                      </a>
+                    <div className="ml-auto flex gap-1">
+                      {!selectingImages ? (
+                        <button
+                          type="button"
+                          onClick={() => onSetAvatar(image)}
+                          disabled={editorBusy}
+                          className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25 disabled:opacity-50"
+                          title={localizeUi("ui.personas.personagallerytab.setAsAvatar")}
+                        >
+                          {galleryAvatarPending ? (
+                            <Loader2 size="0.75rem" className="animate-spin" />
+                          ) : (
+                            <User size="0.75rem" />
+                          )}
+                        </button>
+                      ) : null}
+                      {selectingImages ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleBatchDownload()}
+                          className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
+                          title={localizeUi("ui.gallery.batch.download")}
+                        >
+                          <Download size="0.75rem" />
+                        </button>
+                      ) : (
+                        <a
+                          href={image.url}
+                          download
+                          className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
+                          title={localizeUi("ui.personas.personagallerytab.download")}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Download size="0.75rem" />
+                        </a>
+                      )}
                       <button
                         type="button"
-                        onClick={() => void handleDelete(image)}
-	                        className="rounded-lg bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                        title="Delete"
+                        onClick={() => void (selectingImages ? handleBatchDelete() : handleDelete(image))}
+                        disabled={remove.isPending}
+                        className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25 disabled:opacity-50"
+                        title={localizeUi(selectingImages ? "ui.gallery.batch.delete" : "lorebook.editor.batch.delete")}
                       >
                         <Trash2 size="0.75rem" />
                       </button>
@@ -436,9 +731,12 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
             <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
               <Camera size="1.75rem" className="text-[var(--muted-foreground)]/40" />
               <div>
-                <p className="text-sm font-medium text-[var(--muted-foreground)]">No persona images yet</p>
+                <p className="text-sm font-medium text-[var(--muted-foreground)]">
+                  {localizeUi("ui.personas.personagallerytab.noPersonaImagesYet")}
+                </p>
                 <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
-                  Upload images here to keep them tied to {personaName || "this persona"} instead of a specific chat.
+                  {localizeUi("ui.personas.personagallerytab.uploadImagesHereToKeepThemTiedTo")}{" "}
+                  {personaName || "this persona"} {localizeUi("ui.personas.personagallerytab.insteadOfASpecificChat")}
                 </p>
               </div>
             </div>
@@ -460,6 +758,15 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
               className="max-h-[85vh] w-full rounded-lg object-contain shadow-2xl"
             />
             <div className="absolute right-2 top-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => onSetAvatar(lightbox)}
+                disabled={editorBusy}
+                className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80 disabled:opacity-50"
+                title={localizeUi("ui.personas.personagallerytab.setAsAvatar")}
+              >
+                {galleryAvatarPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <User size="0.875rem" />}
+              </button>
               <a
                 href={lightbox.url}
                 download
@@ -467,6 +774,15 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
               >
                 <Download size="0.875rem" />
               </a>
+              <button
+                type="button"
+                onClick={() => void handleDelete(lightbox)}
+                className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
+                title={localizeUi("lorebook.editor.batch.delete")}
+                aria-label={localizeUi("lorebook.editor.batch.delete")}
+              >
+                <Trash2 size="0.875rem" />
+              </button>
               <button
                 type="button"
                 onClick={() => setLightbox(null)}
@@ -483,6 +799,7 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
 }
 
 function PersonaVideosGallery({ personaId, personaName }: { personaId: string; personaName?: string }) {
+  const { t: localizeUi } = useUiTranslation();
   const { data, isLoading } = usePersonaGalleryClips(personaId);
   const uploadVideo = useUploadPersonaGalleryVideo(personaId);
   const deleteClip = useDeletePersonaGalleryClip(personaId);
@@ -496,12 +813,18 @@ function PersonaVideosGallery({ personaId, personaName }: { personaId: string; p
         for (const file of files) {
           await uploadVideo.mutateAsync({ file });
         }
-        toast.success(files.length === 1 ? "Video uploaded." : "Videos uploaded.");
+        toast.success(
+          files.length === 1
+            ? localizeUi("ui.personas.personavideosgallery.videoUploaded")
+            : localizeUi("ui.personas.personavideosgallery.videosUploaded"),
+        );
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not upload video.");
+        toast.error(
+          error instanceof Error ? error.message : localizeUi("ui.personas.personavideosgallery.couldNotUploadVideo"),
+        );
       }
     },
-    [uploadVideo],
+    [uploadVideo, localizeUi],
   );
 
   const handleDeleteClip = useCallback(
@@ -509,9 +832,9 @@ function PersonaVideosGallery({ personaId, personaName }: { personaId: string; p
       if (!canDeletePersonaGalleryClip(clip)) return;
       if (
         !(await showConfirmDialog({
-          title: "Delete Clip",
-          message: "Delete this clip everywhere it appears in Marinara? This cannot be undone.",
-          confirmLabel: "Delete",
+          title: localizeUi("ui.personas.personavideosgallery.deleteClip"),
+          message: localizeUi("ui.personas.personavideosgallery.deleteThisClipEverywhereItAppearsInMarinaraThis"),
+          confirmLabel: localizeUi("lorebook.editor.batch.delete"),
           tone: "destructive",
         }))
       ) {
@@ -521,14 +844,16 @@ function PersonaVideosGallery({ personaId, personaName }: { personaId: string; p
       setDeletingClipId(clip.id);
       try {
         await deleteClip.mutateAsync(clip.id);
-        toast.success("Video deleted.");
+        toast.success(localizeUi("ui.personas.personavideosgallery.videoDeleted"));
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not delete video.");
+        toast.error(
+          error instanceof Error ? error.message : localizeUi("ui.personas.personavideosgallery.couldNotDeleteVideo"),
+        );
       } finally {
         setDeletingClipId(null);
       }
     },
-    [deleteClip],
+    [deleteClip, localizeUi],
   );
 
   if (isLoading) {
@@ -544,7 +869,7 @@ function PersonaVideosGallery({ personaId, personaName }: { personaId: string; p
   return (
     <div className="space-y-6">
       <ImageUploadDropzone
-        label="Upload Persona Videos"
+        label={localizeUi("ui.personas.personavideosgallery.uploadPersonaVideos")}
         pending={uploadVideo.isPending}
         pendingLabel="Uploading…"
         dragLabel="Drop persona videos to upload"
@@ -571,9 +896,12 @@ function PersonaVideosGallery({ personaId, personaName }: { personaId: string; p
         <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
           <Film size="1.75rem" className="text-[var(--muted-foreground)]/40" />
           <div>
-            <p className="text-sm font-medium text-[var(--muted-foreground)]">No persona videos yet</p>
+            <p className="text-sm font-medium text-[var(--muted-foreground)]">
+              {localizeUi("ui.personas.personavideosgallery.noPersonaVideosYet")}
+            </p>
             <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
-              Upload videos or generate game and scene videos from chats using {personaName || "this persona"}.
+              {localizeUi("ui.personas.personavideosgallery.uploadVideosOrGenerateGameAndSceneVideosFrom")}{" "}
+              {personaName || "this persona"}.
             </p>
           </div>
         </div>
@@ -583,6 +911,7 @@ function PersonaVideosGallery({ personaId, personaName }: { personaId: string; p
 }
 
 function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string; personaName?: string }) {
+  const { t: localizeUi } = useUiTranslation();
   const { data, isLoading } = usePersonaGalleryClips(personaId);
   const uploadClip = useUploadPersonaGalleryClip(personaId);
   const deleteClip = useDeletePersonaGalleryClip(personaId);
@@ -609,12 +938,14 @@ function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string
 
       try {
         await uploadClip.mutateAsync({ file });
-        toast.success("Call clip uploaded.");
+        toast.success(localizeUi("ui.personas.personacallclipsgallery.callClipUploaded"));
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not upload clip.");
+        toast.error(
+          error instanceof Error ? error.message : localizeUi("ui.personas.personacallclipsgallery.couldNotUploadClip"),
+        );
       }
     },
-    [uploadClip],
+    [uploadClip, localizeUi],
   );
 
   const handleGenerateCallClips = useCallback(
@@ -638,17 +969,21 @@ function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string
         }
         toast.success(
           customClip && standardKinds.length === 0
-            ? "Custom call clip generation started."
+            ? localizeUi("ui.personas.personacallclipsgallery.customCallClipGenerationStarted")
             : customClip
-              ? "Call clip and custom clip generation started."
-              : "Call clip generation started.",
+              ? localizeUi("ui.personas.personacallclipsgallery.callClipAndCustomClipGenerationStarted")
+              : localizeUi("ui.personas.personacallclipsgallery.callClipGenerationStarted"),
         );
         setGenerationDialogOpen(false);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not start call clip generation.");
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : localizeUi("ui.personas.personacallclipsgallery.couldNotStartCallClipGeneration"),
+        );
       }
     },
-    [generateCallClips, generateCustomCallClip],
+    [generateCallClips, generateCustomCallClip, localizeUi],
   );
 
   const handleDeleteClip = useCallback(
@@ -656,9 +991,9 @@ function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string
       if (!canDeletePersonaGalleryClip(clip)) return;
       if (
         !(await showConfirmDialog({
-          title: "Delete Clip",
-          message: "Delete this call clip? This cannot be undone.",
-          confirmLabel: "Delete",
+          title: localizeUi("ui.personas.personavideosgallery.deleteClip"),
+          message: localizeUi("ui.personas.personacallclipsgallery.deleteThisCallClipThisCannotBeUndone"),
+          confirmLabel: localizeUi("lorebook.editor.batch.delete"),
           tone: "destructive",
         }))
       ) {
@@ -668,14 +1003,20 @@ function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string
       setDeletingClipId(clip.id);
       try {
         await deleteClip.mutateAsync(clip.id);
-        toast.success(clip.source === "conversation-call" ? "Call clip reset." : "Clip deleted.");
+        toast.success(
+          clip.source === "conversation-call"
+            ? localizeUi("ui.personas.personacallclipsgallery.callClipReset")
+            : localizeUi("ui.personas.personacallclipsgallery.clipDeleted"),
+        );
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not delete clip.");
+        toast.error(
+          error instanceof Error ? error.message : localizeUi("ui.personas.personacallclipsgallery.couldNotDeleteClip"),
+        );
       } finally {
         setDeletingClipId(null);
       }
     },
-    [deleteClip],
+    [deleteClip, localizeUi],
   );
 
   if (isLoading) {
@@ -699,9 +1040,13 @@ function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string
       />
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-[var(--foreground)]">Video call clips</p>
+          <p className="text-sm font-semibold text-[var(--foreground)]">
+            {localizeUi("ui.personas.personacallclipsgallery.videoCallClips")}
+          </p>
           <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
-            {readyCallClipCount}/{standardCallClips.length || 6} standard ready · {customCallClipCount} custom
+            {readyCallClipCount}/{standardCallClips.length || 6}{" "}
+            {localizeUi("ui.personas.personacallclipsgallery.standardReady")} {customCallClipCount}{" "}
+            {localizeUi("ui.personas.personacallclipsgallery.custom")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -712,7 +1057,7 @@ function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors hover:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {uploadClip.isPending ? <Loader2 size="0.85rem" className="animate-spin" /> : <Upload size="0.85rem" />}
-            Upload extra
+            {localizeUi("ui.personas.personacallclipsgallery.uploadExtra")}
           </button>
           <button
             type="button"
@@ -725,7 +1070,9 @@ function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string
             ) : (
               <Wand2 size="0.85rem" />
             )}
-            {generateCallClips.isPending || generateCustomCallClip.isPending ? "Generating" : "Generate Clips"}
+            {generateCallClips.isPending || generateCustomCallClip.isPending
+              ? localizeUi("ui.personas.personacallclipsgallery.generating")
+              : localizeUi("ui.personas.personacallclipsgallery.generateClips")}
           </button>
         </div>
       </div>
@@ -746,9 +1093,12 @@ function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string
         <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
           <Film size="1.75rem" className="text-[var(--muted-foreground)]/40" />
           <div>
-            <p className="text-sm font-medium text-[var(--muted-foreground)]">No call clips yet</p>
+            <p className="text-sm font-medium text-[var(--muted-foreground)]">
+              {localizeUi("ui.personas.personacallclipsgallery.noCallClipsYet")}
+            </p>
             <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
-              Generate or upload video-call loops for {personaName || "this persona"}.
+              {localizeUi("ui.personas.personacallclipsgallery.generateOrUploadVideoCallLoopsFor")}{" "}
+              {personaName || "this persona"}.
             </p>
           </div>
         </div>
@@ -775,6 +1125,7 @@ function PersonaClipCard({
   deleting: boolean;
   onDelete: (clip: CharacterGalleryClip) => void | Promise<void>;
 }) {
+  const { t: localizeUi } = useUiTranslation();
   const sourceLabel = clip.origin === "uploaded" ? "Uploaded" : personaGalleryClipSourceLabel(clip.source);
   const dateLabel = formatPersonaClipDate(clip.updatedAt ?? clip.createdAt);
   const isReady = clip.status === "ready" && Boolean(clip.url);
@@ -804,7 +1155,9 @@ function PersonaClipCard({
             ) : (
               <Film size="1.25rem" className="opacity-50" />
             )}
-            <span>{clip.status === "missing" ? "Not generated" : clip.status}</span>
+            <span>
+              {clip.status === "missing" ? localizeUi("ui.personas.personaclipcard.notGenerated") : clip.status}
+            </span>
           </div>
         )}
         <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/65 px-2 py-1 text-[0.65rem] font-semibold text-white">
@@ -818,7 +1171,9 @@ function PersonaClipCard({
               {clip.label || personaName || "Clip"}
             </p>
             <p className="mt-0.5 truncate text-[0.6875rem] text-[var(--muted-foreground)]">
-              {clip.chatName ? `${clip.chatName} · ${dateLabel}` : dateLabel}
+              {clip.chatName
+                ? localizeUi("ui.personas.personaclipcard.value1Value2", { value1: clip.chatName, value2: dateLabel })
+                : dateLabel}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -827,7 +1182,7 @@ function PersonaClipCard({
                 href={clip.url}
                 download
                 className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-                title="Download"
+                title={localizeUi("ui.personas.personagallerytab.download")}
               >
                 <Download size="0.75rem" />
               </a>
@@ -837,9 +1192,11 @@ function PersonaClipCard({
                 type="button"
                 onClick={() => void onDelete(clip)}
                 disabled={deleting}
-	                className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
-                title="Delete"
-                aria-label={`Delete ${clip.label || "clip"}`}
+                className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
+                title={localizeUi("lorebook.editor.batch.delete")}
+                aria-label={localizeUi("ui.personas.personaclipcard.deleteValue1", {
+                  value1: clip.label || localizeUi("ui.panels.ttsconfigcard.clip"),
+                })}
               >
                 {deleting ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />}
               </button>
@@ -855,22 +1212,8 @@ function PersonaClipCard({
   );
 }
 
-function parsePersonaRpgStats(personaStats: string): RPGStatsConfig | undefined {
-  if (!personaStats.trim()) return undefined;
-
-  try {
-    const parsed = JSON.parse(personaStats) as { rpgStats?: RPGStatsConfig } | null;
-    if (!parsed || typeof parsed !== "object" || !parsed.rpgStats || typeof parsed.rpgStats !== "object") {
-      return undefined;
-    }
-    return parsed.rpgStats;
-  } catch {
-    return undefined;
-  }
-}
-
 function createCharacterDataFromPersona(formData: PersonaFormData): CharacterData {
-  const rpgStats = parsePersonaRpgStats(formData.personaStats);
+  const rpgStats = formData.personaStats?.rpgStats;
 
   return {
     name: formData.name.trim(),
@@ -908,246 +1251,508 @@ function createCharacterDataFromPersona(formData: PersonaFormData): CharacterDat
 }
 
 export function PersonaEditor() {
+  const { t: localizeUi } = useUiTranslation();
   const personaId = useUIStore((s) => s.personaDetailId);
+  const personaInitialTab = useUIStore((s) => s.personaDetailInitialTab) as TabId | null;
   const closeDetail = useUIStore((s) => s.closePersonaDetail);
   const { data: allPersonas, isLoading } = usePersonas();
   const createCharacter = useCreateCharacter();
   const updatePersona = useUpdatePersona();
   const uploadCharacterAvatar = useUploadAvatar();
   const uploadAvatar = useUploadPersonaAvatar();
+  const setGalleryImageAsAvatar = useSetPersonaGalleryImageAsAvatar(personaId ?? "");
   const deletePersona = useDeletePersona();
   const duplicatePersona = useDuplicatePersona();
+  const uploadCharacterSheet = useUploadPersonaGalleryImage(personaId ?? "");
   const { data: connectionsList } = useConnections();
 
-  const [activeTab, setActiveTab] = useState<TabId>("metadata");
-  const [formData, setFormData] = useState<PersonaFormData | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>(() => personaInitialTab ?? "metadata");
+  useEffect(() => {
+    setActiveTab(personaInitialTab ?? "metadata");
+  }, [personaId, personaInitialTab]);
+  // ── Editor state machine ──
+  // The draft and the authoritative baseline are each held in a ref *and* in
+  // state, always written together through the commit helpers below. The refs are
+  // what asynchronous save/upload continuations read, so reconciliation never
+  // depends on a render having happened; the state is what re-renders the UI.
+  const [formData, setFormDataState] = useState<PersonaFormData | null>(null);
+  const formDataRef = useRef<PersonaFormData | null>(null);
+  const [baselineForm, setBaselineFormState] = useState<PersonaFormData | null>(null);
+  const baselineFormRef = useRef<PersonaFormData | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [avatarGeneratorOpen, setAvatarGeneratorOpen] = useState(false);
+  const [characterSheetGeneratorOpen, setCharacterSheetGeneratorOpen] = useState(false);
   const loadedPersonaIdRef = useRef<string | null>(null);
-  const loadedTrackerCardColorsRef = useRef<string | null>(null);
-  const latestAvatarUploadTokenRef = useRef<string | null>(null);
+  /** Authoritative avatar path last reconciled into the editor. */
+  const authoritativeAvatarPathRef = useRef<string | null>(null);
+  /** Which image the *draft* crop is framed against. Crop ownership is bound to
+   *  avatar identity, so a replacement image never inherits the old framing. */
+  const avatarCropOwnerRef = useRef<string | null>(null);
+  /** Per-field monotonic edit versions. Ordering evidence for reconciling an
+   *  in-flight save only — never the source of truth for dirty. */
+  const fieldVersionsRef = useRef<Map<keyof PersonaFormData, number>>(new Map());
+  /** Identity token invalidated on Persona switch and unmount, so a stale
+   *  completion can still update shared caches but never local editor state. */
+  const editorSessionRef = useRef<string>(generateClientId());
+  /** The single operation mutex: an immediate ref so two clicks in one tick
+   *  cannot both pass, plus render state for the disabled/spinner UI. */
+  const mutationTokenRef = useRef<string | null>(null);
+  const mutationKindRef = useRef<PersonaMutationKind | null>(null);
+  const [mutationKind, setMutationKind] = useState<PersonaMutationKind | null>(null);
   const formatQuotes = useQuoteFormatter();
   const setEditorDirty = useUIStore((s) => s.setEditorDirty);
+  const [showUnsavedWarning, setShowUnsavedWarning] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const commitFormData = useCallback((next: PersonaFormData | null) => {
+    formDataRef.current = next;
+    setFormDataState(next);
+  }, []);
+
+  const commitBaseline = useCallback((next: PersonaFormData | null) => {
+    baselineFormRef.current = next;
+    setBaselineFormState(next);
+  }, []);
+
+  // Dirty is a value comparison against the authoritative baseline, so a field
+  // edited and then reverted stops being dirty and stops being sent.
+  const changedFieldKeys = useMemo(
+    () => (formData && baselineForm ? personaFieldsDifferingFromBaseline(formData, baselineForm) : []),
+    [formData, baselineForm],
+  );
+  const dirty = changedFieldKeys.length > 0;
   useEffect(() => {
     setEditorDirty(dirty);
   }, [dirty, setEditorDirty]);
-  const [saving, setSaving] = useState(false);
-  const [showUnsavedWarning, setShowUnsavedWarning] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const mutationBusy = mutationKind !== null;
+  const saving = mutationKind === "save";
+  const avatarBusy = mutationKind === "avatar" || mutationKind === "gallery-avatar";
+
+  const beginMutation = useCallback((kind: PersonaMutationKind) => {
+    if (mutationTokenRef.current) return null;
+    const token = generateClientId();
+    mutationTokenRef.current = token;
+    mutationKindRef.current = kind;
+    setMutationKind(kind);
+    return token;
+  }, []);
+
+  const finishMutation = useCallback((token: string) => {
+    if (mutationTokenRef.current !== token) return;
+    mutationTokenRef.current = null;
+    mutationKindRef.current = null;
+    setMutationKind(null);
+  }, []);
+
+  /** True while the completion still belongs to the mounted editor session.
+   *  Anything else may touch caches but not local state. */
+  const isCurrentEditorSession = useCallback(
+    (session: string) => editorSessionRef.current === session,
+    [],
+  );
   const imageGenerationAvailable =
     Array.isArray(connectionsList) &&
     (connectionsList as Array<{ provider?: string }>).some((connection) => connection.provider === "image_generation");
 
-  // Find the persona from the list
-  const rawPersona = (allPersonas as PersonaRow[] | undefined)?.find((p) => p.id === personaId);
+  // Find the persona from the decoded list returned by usePersonas.
+  const rawPersona = allPersonas?.find((p) => p.id === personaId);
 
-  // Parse persona into form data when it first loads (or when switching personas).
-  // Important: don't overwrite local unsaved edits if server data refetches (e.g. after avatar upload).
+  /**
+   * Reconcile an authoritative Persona into the editor: untouched fields adopt
+   * server values, local edits survive, and unchanged submitted versions force
+   * canonical response values. The authoritative form becomes the new baseline,
+   * so dirty always means "draft differs from current server truth".
+   */
+  const adoptAuthoritativePersona = useCallback(
+    (
+      persona: Persona,
+      options: {
+        submittedVersions?: ReadonlyMap<keyof PersonaFormData, number>;
+        adoptAvatar?: boolean;
+      } = {},
+    ) => {
+      const authoritative = personaFormFromPersona(persona);
+      const draft = formDataRef.current;
+      const baseline = baselineFormRef.current;
+      let nextDraft = authoritative;
+
+      if (draft && baseline) {
+        nextDraft = options.submittedVersions
+          ? reconcileVersionedPersonaEditorSave({
+              draft,
+              baseline,
+              authoritative,
+              submittedVersions: options.submittedVersions,
+              currentVersions: fieldVersionsRef.current,
+            })
+          : mergeAuthoritativePersonaEditorDraft(draft, baseline, authoritative);
+      }
+
+      if (options.adoptAvatar !== false) {
+        // Crop ownership is bound to avatar identity: when the image behind the
+        // editor changed, a crop framed against the replaced image is discarded
+        // rather than reapplied to a differently framed picture.
+        if (avatarCropOwnerRef.current !== persona.avatarPath) {
+          nextDraft = { ...nextDraft, avatarCrop: authoritative.avatarCrop };
+          fieldVersionsRef.current.delete("avatarCrop");
+          avatarCropOwnerRef.current = persona.avatarPath;
+        }
+        authoritativeAvatarPathRef.current = persona.avatarPath;
+        setAvatarPreview(persona.avatarPath);
+      }
+
+      commitBaseline(authoritative);
+      commitFormData(nextDraft);
+    },
+    [commitBaseline, commitFormData],
+  );
+
+  // Hydrate the form from the shared decoded persona. usePersonas returns projected
+  // Persona values, so structured fields are already decoded here.
+  // A Persona switch resets identity, baseline, draft, versions, and preview. A
+  // same-id refetch merges authoritative changes into untouched fields — including
+  // non-avatar fields changed by the inline editor, Tracker settings, or another
+  // client — while every locally edited field survives.
   useEffect(() => {
     if (!rawPersona) return;
 
-    const isSwitchingPersona = loadedPersonaIdRef.current !== rawPersona.id;
-    if (!isSwitchingPersona && dirty) return;
-
-    loadedPersonaIdRef.current = rawPersona.id;
-
-    let parsedAvatarCrop: AvatarCrop | LegacyAvatarCrop | null = null;
-    try {
-      const raw = rawPersona.avatarCrop;
-      if (raw) {
-        const obj = JSON.parse(raw);
-        // Defensive: accept either the current source-relative shape or the
-        // legacy zoom+offset shape. Anything else is silently dropped so a
-        // malformed cell can't break the editor with NaN transforms.
-        if (obj && typeof obj === "object") {
-          // Validate geometry — finite, positive, within normalized bounds.
-          // Anything malformed is dropped so the editor falls back to defaults
-          // instead of producing NaN transforms or an off-screen overlay.
-          if (
-            Number.isFinite(obj.srcX) &&
-            Number.isFinite(obj.srcY) &&
-            Number.isFinite(obj.srcWidth) &&
-            Number.isFinite(obj.srcHeight) &&
-            obj.srcWidth > 0 &&
-            obj.srcHeight > 0 &&
-            obj.srcX >= 0 &&
-            obj.srcY >= 0 &&
-            obj.srcX + obj.srcWidth <= 1.001 &&
-            obj.srcY + obj.srcHeight <= 1.001
-          ) {
-            parsedAvatarCrop = {
-              srcX: obj.srcX,
-              srcY: obj.srcY,
-              srcWidth: obj.srcWidth,
-              srcHeight: obj.srcHeight,
-            };
-          } else if (
-            Number.isFinite(obj.zoom) &&
-            Number.isFinite(obj.offsetX) &&
-            Number.isFinite(obj.offsetY) &&
-            obj.zoom > 0
-          ) {
-            parsedAvatarCrop = {
-              zoom: obj.zoom,
-              offsetX: obj.offsetX,
-              offsetY: obj.offsetY,
-              ...(obj.fullImage ? { fullImage: true } : {}),
-            };
-          }
-        }
-      }
-    } catch {
-      /* ignore — empty / malformed crop just stays null */
+    if (loadedPersonaIdRef.current !== rawPersona.id) {
+      const authoritative = personaFormFromPersona(rawPersona);
+      loadedPersonaIdRef.current = rawPersona.id;
+      editorSessionRef.current = generateClientId();
+      mutationTokenRef.current = null;
+      mutationKindRef.current = null;
+      setMutationKind(null);
+      fieldVersionsRef.current.clear();
+      authoritativeAvatarPathRef.current = rawPersona.avatarPath;
+      avatarCropOwnerRef.current = rawPersona.avatarPath;
+      setAvatarPreview(rawPersona.avatarPath);
+      commitBaseline(authoritative);
+      commitFormData(authoritative);
+      return;
     }
 
-    const trackerCardColors = parseTrackerCardColorConfig(rawPersona.trackerCardColors);
-    loadedTrackerCardColorsRef.current = serializeTrackerCardColorConfig(trackerCardColors);
-    setFormData({
-      name: rawPersona.name,
-      comment: rawPersona.comment ?? "",
-      phoneticName: rawPersona.phoneticName ?? "",
-      creator: rawPersona.creator ?? "",
-      personaVersion: rawPersona.personaVersion ?? "1.0",
-      creatorNotes: rawPersona.creatorNotes ?? "",
-      description: rawPersona.description,
-      personality: rawPersona.personality ?? "",
-      scenario: rawPersona.scenario ?? "",
-      backstory: rawPersona.backstory ?? "",
-      appearance: rawPersona.appearance ?? "",
-      nameColor: rawPersona.nameColor ?? "",
-      dialogueColor: rawPersona.dialogueColor ?? "",
-      boxColor: rawPersona.boxColor ?? "",
-      trackerCardColors,
-      personaStats: rawPersona.personaStats ?? "",
-      tags: (() => {
-        try {
-          return rawPersona.tags ? JSON.parse(rawPersona.tags) : [];
-        } catch {
-          return [];
-        }
-      })(),
-      savedStatusOptions: rawPersona.savedStatusOptions ?? "[]",
-      convoDisplayName: rawPersona.convoDisplayName ?? "",
-      aboutMe: rawPersona.aboutMe ?? "",
-      convoBehavior: (() => {
-        if (!rawPersona.convoBehavior?.trim()) return null;
-        try {
-          const parsed = JSON.parse(rawPersona.convoBehavior) as ConvoBehaviorConfig;
-          return parsed && typeof parsed.instruction === "string" ? parsed : null;
-        } catch {
-          return null;
-        }
-      })(),
-      avatarCrop: parsedAvatarCrop,
-    });
-    setAvatarPreview(rawPersona.avatarPath);
-    setDirty(false);
-  }, [rawPersona, dirty]);
+    // An avatar/gallery replacement owns the preview and crop until it settles;
+    // an interim refetch must not flip the image back and forth underneath it.
+    const avatarOperationActive = mutationKindRef.current === "avatar" || mutationKindRef.current === "gallery-avatar";
+    const baseline = baselineFormRef.current;
+    const avatarUnchanged = authoritativeAvatarPathRef.current === rawPersona.avatarPath;
+    if (
+      baseline &&
+      avatarUnchanged &&
+      personaFieldsDifferingFromBaseline(personaFormFromPersona(rawPersona), baseline).length === 0
+    ) {
+      return;
+    }
+    adoptAuthoritativePersona(rawPersona, { adoptAvatar: !avatarOperationActive });
+  }, [rawPersona, mutationKind, adoptAuthoritativePersona, commitBaseline, commitFormData]);
+
+  // Forced teardown (unmount, or a Persona switch that never re-hydrates) drops the
+  // local identity so an in-flight completion can still update shared caches through
+  // the hooks but can no longer write this editor's state.
+  useEffect(() => {
+    return () => {
+      editorSessionRef.current = generateClientId();
+      loadedPersonaIdRef.current = null;
+      mutationTokenRef.current = null;
+      mutationKindRef.current = null;
+    };
+  }, [personaId]);
 
   const updateField = useCallback(
     <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => {
+      const previous = formDataRef.current;
+      if (!previous) return;
       const nextValue = formatPersonaFieldValue(key, value, formatQuotes);
-      setFormData((prev) => (prev ? { ...prev, [key]: nextValue } : prev));
-      setDirty(true);
+      // Versions record *when* a field was edited, for save-completion ordering.
+      // Whether it is dirty is decided by comparison against the baseline.
+      fieldVersionsRef.current.set(key, (fieldVersionsRef.current.get(key) ?? 0) + 1);
+      commitFormData({ ...previous, [key]: nextValue });
     },
-    [formatQuotes],
+    [commitFormData, formatQuotes],
   );
 
-  const handleSave = async () => {
-    if (!personaId || !formData) return;
-    setSaving(true);
-    try {
-      const { tags, avatarCrop, convoBehavior, trackerCardColors, ...rest } = formData;
-      const serializedTrackerCardColors = serializeTrackerCardColorConfig(trackerCardColors);
-      const trackerCardColorsChanged = serializedTrackerCardColors !== loadedTrackerCardColorsRef.current;
-      await updatePersona.mutateAsync({
-        id: personaId,
-        ...rest,
-        tags: JSON.stringify(tags),
-        ...(trackerCardColorsChanged ? { trackerCardColors: serializedTrackerCardColors } : {}),
-        // Persist as JSON string; empty string means "no crop" so the row keeps
-        // the legacy default in render sites.
-        avatarCrop: avatarCrop ? JSON.stringify(avatarCrop) : "",
-        // convoBehavior is a JSON-string column; "" means unset.
-        convoBehavior: convoBehavior && convoBehavior.instruction?.trim() ? JSON.stringify(convoBehavior) : "",
-      });
-      if (trackerCardColorsChanged) loadedTrackerCardColorsRef.current = serializedTrackerCardColors;
-      setDirty(false);
-    } finally {
-      setSaving(false);
+  const handleGeneratedCharacterSheet = useCallback(
+    async (dataUrl: string) => {
+      let file: File;
+      try {
+        file = dataImageUrlToFile(dataUrl, `${formData?.name || "persona"}-sheet`);
+      } catch {
+        throw new Error(localizeUi("ui.characters.charactersheet.generatedSaveFailed"));
+      }
+      const uploaded = await uploadCharacterSheet.mutateAsync([file]);
+      const image = uploaded[0];
+      if (!image) throw new Error(localizeUi("ui.characters.charactersheet.generatedSaveFailed"));
+      updateField("characterSheetImageId", image.id);
+      toast.success(localizeUi("ui.characters.charactersheet.created"));
+    },
+    [formData?.name, localizeUi, updateField, uploadCharacterSheet],
+  );
+
+  /** Resolves true when the save landed and no later draft change is still unsaved. */
+  const handleSave = useCallback(async () => {
+    const draft = formDataRef.current;
+    const baseline = baselineFormRef.current;
+    if (!personaId || !draft || !baseline) return false;
+    // Rejected locally: an empty name never reaches the network and the draft is kept.
+    if (!draft.name.trim()) {
+      toast.error(localizeUi("ui.personas.personaeditor.nameIsRequired"));
+      return false;
     }
-  };
 
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const submittedFields = personaFieldsDifferingFromBaseline(draft, baseline);
+    if (submittedFields.length === 0) return true;
+
+    const saveToken = beginMutation("save");
+    if (!saveToken) return false;
+    const session = editorSessionRef.current;
+    const savedPersonaId = personaId;
+    // Ordering snapshot: which fields went out, and at which edit version. Text
+    // inputs stay editable during the save, so this is what tells a later edit
+    // apart from a field the server may legitimately canonicalize.
+    const submittedVersions = new Map(submittedFields.map((key) => [key, fieldVersionsRef.current.get(key) ?? 0]));
+
+    try {
+      const authoritativePersona = await updatePersona.mutateAsync({
+        id: savedPersonaId,
+        // Sparse by value: exactly the decoded fields that differ from the baseline.
+        ...pickPersonaUpdateFields(draft, submittedFields),
+      });
+      if (!isCurrentEditorSession(session)) return false;
+      adoptAuthoritativePersona(authoritativePersona, { submittedVersions });
+      const remaining =
+        formDataRef.current && baselineFormRef.current
+          ? personaFieldsDifferingFromBaseline(formDataRef.current, baselineFormRef.current)
+          : [];
+      return remaining.length === 0;
+    } catch (error) {
+      if (!isCurrentEditorSession(session)) return false;
+      console.error("[PersonaEditor] Save failed:", error);
+      toast.error(formatFirstApiValidationIssue(error, localizeUi("ui.personas.personaeditor.failedToSavePersona")));
+      return false;
+    } finally {
+      finishMutation(saveToken);
+    }
+  }, [
+    adoptAuthoritativePersona,
+    beginMutation,
+    finishMutation,
+    isCurrentEditorSession,
+    localizeUi,
+    personaId,
+    updatePersona,
+  ]);
+
+  /**
+   * Replace the Persona avatar from an already-read data URL. The caller owns the
+   * mutex token; this owns the optimistic preview, the crop hand-off, and the
+   * reconciliation of the authoritative Persona the upload route returns.
+   */
+  const replaceAvatar = useCallback(
+    async ({
+      avatar,
+      filename,
+      operationToken,
+      uploadPersonaId,
+      session,
+      previousAvatarPreview,
+      previousAvatarCrop,
+    }: {
+      avatar: string;
+      filename: string;
+      operationToken: string;
+      uploadPersonaId: string;
+      session: string;
+      previousAvatarPreview: string | null;
+      previousAvatarCrop: AvatarCrop | null;
+    }) => {
+      const stillCurrent = () =>
+        isCurrentEditorSession(session) && mutationTokenRef.current === operationToken;
+      if (!stillCurrent()) return false;
+
+      // The pending image is its own crop owner, so the incoming picture is never
+      // framed with the replaced image's crop.
+      avatarCropOwnerRef.current = operationToken;
+      setAvatarPreview(avatar);
+      updateField("avatarCrop", null);
+      const clearedCropVersion = fieldVersionsRef.current.get("avatarCrop");
+
+      try {
+        const authoritativePersona = await uploadAvatar.mutateAsync({ id: uploadPersonaId, avatar, filename });
+        if (!stillCurrent()) return false;
+        // Adopt the authoritative avatar path and the crop the server cleared for
+        // the new image, while every unrelated dirty field stays dirty.
+        adoptAuthoritativePersona(authoritativePersona, { adoptAvatar: true });
+        return true;
+      } catch (error) {
+        // Roll back only when nothing newer superseded this operation.
+        if (stillCurrent() && fieldVersionsRef.current.get("avatarCrop") === clearedCropVersion) {
+          const draft = formDataRef.current;
+          avatarCropOwnerRef.current = authoritativeAvatarPathRef.current;
+          setAvatarPreview(previousAvatarPreview);
+          if (draft) commitFormData({ ...draft, avatarCrop: previousAvatarCrop });
+        }
+        throw error;
+      }
+    },
+    [adoptAuthoritativePersona, commitFormData, isCurrentEditorSession, updateField, uploadAvatar],
+  );
+
+  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file || !personaId) return;
+    // Reserved before the asynchronous file read starts, not after it resolves:
+    // the editor must already read as busy while the picture is being decoded.
+    const mutationToken = beginMutation("avatar");
+    if (!mutationToken) return;
 
-    const uploadToken = generateClientId();
-    latestAvatarUploadTokenRef.current = uploadToken;
-    const fallbackAvatarPath = rawPersona?.avatarPath ?? null;
-    // Capture the saved crop so we can revert if the upload fails. The new image
-    // almost certainly has different framing/dimensions, so the old normalized
-    // crop coords are meaningless for it — clear immediately on upload start
-    // and let the cropper re-init from default centered max-square.
-    const fallbackAvatarCrop = formData?.avatarCrop ?? null;
+    const uploadPersonaId = personaId;
+    const session = editorSessionRef.current;
+    const fallbackAvatarPreview = avatarPreview;
+    const fallbackAvatarCrop = formDataRef.current?.avatarCrop ?? null;
 
     const reader = new FileReader();
-    reader.onload = async () => {
-      if (latestAvatarUploadTokenRef.current !== uploadToken) return;
-      const dataUrl = reader.result as string;
-      setAvatarPreview(dataUrl);
-      updateField("avatarCrop", null);
-      try {
-        await uploadAvatar.mutateAsync({
-          id: personaId,
-          avatar: dataUrl,
-          filename: `persona-${personaId}-${Date.now()}.${file.name.split(".").pop()}`,
-        });
-      } catch {
-        if (latestAvatarUploadTokenRef.current !== uploadToken) return;
-        setAvatarPreview(fallbackAvatarPath);
-        updateField("avatarCrop", fallbackAvatarCrop);
+    reader.onload = () => {
+      void replaceAvatar({
+        avatar: reader.result as string,
+        filename: `persona-${uploadPersonaId}-${Date.now()}.${file.name.split(".").pop()}`,
+        operationToken: mutationToken,
+        uploadPersonaId,
+        session,
+        previousAvatarPreview: fallbackAvatarPreview,
+        previousAvatarCrop: fallbackAvatarCrop,
+      })
+        .catch((error: unknown) => {
+          if (!isCurrentEditorSession(session)) return;
+          toast.error(
+            formatFirstApiValidationIssue(error, localizeUi("ui.personas.personaeditor.failedToSavePersona")),
+          );
+        })
+        .finally(() => finishMutation(mutationToken));
+    };
+    reader.onerror = () => {
+      if (isCurrentEditorSession(session)) {
+        toast.error(localizeUi("ui.personas.personaeditor.failedToSavePersona"));
       }
+      finishMutation(mutationToken);
     };
     reader.readAsDataURL(file);
-    e.target.value = "";
   };
 
   const handleGeneratedAvatar = useCallback(
     async (avatarDataUrl: string) => {
       if (!personaId) return;
-      const uploadToken = generateClientId();
-      latestAvatarUploadTokenRef.current = uploadToken;
-      setAvatarPreview(avatarDataUrl);
-      // Same rationale as handleAvatarUpload — a freshly generated avatar
-      // shouldn't inherit the prior image's crop coords.
-      updateField("avatarCrop", null);
-      await uploadAvatar.mutateAsync({
-        id: personaId,
-        avatar: avatarDataUrl,
-        filename: `persona-${personaId}-${Date.now()}.png`,
-      });
-      toast.success("Persona avatar generated.");
+      const mutationToken = beginMutation("avatar");
+      // The generator modal can outlive the click that opened it, so a write that
+      // started meanwhile is reported instead of silently dropping the picture.
+      if (!mutationToken) throw new Error(localizeUi("ui.personas.personaeditor.failedToSavePersona"));
+      const uploadPersonaId = personaId;
+      const session = editorSessionRef.current;
+      try {
+        const replaced = await replaceAvatar({
+          avatar: avatarDataUrl,
+          filename: `persona-${uploadPersonaId}-${Date.now()}.png`,
+          operationToken: mutationToken,
+          uploadPersonaId,
+          session,
+          previousAvatarPreview: avatarPreview,
+          previousAvatarCrop: formDataRef.current?.avatarCrop ?? null,
+        });
+        if (replaced) toast.success(localizeUi("ui.personas.personaeditor.personaAvatarGenerated"));
+      } finally {
+        finishMutation(mutationToken);
+      }
     },
-    [personaId, updateField, uploadAvatar],
+    [avatarPreview, beginMutation, finishMutation, localizeUi, personaId, replaceAvatar],
+  );
+
+  /** Assigning a gallery image replaces the avatar, so it shares the editor mutex
+   *  and reconciles the same way an upload does. */
+  const handleSetGalleryAvatar = useCallback(
+    (image: PersonaGalleryImage) => {
+      if (!personaId) return;
+      const mutationToken = beginMutation("gallery-avatar");
+      if (!mutationToken) return;
+      const session = editorSessionRef.current;
+      // The assigned image becomes the crop owner; an old dirty crop is dropped
+      // rather than reapplied to the newly assigned picture.
+      avatarCropOwnerRef.current = mutationToken;
+
+      void setGalleryImageAsAvatar
+        .mutateAsync(image.id)
+        .then((authoritativePersona) => {
+          if (!isCurrentEditorSession(session)) return;
+          if (mutationTokenRef.current !== mutationToken) return;
+          adoptAuthoritativePersona(authoritativePersona, { adoptAvatar: true });
+          toast.success(localizeUi("ui.personas.personagallerytab.personaAvatarUpdated"));
+        })
+        .catch((error: unknown) => {
+          if (!isCurrentEditorSession(session)) return;
+          if (mutationTokenRef.current === mutationToken) {
+            avatarCropOwnerRef.current = authoritativeAvatarPathRef.current;
+          }
+          toast.error(
+            formatFirstApiValidationIssue(
+              error,
+              localizeUi("ui.personas.personagallerytab.failedToUpdatePersonaAvatar"),
+            ),
+          );
+        })
+        .finally(() => finishMutation(mutationToken));
+    },
+    [
+      adoptAuthoritativePersona,
+      beginMutation,
+      finishMutation,
+      isCurrentEditorSession,
+      localizeUi,
+      personaId,
+      setGalleryImageAsAvatar,
+    ],
   );
 
   const handleDelete = async () => {
     if (!personaId) return;
+    // Confirmation belongs to the currently loaded Persona epoch, not whichever
+    // Persona happens to occupy this reused editor when the dialog later settles.
+    const deletedPersonaId = personaId;
+    const session = editorSessionRef.current;
     if (
       !(await showConfirmDialog({
-        title: "Delete Persona",
-        message: "Are you sure you want to delete this persona?",
-        confirmLabel: "Delete",
+        title: localizeUi("ui.personas.personaeditor.deletePersona_0b2415a"),
+        message: localizeUi("dialog.delete.namedPermanent", {
+          name: rawPersona?.name || localizeUi("ui.characters.cardlibrarydetailcard.persona"),
+        }),
+        confirmLabel: localizeUi("lorebook.editor.batch.delete"),
         tone: "destructive",
       }))
     ) {
       return;
     }
-    await deletePersona.mutateAsync(personaId);
-    closeDetail();
+
+    // A programmatic navigation can replace the editor while confirmation waits.
+    // Stale confirmations silently do nothing; only the original owner may acquire
+    // Delete's immediate mutex and issue the destructive request.
+    if (!isCurrentEditorSession(session) || loadedPersonaIdRef.current !== deletedPersonaId) return;
+    const deleteToken = beginMutation("delete");
+    if (!deleteToken) return;
+    try {
+      await deletePersona.mutateAsync(deletedPersonaId);
+      if (isCurrentEditorSession(session) && loadedPersonaIdRef.current === deletedPersonaId) closeDetail();
+    } catch (error) {
+      if (!isCurrentEditorSession(session) || loadedPersonaIdRef.current !== deletedPersonaId) return;
+      console.error("[PersonaEditor] Delete failed:", error);
+      toast.error(
+        formatFirstApiValidationIssue(error, localizeUi("ui.personas.personaeditor.failedToDeletePersona")),
+      );
+    } finally {
+      // A failure retains the editor and draft; success closes once above. An old
+      // completion cannot clear a newer session's operation token.
+      finishMutation(deleteToken);
+    }
   };
 
   const getAvatarDataUrl = useCallback(async (src: string) => {
@@ -1178,7 +1783,7 @@ export function PersonaEditor() {
 
     const characterName = formData.name.trim();
     if (!characterName) {
-      toast.error("Persona needs a name before it can be added as a character.");
+      toast.error(localizeUi("ui.personas.personaeditor.personaNeedsANameBeforeItCanBeAdded"));
       return;
     }
 
@@ -1201,31 +1806,50 @@ export function PersonaEditor() {
           });
         } catch (error) {
           console.warn("[PersonaEditor] Failed to copy avatar to added character:", error);
-          toast.error("Character added, but the avatar could not be copied.");
+          toast.error(localizeUi("ui.personas.personaeditor.characterAddedButTheAvatarCouldNotBeCopied"));
           return;
         }
       }
 
-      toast.success(`Added "${characterName}" as a character.`);
+      toast.success(localizeUi("ui.personas.personaeditor.addedValue1AsACharacter", { value1: characterName }));
     } catch (error) {
       console.error("[PersonaEditor] Failed to add persona as character:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to add persona as character.");
+      toast.error(
+        error instanceof Error ? error.message : localizeUi("ui.personas.personaeditor.failedToAddPersonaAsCharacter"),
+      );
     }
-  }, [avatarPreview, createCharacter, formData, getAvatarDataUrl, uploadCharacterAvatar]);
+  }, [avatarPreview, createCharacter, formData, getAvatarDataUrl, uploadCharacterAvatar, localizeUi]);
 
   const handleClose = useCallback(() => {
-    if (dirty) {
+    // Read immediate refs so a local Back click cannot race a write or draft update.
+    if (mutationTokenRef.current) return;
+    const draft = formDataRef.current;
+    const baseline = baselineFormRef.current;
+    const dirtyNow =
+      draft !== null && baseline !== null && personaFieldsDifferingFromBaseline(draft, baseline).length > 0;
+    if (dirtyNow) {
       setShowUnsavedWarning(true);
       return;
     }
     closeDetail();
-  }, [dirty, closeDetail]);
+  }, [closeDetail]);
 
-  const forceClose = useCallback(() => {
+  const keepEditing = useCallback(() => {
     setShowUnsavedWarning(false);
-    setDirty(false);
+  }, []);
+
+  const discardAndNavigate = useCallback(() => {
+    // A write may have started after the warning opened; never discard under it.
+    if (mutationTokenRef.current) return;
     closeDetail();
   }, [closeDetail]);
+
+  const handleSaveAndClose = useCallback(async () => {
+    if (mutationTokenRef.current) return;
+    const savedAndClean = await handleSave();
+    // Only close when the save landed and no edit made during it is still unsaved.
+    if (savedAndClean && !mutationTokenRef.current) closeDetail();
+  }, [closeDetail, handleSave]);
 
   if (isLoading || !formData) {
     return (
@@ -1239,7 +1863,7 @@ export function PersonaEditor() {
   }
 
   const headerActionButtonClass = "mari-editor-action inline-flex";
-  const saveDisabled = !dirty || saving;
+  const saveDisabled = !dirty || mutationBusy;
   const saveLabel = saving ? "Saving…" : "Save";
   const saveButtonClass = cn(
     "mari-editor-action mari-editor-action--primary mari-editor-action--save inline-flex",
@@ -1251,7 +1875,7 @@ export function PersonaEditor() {
         type="button"
         onClick={() => setExportDialogOpen(true)}
         className={headerActionButtonClass}
-        title="Export persona"
+        title={localizeUi("ui.personas.personaeditor.exportPersona")}
       >
         <svg width="1rem" height="1rem" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path
@@ -1270,7 +1894,7 @@ export function PersonaEditor() {
         onClick={handleAddAsCharacter}
         disabled={createCharacter.isPending || uploadCharacterAvatar.isPending}
         className="mari-editor-action inline-flex disabled:cursor-not-allowed disabled:opacity-50"
-        title="Add persona as character"
+        title={localizeUi("ui.personas.personaeditor.addPersonaAsCharacter")}
       >
         {createCharacter.isPending || uploadCharacterAvatar.isPending ? (
           <Loader2 size="1rem" className="animate-spin" />
@@ -1285,13 +1909,13 @@ export function PersonaEditor() {
           if (!personaId) return;
           duplicatePersona.mutate(personaId, {
             onSuccess: () => {
-              toast.success("Persona duplicated");
+              toast.success(localizeUi("ui.personas.personaeditor.personaDuplicated"));
             },
           });
         }}
         disabled={duplicatePersona.isPending}
         className="mari-editor-action inline-flex disabled:cursor-not-allowed disabled:opacity-50"
-        title="Duplicate persona"
+        title={localizeUi("ui.personas.personaeditor.duplicatePersona")}
       >
         {duplicatePersona.isPending ? <Loader2 size="1rem" className="animate-spin" /> : <Copy size="1rem" />}
       </button>
@@ -1299,8 +1923,9 @@ export function PersonaEditor() {
       <button
         type="button"
         onClick={handleDelete}
-        className="mari-editor-action inline-flex"
-        title="Delete persona"
+        disabled={mutationBusy}
+        className="mari-editor-action inline-flex disabled:cursor-not-allowed disabled:opacity-50"
+        title={localizeUi("ui.personas.personaeditor.deletePersona")}
       >
         <Trash2 size="1rem" />
       </button>
@@ -1311,8 +1936,10 @@ export function PersonaEditor() {
     <div className="mari-editor-shell mari-editor-legacy-bridge flex flex-1 flex-col overflow-hidden">
       <ExportFormatDialog
         open={exportDialogOpen}
-        title="Export Persona"
-        description="Native keeps Marinara persona metadata, sprites, and attached lorebooks. Compatible exports simple persona JSON for other tools."
+        title={localizeUi("ui.personas.personaeditor.exportPersona_ae29ab5")}
+        description={localizeUi(
+          "ui.personas.personaeditor.nativeKeepsMarinaraPersonaMetadataSpritesAndAttachedLorebooks",
+        )}
         compatibleDescription="Exports persona fields directly without the Marinara wrapper."
         onClose={() => setExportDialogOpen(false)}
         onSelect={(format: ExportFormatChoice) => {
@@ -1323,18 +1950,34 @@ export function PersonaEditor() {
       />
       <AvatarGenerationModal
         open={avatarGeneratorOpen}
-        title="Generate Persona Avatar"
+        title={localizeUi("ui.personas.personaeditor.generatePersonaAvatar")}
         entityName={formData.name}
         defaultAppearance={formData.appearance || formData.description || formData.personality}
         defaultAvatarUrl={avatarPreview}
         onClose={() => setAvatarGeneratorOpen(false)}
         onUseAvatar={handleGeneratedAvatar}
       />
+      <AvatarGenerationModal
+        open={characterSheetGeneratorOpen}
+        mode="character-sheet"
+        title={localizeUi("ui.characters.charactersheet.createTitle")}
+        entityName={formData.name || localizeUi("ui.characters.charactersheet.characterFallback")}
+        defaultAppearance={formData.appearance || formData.description || formData.personality}
+        defaultAvatarUrl={avatarPreview}
+        onClose={() => setCharacterSheetGeneratorOpen(false)}
+        onUseAvatar={handleGeneratedCharacterSheet}
+      />
 
       {/* ── Header ── */}
-      <div className="mari-editor-header items-start">
+      <div className="mari-editor-header">
         <div className="mari-editor-header-main max-md:min-w-full">
-          <button type="button" onClick={handleClose} className="mari-editor-action inline-flex" title="Back">
+          <button
+            type="button"
+            onClick={handleClose}
+            disabled={mutationBusy}
+            className="mari-editor-action inline-flex disabled:cursor-not-allowed disabled:opacity-50"
+            title={localizeUi("ui.noodle.noodlerframe.back")}
+          >
             <ArrowLeft size="1.125rem" />
           </button>
 
@@ -1343,8 +1986,11 @@ export function PersonaEditor() {
             className={cn(
               "mari-editor-avatar-tile group relative",
               !avatarPreview && "mari-avatar-placeholder mari-avatar-placeholder--persona",
+              mutationBusy && "pointer-events-none opacity-60",
             )}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (!mutationBusy) fileInputRef.current?.click();
+            }}
           >
             {avatarPreview ? (
               <img
@@ -1356,41 +2002,53 @@ export function PersonaEditor() {
             ) : (
               <User size="1.375rem" className="text-white" />
             )}
-            <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-              <Camera size="1rem" className="text-white" />
-            </div>
-            {imageGenerationAvailable && (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setAvatarGeneratorOpen(true);
-                }}
-                className="absolute right-0.5 top-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--card)]/95 text-[var(--primary)] opacity-0 shadow-md ring-1 ring-[var(--border)] transition-opacity hover:bg-[var(--card)] group-hover:opacity-100 max-md:opacity-100"
-                title="Generate avatar"
-              >
-                <Wand2 size="0.75rem" />
-              </button>
-            )}
+            <EditorAvatarTileActions
+              generationAvailable={imageGenerationAvailable}
+              onGenerate={() => {
+                if (!mutationBusy) setAvatarGeneratorOpen(true);
+              }}
+            />
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
           </div>
 
           <div className="min-w-0 flex-1">
-            <input
-              value={formData.name}
-              onChange={(e) => updateField("name", e.target.value)}
-              className="mari-editor-title-input"
-              placeholder="Persona name"
-            />
-            <input
-              value={formData.comment}
-              onChange={(e) => updateField("comment", e.target.value)}
-              className="mari-editor-subtitle-input"
-              placeholder="Title / comment (e.g. 'Modern AU version')"
-            />
-            <p className="mari-editor-meta text-[0.625rem]">
-              {formData.creator ? `by ${formData.creator}` : "No creator"} · v{formData.personaVersion || "1.0"}
-            </p>
+            <div className="mari-editor-title-line">
+              <input
+                value={formData.name}
+                onChange={(e) => updateField("name", e.target.value)}
+                className="mari-editor-title-input"
+                placeholder={localizeUi("ui.personas.personaeditor.personaName")}
+                size={Math.max(1, Math.min(formData.name.length || 12, 80))}
+              />
+              <p
+                className="mari-editor-meta mari-editor-byline"
+                title={localizeUi("ui.personas.personaeditor.value1VValue2", {
+                  value1: formData.creator
+                    ? localizeUi("ui.personas.personaeditor.byValue1", { value1: formData.creator })
+                    : localizeUi("ui.personas.personaeditor.noCreator"),
+                  value2: formData.personaVersion || "1.0",
+                })}
+              >
+                <span className="mari-editor-byline-creator">
+                  {formData.creator
+                    ? localizeUi("ui.personas.personaeditor.byValue1", { value1: formData.creator })
+                    : localizeUi("ui.personas.personaeditor.noCreator")}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="mari-editor-byline-version">
+                  {localizeUi("ui.personas.personaeditor.v")}
+                  {formData.personaVersion || "1.0"}
+                </span>
+              </p>
+            </div>
+            <div className="mari-editor-secondary-line">
+              <input
+                value={formData.comment}
+                onChange={(e) => updateField("comment", e.target.value)}
+                className="mari-editor-subtitle-input"
+                placeholder={localizeUi("ui.personas.personaeditor.titleCommentEGModernAuVersion")}
+              />
+            </div>
           </div>
         </div>
 
@@ -1407,30 +2065,33 @@ export function PersonaEditor() {
       {showUnsavedWarning && (
         <div className="flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
           <AlertTriangle size="0.9375rem" className="shrink-0 text-amber-500" />
-          <p className="flex-1 text-xs font-medium text-amber-500">You have unsaved changes. Close without saving?</p>
+          <p className="flex-1 text-xs font-medium text-amber-500">
+            {localizeUi("ui.personas.personaeditor.youHaveUnsavedChangesCloseWithoutSaving")}
+          </p>
           <button
             type="button"
-            onClick={() => setShowUnsavedWarning(false)}
+            onClick={keepEditing}
             className="rounded-lg px-3 py-1 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]"
           >
-            Keep editing
+            {localizeUi("ui.personas.personaeditor.keepEditing")}
+          </button>
+          {/* Blocked while a Persona write is in flight: it cannot be cancelled, so
+              "discard" would drop local state while the server still persists it. */}
+          <button
+            type="button"
+            onClick={discardAndNavigate}
+            disabled={mutationBusy}
+            className="rounded-lg bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-500 transition-all hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-amber-500/15"
+          >
+            {localizeUi("ui.personas.personaeditor.discardClose")}
           </button>
           <button
             type="button"
-            onClick={forceClose}
-            className="rounded-lg bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-500 transition-all hover:bg-amber-500/25"
+            onClick={() => void handleSaveAndClose()}
+            disabled={mutationBusy}
+            className="mari-editor-action mari-editor-action--primary mari-editor-action--compact inline-flex rounded-lg px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Discard & close
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              await handleSave();
-              closeDetail();
-            }}
-            className="mari-editor-action mari-editor-action--primary mari-editor-action--compact inline-flex rounded-lg px-3 py-1"
-          >
-            Save & close
+            {localizeUi("ui.personas.personaeditor.saveClose")}
           </button>
         </div>
       )}
@@ -1448,11 +2109,19 @@ export function PersonaEditor() {
                 formData={formData}
                 updateField={updateField}
                 avatarPreview={avatarPreview}
+                onSelectAvatar={() => {
+                  if (!mutationBusy) fileInputRef.current?.click();
+                }}
+                onGenerateAvatar={() => {
+                  if (!mutationBusy) setAvatarGeneratorOpen(true);
+                }}
+                imageGenerationAvailable={imageGenerationAvailable}
+                avatarUploading={avatarBusy}
+                hasUnsavedChanges={dirty}
+                avatarMutationBusy={mutationBusy}
               />
             )}
-            {activeTab === "card" && (
-              <PersonaCardTab formData={formData} updateField={updateField} setDirty={setDirty} />
-            )}
+            {activeTab === "card" && <PersonaCardTab formData={formData} updateField={updateField} />}
             {activeTab === "convo" && (
               // Key by the edited persona so the Convo fields' transient state resets on
               // switch — the editor reuses this instance across personas.
@@ -1475,10 +2144,21 @@ export function PersonaEditor() {
                 personaName={formData.name}
                 defaultAppearance={formData.appearance || formData.description}
                 defaultAvatarUrl={avatarPreview}
+                characterSheetImageId={formData.characterSheetImageId}
+                useCharacterSheetAsReference={formData.useCharacterSheetAsReference}
+                updateField={updateField}
+                onCreateCharacterSheet={() => setCharacterSheetGeneratorOpen(true)}
               />
             )}
             {activeTab === "gallery" && personaId && (
-              <PersonaGalleryTab personaId={personaId} personaName={formData.name} />
+              <PersonaGalleryTab
+                personaId={personaId}
+                personaName={formData.name}
+                onCreateCharacterSheet={() => setCharacterSheetGeneratorOpen(true)}
+                editorBusy={mutationBusy}
+                galleryAvatarPending={mutationKind === "gallery-avatar"}
+                onSetAvatar={handleSetGalleryAvatar}
+              />
             )}
             {activeTab === "stats" && <PersonaStatsTab formData={formData} updateField={updateField} />}
           </div>
@@ -1520,12 +2200,21 @@ function PersonaSpritesTab({
   personaName,
   defaultAppearance,
   defaultAvatarUrl,
+  characterSheetImageId,
+  useCharacterSheetAsReference,
+  updateField,
+  onCreateCharacterSheet,
 }: {
   personaId: string;
   personaName?: string;
   defaultAppearance?: string;
   defaultAvatarUrl?: string | null;
+  characterSheetImageId: string | null;
+  useCharacterSheetAsReference: boolean;
+  updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
+  onCreateCharacterSheet: () => void;
 }) {
+  const { t: localizeUi } = useUiTranslation();
   type SpriteCategory = "expressions" | "full-body" | "clips";
 
   const { data: sprites, isLoading } = useCharacterSprites(personaId);
@@ -1558,9 +2247,7 @@ function PersonaSpritesTab({
   const pendingExpressionRef = useRef("");
 
   const allSprites = (sprites as SpriteInfo[] | undefined) ?? [];
-  const portraitExpressionNames = allSprites
-    .filter((s) => !s.expression.toLowerCase().startsWith("full_"))
-    .map((s) => s.expression);
+  const portraitExpressionSprites = allSprites.filter((s) => !s.expression.toLowerCase().startsWith("full_"));
   const visibleSprites = allSprites.filter((s) =>
     category === "clips"
       ? false
@@ -1707,16 +2394,30 @@ function PersonaSpritesTab({
         });
         toast.success(
           modeLabel === "all"
-            ? `Exported ${spritesToExport.length} sprite${spritesToExport.length === 1 ? "" : "s"} as a folder.`
-            : `Exported ${spritesToExport.length} ${category === "full-body" ? "full-body" : "expression"} sprite${spritesToExport.length === 1 ? "" : "s"} as a folder.`,
+            ? localizeUi("ui.personas.personaspritestab.exportedValue1SpriteValue2AsAFolder", {
+                value1: spritesToExport.length,
+                value2: spritesToExport.length === 1 ? "" : localizeUi("ui.noodle.stageprofileview.s"),
+              })
+            : localizeUi("ui.personas.personaspritestab.exportedValue1Value2SpriteValue3AsAFolder", {
+                value1: spritesToExport.length,
+                value2:
+                  category === "full-body"
+                    ? localizeUi("ui.personas.personaspritestab.fullBody_0fbbc4a")
+                    : localizeUi("ui.personas.personaspritestab.expression"),
+                value3: spritesToExport.length === 1 ? "" : localizeUi("ui.noodle.stageprofileview.s"),
+              }),
         );
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "No sprites were exported. Please try again.");
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : localizeUi("ui.personas.personaspritestab.noSpritesWereExportedPleaseTryAgain"),
+        );
       } finally {
         setExporting(false);
       }
     },
-    [category, exportSprites, personaId, personaName],
+    [category, exportSprites, personaId, personaName, localizeUi],
   );
 
   const handleCleanVisibleSprites = useCallback(async () => {
@@ -1725,9 +2426,14 @@ function PersonaSpritesTab({
     const modeLabel = category === "full-body" ? "full-body" : "expression";
     if (
       !(await showConfirmDialog({
-        title: "Clean Sprite Backgrounds",
-        message: `Clean backgrounds on ${visibleSprites.length} saved ${modeLabel} sprite${visibleSprites.length === 1 ? "" : "s"} at strength ${savedCleanupStrength}? Marinara will keep a restore point in case the cleanup looks wrong.`,
-        confirmLabel: "Clean",
+        title: localizeUi("ui.personas.personaspritestab.cleanSpriteBackgrounds"),
+        message: localizeUi("ui.personas.personaspritestab.cleanBackgroundsOnValue1SavedValue2SpriteValue3At", {
+          value1: visibleSprites.length,
+          value2: modeLabel,
+          value3: visibleSprites.length === 1 ? "" : localizeUi("ui.noodle.stageprofileview.s"),
+          value4: savedCleanupStrength,
+        }),
+        confirmLabel: localizeUi("ui.personas.personaspritestab.clean"),
       }))
     ) {
       return;
@@ -1750,17 +2456,28 @@ function PersonaSpritesTab({
             : result.backgroundRemoverProcessed
               ? ` with AI fallback`
               : ` with automatic matte cleanup`;
-        toast.success(`Cleaned ${result.processed} saved sprite${result.processed === 1 ? "" : "s"}${engineDetails}.`);
+        toast.success(
+          localizeUi("ui.personas.personaspritestab.cleanedValue1SavedSpriteValue2Value3", {
+            value1: result.processed,
+            value2: result.processed === 1 ? "" : localizeUi("ui.noodle.stageprofileview.s"),
+            value3: engineDetails,
+          }),
+        );
       }
       if (result.failed.length > 0) {
-        toast.warning(`${result.failed.length} sprite${result.failed.length === 1 ? "" : "s"} could not be cleaned.`);
+        toast.warning(
+          localizeUi("ui.personas.personaspritestab.value1SpriteValue2CouldNotBeCleaned", {
+            value1: result.failed.length,
+            value2: result.failed.length === 1 ? "" : localizeUi("ui.noodle.stageprofileview.s"),
+          }),
+        );
       }
     } catch (err: any) {
-      toast.error(err?.message || "Failed to clean saved sprites.");
+      toast.error(err?.message || localizeUi("ui.personas.personaspritestab.failedToCleanSavedSprites"));
     } finally {
       setCleaningSprites(false);
     }
-  }, [category, cleanupSavedSprites, personaId, savedCleanupStrength, visibleSprites]);
+  }, [category, cleanupSavedSprites, personaId, savedCleanupStrength, visibleSprites, localizeUi]);
 
   const handleRestoreLastCleanup = useCallback(async () => {
     if (!lastCleanupBackupId) return;
@@ -1771,19 +2488,29 @@ function PersonaSpritesTab({
         backupId: lastCleanupBackupId,
       });
       if (result.restored > 0) {
-        toast.success(`Restored ${result.restored} sprite${result.restored === 1 ? "" : "s"} from the cleanup backup.`);
+        toast.success(
+          localizeUi("ui.personas.personaspritestab.restoredValue1SpriteValue2FromTheCleanupBackup", {
+            value1: result.restored,
+            value2: result.restored === 1 ? "" : localizeUi("ui.noodle.stageprofileview.s"),
+          }),
+        );
       }
       if (result.failed.length > 0) {
-        toast.warning(`${result.failed.length} sprite${result.failed.length === 1 ? "" : "s"} could not be restored.`);
+        toast.warning(
+          localizeUi("ui.personas.personaspritestab.value1SpriteValue2CouldNotBeRestored", {
+            value1: result.failed.length,
+            value2: result.failed.length === 1 ? "" : localizeUi("ui.noodle.stageprofileview.s"),
+          }),
+        );
       } else {
         setLastCleanupBackupId(null);
       }
     } catch (err: any) {
-      toast.error(err?.message || "Failed to restore sprite cleanup backup.");
+      toast.error(err?.message || localizeUi("ui.personas.personaspritestab.failedToRestoreSpriteCleanupBackup"));
     } finally {
       setRestoringCleanup(false);
     }
-  }, [lastCleanupBackupId, personaId, restoreSpriteCleanupBackup]);
+  }, [lastCleanupBackupId, personaId, restoreSpriteCleanupBackup, localizeUi]);
 
   const handleApplySpriteFrame = useCallback(
     async (croppedDataUrl: string) => {
@@ -1796,13 +2523,17 @@ function PersonaSpritesTab({
           expression: framingSprite.expression,
           image: croppedDataUrl,
         });
-        toast.success(`Framed ${displayExpression(framingSprite.expression)} sprite.`);
+        toast.success(
+          localizeUi("ui.personas.personaspritestab.framedValue1Sprite", {
+            value1: displayExpression(framingSprite.expression),
+          }),
+        );
         setFramingSprite(null);
       } finally {
         setSavingFrame(false);
       }
     },
-    [displayExpression, framingSprite, personaId, uploadSprite],
+    [displayExpression, framingSprite, personaId, uploadSprite, localizeUi],
   );
 
   const handleApplyWandCleanup = useCallback(
@@ -1816,23 +2547,40 @@ function PersonaSpritesTab({
           expression: wandCleanupSprite.expression,
           image: cleanedDataUrl,
         });
-        toast.success(`Cleaned ${displayExpression(wandCleanupSprite.expression)} sprite.`);
+        toast.success(
+          localizeUi("ui.personas.personaspritestab.cleanedValue1Sprite", {
+            value1: displayExpression(wandCleanupSprite.expression),
+          }),
+        );
         setWandCleanupSprite(null);
       } finally {
         setSavingWandCleanup(false);
       }
     },
-    [displayExpression, personaId, uploadSprite, wandCleanupSprite],
+    [displayExpression, personaId, uploadSprite, wandCleanupSprite, localizeUi],
+  );
+
+  const characterSheetSection = (
+    <PersonaCharacterSheetSection
+      personaId={personaId}
+      personaName={personaName ?? ""}
+      characterSheetImageId={characterSheetImageId}
+      useAsReference={useCharacterSheetAsReference}
+      updateField={updateField}
+      onCreateCharacterSheet={onCreateCharacterSheet}
+    />
   );
 
   if (category === "clips") {
     return (
       <div className="space-y-6">
         <SectionHeader
-          title="Persona Sprites"
-          subtitle="Upload VN-style sprites and video-call clips for your persona."
+          title={localizeUi("ui.personas.personaspritestab.personaSprites")}
+          subtitle={localizeUi("ui.personas.personaspritestab.uploadVnStyleSpritesAndVideoCallClipsFor")}
           helpText={PERSONA_SPRITES_HELP}
         />
+
+        {characterSheetSection}
 
         {categoryTabs}
 
@@ -1844,10 +2592,12 @@ function PersonaSpritesTab({
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="Persona Sprites"
-        subtitle="Upload VN-style sprites for your persona. These are used in Game Mode and roleplay with the Expression Engine."
+        title={localizeUi("ui.personas.personaspritestab.personaSprites")}
+        subtitle={localizeUi("ui.personas.personaspritestab.uploadVnStyleSpritesForYourPersonaTheseAre")}
         helpText={PERSONA_SPRITES_HELP}
       />
+
+      {characterSheetSection}
 
       {categoryTabs}
 
@@ -1868,7 +2618,7 @@ function PersonaSpritesTab({
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h4 className="text-xs font-semibold flex items-center gap-1.5">
             <Upload size="0.8125rem" className="text-[var(--primary)]" />
-            Add Sprite
+            {localizeUi("ui.personas.personaspritestab.addSprite")}
           </h4>
           <div className="flex flex-wrap items-center gap-2 md:justify-end">
             <button
@@ -1877,21 +2627,23 @@ function PersonaSpritesTab({
               disabled={spriteGenerationUnavailable}
               className="mari-chrome-accent-surface mari-accent-animated flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight transition-all disabled:cursor-not-allowed disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title={
-                spriteGenerationUnavailable ? spriteGenerationReason : "Generate sprites using AI image generation"
+                spriteGenerationUnavailable
+                  ? spriteGenerationReason
+                  : localizeUi("ui.personas.personaspritestab.generateSpritesUsingAiImageGeneration")
               }
             >
               <Wand2 size="0.8125rem" />
-              Generate Sprite
+              {localizeUi("ui.personas.personaspritestab.generateSprite")}
             </button>
             <button
               type="button"
               onClick={() => folderInputRef.current?.click()}
               disabled={!!folderProgress}
               className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
-              title="Select a folder of PNGs"
+              title={localizeUi("ui.personas.personaspritestab.selectAFolderOfPngs")}
             >
               <FolderOpen size="0.8125rem" />
-              Upload Folder
+              {localizeUi("ui.personas.personaspritestab.uploadFolder")}
             </button>
             <button
               type="button"
@@ -1901,11 +2653,13 @@ function PersonaSpritesTab({
               title={
                 backgroundCleanupUnavailable
                   ? backgroundCleanupReason
-                  : "Clean backgrounds on the currently visible saved sprites"
+                  : localizeUi("ui.personas.personaspritestab.cleanBackgroundsOnTheCurrentlyVisibleSavedSprites")
               }
             >
               {cleaningSprites ? <Loader2 size="0.8125rem" className="animate-spin" /> : <Eraser size="0.8125rem" />}
-              {cleaningSprites ? "Cleaning..." : "Clean Backgrounds"}
+              {cleaningSprites
+                ? localizeUi("ui.personas.personaspritestab.cleaning")
+                : localizeUi("ui.personas.personaspritestab.cleanBackgrounds")}
             </button>
             <div className="relative max-md:flex-1 max-md:basis-[calc(50%-0.25rem)]">
               <button
@@ -1913,10 +2667,12 @@ function PersonaSpritesTab({
                 onClick={() => setExportMenuOpen((open) => !open)}
                 disabled={exporting || allSprites.length === 0}
                 className="flex w-full min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:px-2.5"
-                title="Choose which saved sprites to export"
+                title={localizeUi("ui.personas.personaspritestab.chooseWhichSavedSpritesToExport")}
               >
                 <ImageDown size="0.8125rem" />
-                {exporting ? "Exporting..." : "Export"}
+                {exporting
+                  ? localizeUi("ui.personas.personaspritestab.exporting")
+                  : localizeUi("ui.personas.personaspritestab.export")}
               </button>
               {exportMenuOpen && !exporting && (
                 <div className="absolute right-0 top-[calc(100%+0.35rem)] z-30 min-w-44 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 text-xs shadow-xl">
@@ -1930,7 +2686,9 @@ function PersonaSpritesTab({
                     className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[var(--foreground)] transition-colors hover:bg-[var(--secondary)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <ImageDown size="0.75rem" />
-                    {category === "full-body" ? "Full-body only" : "Expressions only"}
+                    {category === "full-body"
+                      ? localizeUi("ui.personas.personaspritestab.fullBodyOnly")
+                      : localizeUi("ui.personas.personaspritestab.expressionsOnly")}
                   </button>
                   <button
                     type="button"
@@ -1942,7 +2700,7 @@ function PersonaSpritesTab({
                     className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[var(--foreground)] transition-colors hover:bg-[var(--secondary)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <ImageDown size="0.75rem" />
-                    All sprites
+                    {localizeUi("ui.personas.personaspritestab.allSprites")}
                   </button>
                 </div>
               )}
@@ -1951,8 +2709,12 @@ function PersonaSpritesTab({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--secondary)]/60 px-3 py-2">
-          <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">Cleanup strength</span>
-          <span className="text-[0.625rem] text-[var(--muted-foreground)]">Soft</span>
+          <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
+            {localizeUi("ui.personas.personaspritestab.cleanupStrength")}
+          </span>
+          <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+            {localizeUi("ui.personas.personaspritestab.soft")}
+          </span>
           <input
             type="range"
             min={0}
@@ -1963,7 +2725,9 @@ function PersonaSpritesTab({
             disabled={cleaningSprites}
             className="min-w-40 flex-1 accent-[var(--primary)] disabled:opacity-50"
           />
-          <span className="text-[0.625rem] text-[var(--muted-foreground)]">Aggressive</span>
+          <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+            {localizeUi("ui.personas.personaspritestab.aggressive")}
+          </span>
           <span className="w-8 text-right text-[0.6875rem] tabular-nums text-[var(--muted-foreground)]">
             {savedCleanupStrength}
           </span>
@@ -1972,18 +2736,19 @@ function PersonaSpritesTab({
         {folderProgress && (
           <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
             <Loader2 size="0.75rem" className="animate-spin text-[var(--primary)]" />
-            Uploading {folderProgress.done}/{folderProgress.total} sprites…
+            {localizeUi("ui.noodle.noodleprofilesurface.uploading_de27240")} {folderProgress.done}/
+            {folderProgress.total} {localizeUi("ui.personas.personaspritestab.sprites")}
           </div>
         )}
         {cleaningSprites && (
           <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
             <Loader2 size="0.75rem" className="animate-spin text-[var(--primary)]" />
-            Applying automatic matte cleanup to saved sprites…
+            {localizeUi("ui.personas.personaspritestab.applyingAutomaticMatteCleanupToSavedSprites")}
           </div>
         )}
         {lastCleanupBackupId && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
-            <span>Last cleanup has a restore point.</span>
+            <span>{localizeUi("ui.personas.personaspritestab.lastCleanupHasARestorePoint")}</span>
             <button
               type="button"
               onClick={() => void handleRestoreLastCleanup()}
@@ -1991,7 +2756,7 @@ function PersonaSpritesTab({
               className="flex items-center gap-1.5 rounded-md bg-[var(--card)] px-2.5 py-1 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:opacity-40"
             >
               {restoringCleanup ? <Loader2 size="0.75rem" className="animate-spin" /> : <RotateCcw size="0.75rem" />}
-              Undo Cleanup
+              {localizeUi("ui.personas.personaspritestab.undoCleanup")}
             </button>
           </div>
         )}
@@ -2011,8 +2776,8 @@ function PersonaSpritesTab({
             onChange={(e) => setNewExpression(e.target.value)}
             placeholder={
               category === "full-body"
-                ? "Pose name (e.g. idle, walk, battle_stance)…"
-                : "Expression name (e.g. happy, sad, angry)…"
+                ? localizeUi("ui.personas.personaspritestab.poseNameEGIdleWalkBattleStance")
+                : localizeUi("ui.personas.personaspritestab.expressionNameEGHappySadAngry")
             }
             className="min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
             onKeyDown={(e) => {
@@ -2028,13 +2793,15 @@ function PersonaSpritesTab({
             className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--primary)] px-4 py-2 text-xs font-medium text-[var(--primary-foreground)] shadow-sm transition-all hover:shadow-md disabled:opacity-40 sm:w-auto"
           >
             <Plus size="0.8125rem" />
-            Upload
+            {localizeUi("ui.personas.personaspritestab.upload")}
           </button>
         </div>
 
         {category === "expressions" && suggestedExpressions.length > 0 && (
           <div>
-            <p className="text-[0.625rem] text-[var(--muted-foreground)] mb-1.5">Quick add:</p>
+            <p className="text-[0.625rem] text-[var(--muted-foreground)] mb-1.5">
+              {localizeUi("ui.personas.personaspritestab.quickAdd")}
+            </p>
             <div className="flex flex-wrap gap-1">
               {suggestedExpressions.slice(0, 12).map((expr) => (
                 <button
@@ -2089,7 +2856,7 @@ function PersonaSpritesTab({
                 type="button"
                 onClick={() => setWandCleanupSprite(sprite)}
                 className="group/preview relative block aspect-[3/4] w-full bg-[var(--secondary)]"
-                title="Open wand cleanup"
+                title={localizeUi("ui.personas.personaspritestab.openWandCleanup")}
               >
                 <img src={sprite.url} alt={sprite.expression} loading="lazy" className="h-full w-full object-contain" />
                 <span className="pointer-events-none absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--card)]/90 text-[var(--primary)] opacity-0 shadow-lg ring-1 ring-[var(--border)] transition-opacity group-hover/preview:opacity-100 max-md:opacity-100">
@@ -2108,7 +2875,7 @@ function PersonaSpritesTab({
                     type="button"
                     onClick={() => setFramingSprite(sprite)}
                     className="rounded-lg p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    title="Frame"
+                    title={localizeUi("ui.personas.personaspritestab.frame")}
                   >
                     <Crop size="0.6875rem" />
                   </button>
@@ -2116,7 +2883,7 @@ function PersonaSpritesTab({
                     type="button"
                     onClick={() => void downloadSpriteFile(sprite)}
                     className="rounded-lg p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    title="Download"
+                    title={localizeUi("ui.personas.personagallerytab.download")}
                   >
                     <ImageDown size="0.6875rem" />
                   </button>
@@ -2124,15 +2891,15 @@ function PersonaSpritesTab({
                     type="button"
                     onClick={() => startUpload(sprite.expression)}
                     className="rounded-lg p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    title="Replace"
+                    title={localizeUi("settings.notifications.customSound.actions.replace")}
                   >
                     <Upload size="0.6875rem" />
                   </button>
                   <button
                     type="button"
                     onClick={() => setDeleteSpriteRequest(sprite)}
-	                    className="rounded-lg p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    title="Delete"
+                    className="rounded-lg p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    title={localizeUi("lorebook.editor.batch.delete")}
                   >
                     <Trash2 size="0.6875rem" />
                   </button>
@@ -2145,11 +2912,13 @@ function PersonaSpritesTab({
         <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
           <Image size="1.75rem" className="text-[var(--muted-foreground)]/40" />
           <div>
-            <p className="text-sm font-medium text-[var(--muted-foreground)]">No sprites yet</p>
+            <p className="text-sm font-medium text-[var(--muted-foreground)]">
+              {localizeUi("ui.personas.personaspritestab.noSpritesYet")}
+            </p>
             <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
               {category === "full-body"
-                ? "Upload full-body sprites above. Use transparent PNGs for best results."
-                : "Upload expression sprites above. Use transparent PNGs for best results."}
+                ? localizeUi("ui.personas.personaspritestab.uploadFullBodySpritesAboveUseTransparentPngsFor")
+                : localizeUi("ui.personas.personaspritestab.uploadExpressionSpritesAboveUseTransparentPngsForBest")}
             </p>
           </div>
         </div>
@@ -2161,12 +2930,13 @@ function PersonaSpritesTab({
           onClose={() => {
             if (!deletingSprites) setDeleteSpriteRequest(null);
           }}
-          title="Delete Sprite"
+          title={localizeUi("ui.personas.personaspritestab.deleteSprite")}
           width="max-w-sm"
         >
           <div className="space-y-4">
             <p className="text-sm leading-relaxed text-[var(--foreground)]">
-              Delete sprite for "{displayExpression(deleteSpriteRequest.expression)}"?
+              {localizeUi("ui.personas.personaspritestab.deleteSpriteFor")}
+              {displayExpression(deleteSpriteRequest.expression)}"?
             </p>
             <div className="flex flex-wrap items-center gap-2">
               {visibleSprites.length > 1 ? (
@@ -2174,14 +2944,17 @@ function PersonaSpritesTab({
                   type="button"
                   onClick={() => void handleDeleteVisibleSprites()}
                   disabled={!!deletingSprites}
-	                  className="mr-auto inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-xs font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50 sm:px-3 sm:text-sm"
+                  className="mr-auto inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-xs font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50 sm:px-3 sm:text-sm"
                 >
                   {deletingSprites === "all" ? (
                     <Loader2 size="0.875rem" className="animate-spin" />
                   ) : (
                     <Trash2 size="0.875rem" />
                   )}
-                  Delete All {category === "full-body" ? "Full-Body" : "Expressions"}
+                  {localizeUi("ui.personas.personaspritestab.deleteAll")}{" "}
+                  {category === "full-body"
+                    ? localizeUi("ui.personas.personaspritestab.fullBody")
+                    : localizeUi("ui.personas.personaspritestab.expressions")}
                 </button>
               ) : null}
               <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -2191,16 +2964,16 @@ function PersonaSpritesTab({
                   disabled={!!deletingSprites}
                   className="rounded-lg px-2.5 py-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50 sm:px-3 sm:text-sm"
                 >
-                  Cancel
+                  {localizeUi("chat.delete.dialog.cancel")}
                 </button>
                 <button
                   type="button"
                   onClick={() => void handleDeleteSingleSprite()}
                   disabled={!!deletingSprites}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--destructive)] px-2.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--destructive)]/85 disabled:opacity-50 sm:px-3 sm:text-sm"
+                  className="mari-chrome-accent-surface mari-accent-animated inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors disabled:opacity-50 sm:px-3 sm:text-sm"
                 >
                   {deletingSprites === "single" && <Loader2 size="0.875rem" className="animate-spin" />}
-                  Delete
+                  {localizeUi("lorebook.editor.batch.delete")}
                 </button>
               </div>
             </div>
@@ -2214,7 +2987,7 @@ function PersonaSpritesTab({
         onClose={() => setSpriteGenOpen(false)}
         entityId={personaId}
         initialSpriteType={category === "full-body" ? "full-body" : "expressions"}
-        existingExpressionNames={portraitExpressionNames}
+        existingExpressionSprites={portraitExpressionSprites}
         defaultAppearance={defaultAppearance}
         defaultAvatarUrl={defaultAvatarUrl}
         onSpritesGenerated={() => {
@@ -2236,6 +3009,7 @@ function PersonaColorsTab({
   updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
   avatarUrl: string | null;
 }) {
+  const { t: localizeUi } = useUiTranslation();
   const [extracting, setExtracting] = useState(false);
 
   const handleExtract = async () => {
@@ -2256,8 +3030,8 @@ function PersonaColorsTab({
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="Persona Colors"
-        subtitle="Customize how your persona appears in chats. Colors are applied to your name, dialogue, and message bubble."
+        title={localizeUi("ui.personas.personacolorstab.personaColors")}
+        subtitle={localizeUi("ui.personas.personacolorstab.customizeHowYourPersonaAppearsInChatsColorsAre")}
         helpText={PERSONA_COLORS_HELP}
       />
 
@@ -2265,25 +3039,28 @@ function PersonaColorsTab({
         type="button"
         disabled={!avatarUrl || extracting}
         onClick={handleExtract}
-        className={cn(
-          "flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-medium transition-all",
-          avatarUrl
-            ? "mari-chrome-accent-surface mari-accent-animated active:scale-[0.98]"
-            : "cursor-not-allowed bg-white/5 text-[var(--muted-foreground)]/50",
-        )}
+        className="mari-editor-action mari-editor-action--accent mari-editor-action--primary flex w-full rounded-xl px-4 py-2.5 text-xs"
       >
         {extracting ? <Loader2 size="0.875rem" className="animate-spin" /> : <Palette size="0.875rem" />}
-        {extracting ? "Extracting..." : avatarUrl ? "Extract Colors from Avatar" : "Upload an avatar first"}
+        {extracting
+          ? localizeUi("ui.personas.personacolorstab.extracting")
+          : avatarUrl
+            ? localizeUi("ui.personas.personacolorstab.extractColorsFromAvatar")
+            : localizeUi("ui.personas.personacolorstab.uploadAnAvatarFirst")}
       </button>
 
       <div className="space-y-3 overflow-hidden rounded-xl border border-[var(--border)] bg-black/30 p-4">
-        <p className="text-[0.625rem] font-medium uppercase tracking-widest text-[var(--muted-foreground)]">Preview</p>
+        <p className="text-[0.625rem] font-medium uppercase tracking-widest text-[var(--muted-foreground)]">
+          {localizeUi("settings.notifications.customSound.actions.preview")}
+        </p>
         <div className="flex gap-3 flex-row-reverse">
           <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-neutral-500 to-neutral-600 ring-2 ring-white/15">
             {avatarUrl ? (
               <img
                 src={avatarUrl}
-                alt={`${formData.name || "Persona"} avatar preview`}
+                alt={localizeUi("ui.personas.personacolorstab.value1AvatarPreview", {
+                  value1: formData.name || localizeUi("ui.characters.cardlibrarydetailcard.persona"),
+                })}
                 className="h-full w-full object-cover"
                 style={getAvatarCropStyle(formData.avatarCrop)}
               />
@@ -2321,11 +3098,13 @@ function PersonaColorsTab({
                   : { backgroundColor: "rgba(255, 255, 255, 0.12)" }
               }
             >
-              <span className="text-neutral-100">I turn around and raise my hand. </span>
+              <span className="text-neutral-100">
+                {localizeUi("ui.personas.personacolorstab.iTurnAroundAndRaiseMyHand")}{" "}
+              </span>
               <strong
                 style={formData.dialogueColor ? { color: formData.dialogueColor } : { color: "rgb(255, 255, 255)" }}
               >
-                &ldquo;General Kenobi.&rdquo;
+                {localizeUi("ui.personas.personacolorstab.ldquoGeneralKenobiRdquo")}
               </strong>
             </div>
           </div>
@@ -2337,7 +3116,7 @@ function PersonaColorsTab({
         value={formData.nameColor}
         onChange={(v) => updateField("nameColor", v)}
         gradient
-        label="Name Display Color"
+        label={localizeUi("ui.personas.personacolorstab.nameDisplayColor")}
         helpText="The color (or gradient) used for your persona's name in chat messages and persona selectors. Supports gradients!"
       />
 
@@ -2345,7 +3124,7 @@ function PersonaColorsTab({
       <ColorPicker
         value={formData.dialogueColor}
         onChange={(v) => updateField("dialogueColor", v)}
-        label="Dialogue Highlight Color"
+        label={localizeUi("ui.personas.personacolorstab.dialogueHighlightColor")}
         helpText={
           'Text inside dialogue quotation marks ("", “”, «», 「」, 『』) will be automatically colored with this, and can also be bolded from Settings.'
         }
@@ -2355,7 +3134,7 @@ function PersonaColorsTab({
       <ColorPicker
         value={formData.boxColor}
         onChange={(v) => updateField("boxColor", v)}
-        label="Message Box Color"
+        label={localizeUi("ui.personas.personacolorstab.messageBoxColor")}
         helpText="Background color for your persona's chat message bubbles. Use a semi-transparent color for best results (e.g. rgba)."
       />
     </div>
@@ -2363,19 +3142,6 @@ function PersonaColorsTab({
 }
 
 // ── Persona Stats Tab ──
-
-interface PersonaStatBar {
-  name: string;
-  value: number;
-  max: number;
-  color: string;
-}
-
-interface PersonaStatsData {
-  enabled: boolean;
-  bars: PersonaStatBar[];
-  rpgStats?: RPGStatsConfig;
-}
 
 const DEFAULT_RPG_STATS: RPGStatsConfig = {
   enabled: false,
@@ -2391,7 +3157,7 @@ const DEFAULT_RPG_STATS: RPGStatsConfig = {
   pools: createDefaultRpgStatPools(),
 };
 
-const DEFAULT_PERSONA_STATS: PersonaStatsData = {
+const DEFAULT_PERSONA_STATS: PersonaStatsConfig = {
   enabled: false,
   bars: [
     { name: "Satiety", value: 100, max: 100, color: "#f59e0b" },
@@ -2419,23 +3185,32 @@ function PersonaStatsTab({
   formData: PersonaFormData;
   updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
 }) {
-  const parsed: PersonaStatsData = formData.personaStats
-    ? (() => {
-        try {
-          return JSON.parse(formData.personaStats) as PersonaStatsData;
-        } catch {
-          return DEFAULT_PERSONA_STATS;
-        }
-      })()
-    : DEFAULT_PERSONA_STATS;
+  const { t: localizeUi } = useUiTranslation();
+  // Form state keeps personaStats decoded (hydrated from the projected Persona);
+  // serialization happens only at the save/snapshot boundaries.
+  const parsed = formData.personaStats ?? DEFAULT_PERSONA_STATS;
 
-  const save = (next: PersonaStatsData) => {
-    updateField("personaStats", JSON.stringify(next));
+  const save = (next: PersonaStatsConfig) => {
+    updateField("personaStats", next);
   };
 
-  const updateBar = (index: number, field: string, value: string | number) => {
+  const updateStatIcons = (statIcons: NonNullable<TrackerCardColorConfig["statIcons"]>) => {
+    updateField("trackerCardColors", { ...formData.trackerCardColors, statIcons });
+  };
+
+  const updateBar = <K extends keyof PersonaStatBar>(index: number, field: K, value: PersonaStatBar[K]) => {
     const next = [...parsed.bars];
     next[index] = { ...next[index], [field]: value };
+    if (field === "name" && value !== parsed.bars[index]?.name) {
+      updateStatIcons(
+        remapStatIconAssignments(
+          formData.trackerCardColors.statIcons ?? [],
+          parsed.bars,
+          next,
+          (nextIndex) => nextIndex,
+        ),
+      );
+    }
     save({ ...parsed, bars: next });
   };
 
@@ -2447,7 +3222,13 @@ function PersonaStatsTab({
   };
 
   const removeBar = (index: number) => {
-    save({ ...parsed, bars: parsed.bars.filter((_, i) => i !== index) });
+    const nextBars = parsed.bars.filter((_, i) => i !== index);
+    updateStatIcons(
+      remapStatIconAssignments(formData.trackerCardColors.statIcons ?? [], parsed.bars, nextBars, (nextIndex) =>
+        nextIndex < index ? nextIndex : nextIndex + 1,
+      ),
+    );
+    save({ ...parsed, bars: nextBars });
   };
 
   // RPG Attributes helpers
@@ -2486,14 +3267,14 @@ function PersonaStatsTab({
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="Persona Status Bars"
-        subtitle="Track your persona's physical and mental needs. These are updated by the Persona Stats agent after each message."
+        title={localizeUi("ui.personas.personastatstab.personaStatusBars")}
+        subtitle={localizeUi("ui.personas.personastatstab.trackYourPersonaSPhysicalAndMentalNeedsThese")}
         helpText={PERSONA_STATS_HELP}
       />
 
       <SettingsSwitch
-        label={<span className="font-medium">Enable Persona Stats</span>}
-        description="Tracked by the Persona Stats agent. Stats appear in the HUD and are adjusted based on narrative events."
+        label={<span className="font-medium">{localizeUi("ui.personas.personastatstab.enablePersonaStats")}</span>}
+        description={localizeUi("ui.personas.personastatstab.trackedByThePersonaStatsAgentStatsAppearIn")}
         checked={parsed.enabled}
         onChange={(checked) => save({ ...parsed, enabled: checked })}
         labelPosition="start"
@@ -2506,14 +3287,14 @@ function PersonaStatsTab({
           {/* Stat bars */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Status Bars</h3>
+              <h3 className="text-sm font-semibold">{localizeUi("ui.personas.personastatstab.statusBars")}</h3>
               <button
                 type="button"
                 onClick={addBar}
                 className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.6875rem] font-medium transition-colors"
               >
                 <Plus size="0.75rem" />
-                Add
+                {localizeUi("ui.personas.personastatstab.add")}
               </button>
             </div>
 
@@ -2527,13 +3308,33 @@ function PersonaStatsTab({
                       onChange={(e) => updateBar(i, "color", e.target.value)}
                       className="h-6 w-6 cursor-pointer rounded border-0 bg-transparent"
                     />
+                    <StatIconPicker
+                      value={resolveStatIconAssignment(
+                        formData.trackerCardColors.statIcons ?? [],
+                        bar.name,
+                        getStatNameOccurrence(parsed.bars, i),
+                      )}
+                      statName={bar.name}
+                      onSelect={(icon) =>
+                        updateStatIcons(
+                          setStatIconAssignment(
+                            formData.trackerCardColors.statIcons ?? [],
+                            bar.name,
+                            getStatNameOccurrence(parsed.bars, i),
+                            icon ?? undefined,
+                          ),
+                        )
+                      }
+                    />
                     <input
                       value={bar.name}
                       onChange={(e) => updateBar(i, "name", e.target.value)}
                       className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs font-medium"
-                      placeholder="Stat name"
+                      placeholder={localizeUi("ui.personas.personastatstab.statName")}
                     />
-                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">max:</span>
+                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      {localizeUi("ui.personas.personastatstab.max")}
+                    </span>
                     <input
                       type="number"
                       value={bar.max}
@@ -2544,7 +3345,7 @@ function PersonaStatsTab({
                     <button
                       type="button"
                       onClick={() => removeBar(i)}
-                      className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-red-500/15 hover:text-red-400"
+                      className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--primary)]/15 hover:text-[var(--primary)]"
                     >
                       <X size="0.75rem" />
                     </button>
@@ -2559,14 +3360,14 @@ function PersonaStatsTab({
       {/* ── RPG Attributes ── */}
       <div className="border-t border-[var(--border)] pt-6">
         <SectionHeader
-          title="RPG Attributes"
-          subtitle="Define your persona's RPG stats (STR, DEX, etc.) and HP — just like character cards. Tracked via Persona Stats in the game state."
+          title={localizeUi("ui.personas.personastatstab.rpgAttributes")}
+          subtitle={localizeUi("ui.personas.personastatstab.defineYourPersonaSRpgStatsStrDexEtc")}
           helpText={PERSONA_RPG_ATTRIBUTES_HELP}
         />
 
         <SettingsSwitch
-          label={<span className="font-medium">Enable RPG Attributes</span>}
-          description="Attributes are injected into the prompt and tracked via Persona Stats in the game state."
+          label={<span className="font-medium">{localizeUi("ui.personas.personastatstab.enableRpgAttributes")}</span>}
+          description={localizeUi("ui.personas.personastatstab.attributesAreInjectedIntoThePromptAndTrackedVia")}
           checked={rpgStats.enabled}
           onChange={(checked) => updateRpg({ enabled: checked })}
           labelPosition="start"
@@ -2579,14 +3380,14 @@ function PersonaStatsTab({
             {/* Pools */}
             <div className="mt-4 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">Pools</h3>
+                <h3 className="text-sm font-semibold">{localizeUi("ui.personas.personastatstab.pools")}</h3>
                 <button
                   type="button"
                   onClick={() => updateRpgPools([...rpgPools, createNewRpgPool(rpgPools)])}
                   className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.6875rem] font-medium transition-colors"
                 >
                   <Plus size="0.75rem" />
-                  Add
+                  {localizeUi("ui.personas.personastatstab.add")}
                 </button>
               </div>
               <div className="space-y-2">
@@ -2600,13 +3401,15 @@ function PersonaStatsTab({
                       value={pool.color}
                       onChange={(e) => updateRpgPool(i, { color: e.target.value })}
                       className="h-8 w-8 rounded border border-[var(--border)] bg-transparent p-0.5"
-                      aria-label={`${pool.name || "Pool"} color`}
+                      aria-label={localizeUi("ui.personas.personastatstab.value1Color", {
+                        value1: pool.name || localizeUi("ui.personas.personastatstab.pool"),
+                      })}
                     />
                     <input
                       value={pool.name}
                       onChange={(e) => updateRpgPool(i, { name: e.target.value })}
                       className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs font-medium"
-                      placeholder="Name"
+                      placeholder={localizeUi("ui.personas.personastatstab.name")}
                     />
                     <input
                       type="number"
@@ -2614,7 +3417,9 @@ function PersonaStatsTab({
                       onChange={(e) => updateRpgPool(i, { value: Math.max(0, parseInt(e.target.value) || 0) })}
                       className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-center text-xs"
                       min={0}
-                      aria-label={`${pool.name || "Pool"} value`}
+                      aria-label={localizeUi("ui.personas.personastatstab.value1Value", {
+                        value1: pool.name || localizeUi("ui.personas.personastatstab.pool"),
+                      })}
                     />
                     <input
                       type="number"
@@ -2622,13 +3427,17 @@ function PersonaStatsTab({
                       onChange={(e) => updateRpgPool(i, { max: Math.max(1, parseInt(e.target.value) || 1) })}
                       className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-center text-xs"
                       min={1}
-                      aria-label={`${pool.name || "Pool"} max`}
+                      aria-label={localizeUi("ui.personas.personastatstab.value1Max", {
+                        value1: pool.name || localizeUi("ui.personas.personastatstab.pool"),
+                      })}
                     />
                     <button
                       type="button"
                       onClick={() => updateRpgPools(rpgPools.filter((_, poolIndex) => poolIndex !== i))}
-                      className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-red-500/15 hover:text-red-400"
-                      aria-label={`Remove ${pool.name || "pool"}`}
+                      className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--primary)]/15 hover:text-[var(--primary)]"
+                      aria-label={localizeUi("ui.personas.personastatstab.removeValue1", {
+                        value1: pool.name || localizeUi("ui.personas.personastatstab.pool_51a4b13"),
+                      })}
                     >
                       <X size="0.75rem" />
                     </button>
@@ -2640,14 +3449,14 @@ function PersonaStatsTab({
             {/* Attributes */}
             <div className="mt-4 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">Attributes</h3>
+                <h3 className="text-sm font-semibold">{localizeUi("ui.personas.personastatstab.attributes")}</h3>
                 <button
                   type="button"
                   onClick={addRpgAttribute}
                   className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.6875rem] font-medium transition-colors"
                 >
                   <Plus size="0.75rem" />
-                  Add
+                  {localizeUi("ui.personas.personastatstab.add")}
                 </button>
               </div>
 
@@ -2661,7 +3470,7 @@ function PersonaStatsTab({
                       value={attr.name}
                       onChange={(e) => updateRpgAttribute(i, "name", e.target.value)}
                       className="w-20 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs font-medium"
-                      placeholder="Name"
+                      placeholder={localizeUi("ui.personas.personastatstab.name")}
                     />
                     <input
                       type="number"
@@ -2672,7 +3481,7 @@ function PersonaStatsTab({
                     <button
                       type="button"
                       onClick={() => removeRpgAttribute(i)}
-                      className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-red-500/15 hover:text-red-400"
+                      className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--primary)]/15 hover:text-[var(--primary)]"
                     >
                       <X size="0.75rem" />
                     </button>
@@ -2696,12 +3505,29 @@ function PersonaMetadataTab({
   formData,
   updateField,
   avatarPreview,
+  onSelectAvatar,
+  onGenerateAvatar,
+  imageGenerationAvailable,
+  avatarUploading,
+  hasUnsavedChanges,
+  // The editor's live save/avatar/gallery mutex. Replacing or reframing the avatar
+  // while one of those is running would race the image the server is about to
+  // return, so both entry points and the cropper follow the same busy state.
+  avatarMutationBusy,
 }: {
   personaId: string | null;
   formData: PersonaFormData;
   updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
   avatarPreview: string | null;
+  onSelectAvatar: () => void;
+  onGenerateAvatar: () => void;
+  imageGenerationAvailable: boolean;
+  avatarUploading: boolean;
+  hasUnsavedChanges: boolean;
+  avatarMutationBusy: boolean;
 }) {
+  const { t: localizeUi } = useUiTranslation();
+  const { t } = useTranslation();
   const [newTag, setNewTag] = useState("");
 
   const addTag = () => {
@@ -2725,15 +3551,31 @@ function PersonaMetadataTab({
   return (
     <div className="space-y-5">
       <SectionHeader
-        title="Metadata"
-        subtitle="Basic persona info: name, title, creator, version, avatar, tags."
+        title={localizeUi("editor.tabs.metadata")}
+        subtitle={localizeUi("ui.personas.personametadatatab.basicPersonaInfoNameTitleCreatorVersionAvatarTags")}
         helpText={PERSONA_METADATA_HELP}
       />
+
+      <div className="space-y-1.5">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+          {t("editor.avatar.label")}
+          <HelpTooltip text={t("editor.avatar.persona.help")} />
+        </span>
+        <fieldset disabled={avatarMutationBusy} className="min-w-0 border-0 p-0 disabled:opacity-60">
+          <AvatarReplaceActions
+            hasAvatar={Boolean(avatarPreview)}
+            uploading={avatarUploading}
+            generationAvailable={imageGenerationAvailable}
+            onUpload={onSelectAvatar}
+            onGenerate={onGenerateAvatar}
+          />
+        </fieldset>
+      </div>
 
       {personaId && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/70 px-3 py-2">
           <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
-            Persona ID
+            {localizeUi("ui.personas.personametadatatab.personaId")}
           </span>
           <code className="min-w-0 flex-1 break-all rounded-lg bg-[var(--background)] px-2 py-1 text-[0.6875rem] text-[var(--foreground)]">
             {personaId}
@@ -2742,55 +3584,69 @@ function PersonaMetadataTab({
             type="button"
             onClick={() => {
               void navigator.clipboard?.writeText(personaId);
-              toast.success("Persona ID copied");
+              toast.success(localizeUi("ui.personas.personametadatatab.personaIdCopied"));
             }}
             className="mari-editor-action inline-flex h-8 px-2 text-[0.6875rem]"
-            title="Copy persona ID"
+            title={localizeUi("ui.personas.personametadatatab.copyPersonaId")}
           >
             <Copy size="0.75rem" />
-            Copy
+            {localizeUi("lorebook.editor.batch.copy")}
           </button>
         </div>
       )}
 
       {avatarPreview && (
-        <AvatarCropWidget
-          src={avatarPreview}
-          alt={formData.name}
-          crop={formData.avatarCrop}
-          onChange={(next) => updateField("avatarCrop", next)}
-        />
+        <fieldset
+          disabled={avatarMutationBusy}
+          className="min-w-0 border-0 p-0 disabled:pointer-events-none disabled:opacity-60"
+        >
+          <AvatarCropWidget
+            src={avatarPreview}
+            alt={formData.name}
+            crop={formData.avatarCrop}
+            onChange={(next) => {
+              if (avatarMutationBusy) return;
+              updateField("avatarCrop", next);
+            }}
+          />
+        </fieldset>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="space-y-1.5 sm:col-span-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Name{" "}
-            <HelpTooltip text="Your persona's display name. This is injected into prompts as the user's persona identity." />
+            {localizeUi("ui.personas.personastatstab.name")}{" "}
+            <HelpTooltip
+              text={localizeUi("ui.personas.personametadatatab.yourPersonaSDisplayNameThisIsInjectedInto")}
+            />
           </span>
           <input
             value={formData.name}
             onChange={(e) => updateField("name", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-            placeholder="Persona name"
+            placeholder={localizeUi("ui.personas.personaeditor.personaName")}
           />
         </label>
         <label className="space-y-1.5 sm:col-span-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Title / comment{" "}
-            <HelpTooltip text="A short note shown under the persona name in the library, useful for variants or alternate versions." />
+            {localizeUi("ui.personas.personametadatatab.titleComment")}{" "}
+            <HelpTooltip text={localizeUi("ui.personas.personametadatatab.aShortNoteShownUnderThePersonaNameIn")} />
           </span>
           <input
             value={formData.comment}
             onChange={(e) => updateField("comment", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-            placeholder="Modern AU version"
+            placeholder={localizeUi("ui.personas.personametadatatab.modernAuVersion")}
           />
         </label>
         <label className="space-y-1.5">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Phonetic name{" "}
-            <HelpTooltip text="Optional pronunciation override used only when your persona name is sent to text-to-speech." />
+            {localizeUi("ui.personas.personametadatatab.phoneticName")}{" "}
+            <HelpTooltip
+              text={localizeUi(
+                "ui.personas.personametadatatab.optionalPronunciationOverrideUsedOnlyWhenYourPersonaName",
+              )}
+            />
           </span>
           <input
             value={formData.phoneticName}
@@ -2801,19 +3657,24 @@ function PersonaMetadataTab({
         </label>
         <label className="space-y-1.5">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Creator{" "}
-            <HelpTooltip text="The person who made this persona. Useful for credit when sharing persona cards." />
+            {localizeUi("ui.personas.personametadatatab.creator")}{" "}
+            <HelpTooltip
+              text={localizeUi("ui.personas.personametadatatab.thePersonWhoMadeThisPersonaUsefulForCredit")}
+            />
           </span>
           <input
             value={formData.creator}
             onChange={(e) => updateField("creator", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-            placeholder="Your name"
+            placeholder={localizeUi("ui.personas.personametadatatab.yourName")}
           />
         </label>
         <label className="space-y-1.5">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Version <HelpTooltip text="Version number for tracking changes to this persona definition over time." />
+            {localizeUi("ui.personas.personametadatatab.version")}{" "}
+            <HelpTooltip
+              text={localizeUi("ui.personas.personametadatatab.versionNumberForTrackingChangesToThisPersonaDefinition")}
+            />
           </span>
           <input
             value={formData.personaVersion}
@@ -2821,23 +3682,30 @@ function PersonaMetadataTab({
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
             placeholder="1.0"
           />
-          <PersonaVersionHistoryPanel personaId={personaId} currentData={formData} currentAvatarPath={avatarPreview} />
+          <PersonaVersionHistoryPanel
+            personaId={personaId}
+            currentData={formData}
+            currentAvatarPath={avatarPreview}
+            hasUnsavedChanges={hasUnsavedChanges}
+          />
         </label>
       </div>
 
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Tags{" "}
-            <HelpTooltip text="Labels for organizing personas. Use tags like 'fantasy', 'modern', 'OC' etc. to categorize and filter." />
+            {localizeUi("ui.personas.personametadatatab.tags")}{" "}
+            <HelpTooltip
+              text={localizeUi("ui.personas.personametadatatab.labelsForOrganizingPersonasUseTagsLikeFantasyModern")}
+            />
           </span>
           {formData.tags.length > 0 && (
             <button
               type="button"
               onClick={removeAllTags}
-              className="mari-chrome-control mari-chrome-control--compact mari-chrome-control--danger"
+              className="mari-chrome-accent-surface mari-accent-animated rounded-lg border px-2.5 py-1 text-[0.6875rem] font-medium transition-colors"
             >
-              Remove All
+              {localizeUi("ui.personas.personametadatatab.removeAll")}
             </button>
           )}
         </div>
@@ -2849,8 +3717,8 @@ function PersonaMetadataTab({
               <button
                 type="button"
                 onClick={() => removeTag(tag)}
-                className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-[var(--destructive)]/20 hover:text-[var(--destructive)]"
-                title={`Remove tag "${tag}"`}
+                className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-[var(--primary)]/15 hover:text-[var(--primary)]"
+                title={localizeUi("ui.personas.personametadatatab.removeTagValue1", { value1: tag })}
               >
                 <X size="0.625rem" />
               </button>
@@ -2867,7 +3735,7 @@ function PersonaMetadataTab({
                 addTag();
               }
             }}
-            placeholder="Add tag..."
+            placeholder={localizeUi("ui.personas.personametadatatab.addTag")}
             className="flex-1 rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs outline-none focus:border-[var(--primary)]/40"
           />
           <button
@@ -2875,26 +3743,156 @@ function PersonaMetadataTab({
             onClick={addTag}
             className="mari-chrome-control mari-chrome-control--compact mari-chrome-control--selected px-3 py-1.5"
           >
-            Add
+            {localizeUi("ui.personas.personastatstab.add")}
           </button>
         </div>
       </div>
 
       <div className="block space-y-1.5">
         <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-          Creator Notes{" "}
-          <HelpTooltip text="Private notes about this persona — tips for use, known quirks, recommended settings. Not sent to the AI." />
+          {localizeUi("ui.personas.personametadatatab.creatorNotes")}{" "}
+          <HelpTooltip
+            text={localizeUi("ui.personas.personametadatatab.privateNotesAboutThisPersonaTipsForUseKnown")}
+          />
         </span>
         <MacroTextarea
           value={formData.creatorNotes}
           onChange={(value) => updateField("creatorNotes", value)}
           rows={4}
-          title="Creator Notes"
+          title={localizeUi("ui.personas.personametadatatab.creatorNotes")}
+          showMarkdownPreview
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-          placeholder="Notes about this persona, intended use, tips for best results..."
+          placeholder={localizeUi("ui.personas.personametadatatab.notesAboutThisPersonaIntendedUseTipsForBest")}
         />
       </div>
     </div>
+  );
+}
+
+function PersonaCharacterSheetSection({
+  personaId,
+  personaName,
+  characterSheetImageId,
+  useAsReference,
+  updateField,
+  onCreateCharacterSheet,
+}: {
+  personaId: string;
+  personaName: string;
+  characterSheetImageId: string | null;
+  useAsReference: boolean;
+  updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
+  onCreateCharacterSheet: () => void;
+}) {
+  const { t: localizeUi } = useUiTranslation();
+  const { data: images, isLoading } = usePersonaGalleryImages(personaId);
+  const upload = useUploadPersonaGalleryImage(personaId);
+  const selectedImage = images?.find((image) => image.id === characterSheetImageId) ?? null;
+  const selectionMissing = Boolean(characterSheetImageId && !isLoading && !selectedImage);
+
+  const handleUpload = useCallback(
+    async (files: File[]) => {
+      const file = files[0];
+      if (!file) return;
+      try {
+        const uploaded = await upload.mutateAsync([file]);
+        const image = uploaded[0];
+        if (image) updateField("characterSheetImageId", image.id);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : localizeUi("ui.characters.charactersheet.uploadFailed"));
+      }
+    },
+    [localizeUi, updateField, upload],
+  );
+
+  const clearSelection = useCallback(() => {
+    updateField("characterSheetImageId", null);
+    updateField("useCharacterSheetAsReference", false);
+  }, [updateField]);
+
+  return (
+    <section className="space-y-6 border-t border-[var(--border)] pt-5">
+      <SectionHeader
+        title={localizeUi("ui.characters.charactersheet.title")}
+        subtitle={localizeUi("ui.characters.charactersheet.subtitle")}
+      />
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
+        <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
+          {selectedImage ? (
+            <img
+              src={selectedImage.url}
+              alt={localizeUi("ui.characters.charactersheet.previewAlt", { name: personaName })}
+              className="max-h-[32rem] w-full bg-[var(--secondary)] object-contain"
+            />
+          ) : (
+            <div className="flex min-h-64 flex-col items-center justify-center gap-3 bg-[var(--secondary)] px-6 text-center">
+              <Image size="2rem" className="text-[var(--muted-foreground)]/50" aria-hidden="true" />
+              <div>
+                <p className="text-sm font-semibold">{localizeUi("ui.characters.charactersheet.emptyTitle")}</p>
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  {localizeUi("ui.characters.charactersheet.emptyDescription")}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <button
+            type="button"
+            onClick={onCreateCharacterSheet}
+            disabled={upload.isPending}
+            className="mari-editor-action mari-editor-action--primary inline-flex w-full justify-center disabled:cursor-wait disabled:opacity-60"
+          >
+            <Wand2 size="0.875rem" />
+            {localizeUi("ui.characters.charactersheet.createWithAi")}
+          </button>
+
+          <ImageUploadDropzone
+            multiple={false}
+            label={
+              selectedImage
+                ? localizeUi("ui.characters.charactersheet.replace")
+                : localizeUi("ui.characters.charactersheet.upload")
+            }
+            pending={upload.isPending}
+            pendingLabel={localizeUi("ui.characters.charactersheet.uploading")}
+            dragLabel={localizeUi("ui.characters.charactersheet.dropImage")}
+            onFilesSelected={(files) => void handleUpload(files)}
+            icon={<Upload size="1rem" />}
+            className="w-full"
+          />
+
+          <SettingsSwitch
+            label={<span className="font-medium">{localizeUi("ui.characters.charactersheet.useAsReference")}</span>}
+            description={localizeUi("ui.characters.charactersheet.useAsReferenceDescription")}
+            checked={Boolean(selectedImage) && useAsReference}
+            disabled={!selectedImage}
+            onChange={(checked) => updateField("useCharacterSheetAsReference", checked)}
+            labelPosition="start"
+            className="justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] p-4"
+          />
+
+          <p className="rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
+            {selectedImage && useAsReference
+              ? localizeUi("ui.characters.charactersheet.activeStatus")
+              : localizeUi("ui.characters.charactersheet.avatarFallbackStatus")}
+          </p>
+
+          {(selectedImage || selectionMissing) && (
+            <button
+              type="button"
+              onClick={clearSelection}
+              className="mari-editor-action inline-flex w-full justify-center text-red-500"
+            >
+              <X size="0.875rem" />
+              {localizeUi("ui.characters.charactersheet.remove")}
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -2907,6 +3905,8 @@ const PERSONA_VERSION_COMPARE_FIELDS: Array<{ key: keyof PersonaCardSnapshot; la
   { key: "scenario", label: "Scenario" },
   { key: "backstory", label: "Backstory" },
   { key: "appearance", label: "Appearance" },
+  { key: "characterSheetImageId", label: "Character Sheet" },
+  { key: "useCharacterSheetAsReference", label: "Use Character Sheet as Reference" },
   { key: "avatarCrop", label: "Avatar Crop" },
   { key: "nameColor", label: "Name Color" },
   { key: "dialogueColor", label: "Dialogue Color" },
@@ -2916,7 +3916,6 @@ const PERSONA_VERSION_COMPARE_FIELDS: Array<{ key: keyof PersonaCardSnapshot; la
   { key: "savedStatusOptions", label: "Saved Status Options" },
   { key: "convoDisplayName", label: "Convo Display Name" },
   { key: "aboutMe", label: "About Me" },
-  { key: "convoBehavior", label: "Convo Behavior" },
 ];
 
 function buildCurrentPersonaSnapshot(formData: PersonaFormData): PersonaCardSnapshot {
@@ -2930,14 +3929,16 @@ function buildCurrentPersonaSnapshot(formData: PersonaFormData): PersonaCardSnap
     scenario: formData.scenario,
     backstory: formData.backstory,
     appearance: formData.appearance,
+    characterSheetImageId: formData.characterSheetImageId ?? "",
+    useCharacterSheetAsReference: String(formData.useCharacterSheetAsReference),
     avatarCrop: formData.avatarCrop ? JSON.stringify(formData.avatarCrop) : "",
     nameColor: formData.nameColor,
     dialogueColor: formData.dialogueColor,
     boxColor: formData.boxColor,
     trackerCardColors: serializeTrackerCardColorConfig(formData.trackerCardColors),
-    personaStats: formData.personaStats,
+    personaStats: formData.personaStats ? JSON.stringify(formData.personaStats) : "",
     tags: JSON.stringify(formData.tags),
-    savedStatusOptions: formData.savedStatusOptions,
+    savedStatusOptions: JSON.stringify(formData.savedStatusOptions),
     convoDisplayName: formData.convoDisplayName,
     aboutMe: formData.aboutMe,
     convoBehavior:
@@ -2945,22 +3946,6 @@ function buildCurrentPersonaSnapshot(formData: PersonaFormData): PersonaCardSnap
         ? JSON.stringify(formData.convoBehavior)
         : "",
   };
-}
-
-function formatVersionTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function getPersonaVersionTitle(version: PersonaCardVersion): string {
-  return version.version?.trim() ? `v${version.version}` : "Untitled version";
 }
 
 function formatPersonaVersionValue(data: PersonaCardSnapshot, key: keyof PersonaCardSnapshot): string {
@@ -2981,15 +3966,24 @@ function PersonaVersionHistoryPanel({
   personaId,
   currentData,
   currentAvatarPath,
+  hasUnsavedChanges,
 }: {
   personaId: string | null;
   currentData: PersonaFormData;
   currentAvatarPath: string | null;
+  hasUnsavedChanges: boolean;
 }) {
+  const { t: localizeUi } = useUiTranslation();
   const { data: versions = [], isLoading } = usePersonaVersions(personaId);
   const restoreVersion = useRestorePersonaVersion();
   const deleteVersion = useDeletePersonaVersion();
+  const renameVersion = useRenamePersonaVersion();
+  const resetVersions = useResetPersonaVersions();
   const [selectedVersion, setSelectedVersion] = useState<PersonaCardVersion | null>(null);
+  const savedVersionCount = versions.filter((version) => !version.isCurrent).length;
+  const getPersonaVersionTitle = (version: PersonaCardVersion) => getCardVersionTitle(version, localizeUi);
+  const versionMutationPending =
+    restoreVersion.isPending || deleteVersion.isPending || renameVersion.isPending || resetVersions.isPending;
 
   if (!personaId) return null;
 
@@ -2997,34 +3991,98 @@ function PersonaVersionHistoryPanel({
 
   const handleRestore = async (version: PersonaCardVersion) => {
     const confirmed = await showConfirmDialog({
-      title: "Restore Persona Version",
-      message: `Restore ${currentData.name || "this persona"} to ${getPersonaVersionTitle(version)}? The current persona card will become exactly that saved version without creating another history entry.`,
-      confirmLabel: "Restore",
+      title: localizeUi("ui.personas.personaversionhistorypanel.restorePersonaVersion"),
+      message: localizeUi("ui.personas.personaversionhistorypanel.restoreValue1ToValue2TheCurrentPersonaCardWill", {
+        value1: currentData.name || localizeUi("ui.personas.personaversionhistorypanel.thisPersona"),
+        value2: getPersonaVersionTitle(version),
+      }),
+      confirmLabel: localizeUi("ui.chat.databaseworkspaceapprovalcard.restore"),
     });
     if (!confirmed) return;
     try {
       await restoreVersion.mutateAsync({ id: personaId, versionId: version.id });
-      toast.success(`Restored ${getPersonaVersionTitle(version)}.`);
+      toast.success(
+        localizeUi("ui.personas.personaversionhistorypanel.restoredValue1", {
+          value1: getPersonaVersionTitle(version),
+        }),
+      );
       setSelectedVersion(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to restore persona version.");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localizeUi("ui.personas.personaversionhistorypanel.failedToRestorePersonaVersion"),
+      );
     }
   };
 
   const handleDeleteVersion = async (version: PersonaCardVersion) => {
     const confirmed = await showConfirmDialog({
-      title: "Delete Saved Version",
-      message: `Delete ${getPersonaVersionTitle(version)} from version history? This does not change the current persona card.`,
-      confirmLabel: "Delete",
+      title: localizeUi("ui.personas.personaversionhistorypanel.deleteSavedVersion"),
+      message: localizeUi("ui.personas.personaversionhistorypanel.deleteValue1FromVersionHistoryThisDoesNotChange", {
+        value1: getPersonaVersionTitle(version),
+      }),
+      confirmLabel: localizeUi("lorebook.editor.batch.delete"),
       tone: "destructive",
     });
     if (!confirmed) return;
     try {
       await deleteVersion.mutateAsync({ id: personaId, versionId: version.id });
-      toast.success(`Deleted ${getPersonaVersionTitle(version)}.`);
+      toast.success(
+        localizeUi("ui.personas.personaversionhistorypanel.deletedValue1", { value1: getPersonaVersionTitle(version) }),
+      );
       setSelectedVersion((current) => (current?.id === version.id ? null : current));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to delete persona version.");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localizeUi("ui.personas.personaversionhistorypanel.failedToDeletePersonaVersion"),
+      );
+    }
+  };
+
+  const handleRenameVersion = async (version: PersonaCardVersion) => {
+    const nextVersion = await showPromptDialog({
+      title: localizeUi("ui.cardversionhistory.renameVersion"),
+      message: localizeUi("ui.cardversionhistory.renameVersionMessage", {
+        value1: getPersonaVersionTitle(version),
+      }),
+      defaultValue: version.version,
+      placeholder: localizeUi("ui.cardversionhistory.versionPlaceholder"),
+      confirmLabel: localizeUi("ui.cardversionhistory.save"),
+      tone: "accent",
+    });
+    const trimmedVersion = nextVersion?.trim();
+    if (!trimmedVersion || trimmedVersion === version.version) return;
+    try {
+      await renameVersion.mutateAsync({ id: personaId, versionId: version.id, version: trimmedVersion });
+      toast.success(
+        localizeUi("ui.cardversionhistory.renamedVersion", {
+          value1: getPersonaVersionTitle(version),
+          value2: trimmedVersion,
+        }),
+      );
+      setSelectedVersion(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : localizeUi("ui.cardversionhistory.failedToRenameVersion"));
+    }
+  };
+
+  const handleResetVersions = async () => {
+    const personaName = currentData.name || localizeUi("ui.personas.personaversionhistorypanel.thisPersona");
+    const confirmed = await showConfirmDialog({
+      title: localizeUi("ui.cardversionhistory.resetVersioningForValue1", { value1: personaName }),
+      message: localizeUi("ui.cardversionhistory.resetVersioningMessage", { value1: personaName }),
+      confirmLabel: localizeUi("ui.cardversionhistory.reset"),
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    try {
+      await resetVersions.mutateAsync(personaId);
+      toast.success(localizeUi("ui.cardversionhistory.resetVersioningSuccess", { value1: personaName }));
+      setSelectedVersion(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : localizeUi("ui.cardversionhistory.failedToResetVersioning"));
     }
   };
 
@@ -3033,16 +4091,38 @@ function PersonaVersionHistoryPanel({
       <div className="flex items-center justify-between gap-2">
         <span className="inline-flex items-center gap-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
           <History size="0.75rem" />
-          Version history
+          {localizeUi("ui.personas.personaversionhistorypanel.versionHistory")}
         </span>
-        <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-          {isLoading ? "Loading" : `${versions.length} saved`}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleResetVersions}
+            disabled={isLoading || versionMutationPending || hasUnsavedChanges}
+            className="mari-editor-action mari-editor-action--compact inline-flex h-7 px-2 text-[0.625rem]"
+            title={localizeUi(
+              hasUnsavedChanges
+                ? "ui.cardversionhistory.saveOrDiscardEditsBeforeResettingVersioning"
+                : "ui.cardversionhistory.resetVersioning",
+            )}
+          >
+            {resetVersions.isPending ? (
+              <Loader2 size="0.75rem" className="animate-spin" />
+            ) : (
+              <RotateCcw size="0.75rem" />
+            )}
+            {localizeUi("ui.cardversionhistory.reset")}
+          </button>
+          <span className="mari-editor-chip mari-editor-chip--accent px-2 py-0.5 text-[0.625rem]">
+            {isLoading
+              ? localizeUi("ui.personas.personaversionhistorypanel.loading")
+              : localizeUi("ui.personas.personaversionhistorypanel.value1Saved", { value1: savedVersionCount })}
+          </span>
+        </div>
       </div>
 
       {versions.length === 0 ? (
         <p className="mt-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-          Previous persona states will appear here after the next edit.
+          {localizeUi("ui.personas.personaversionhistorypanel.previousPersonaStatesWillAppearHereAfterTheNext")}
         </p>
       ) : (
         <div className="mt-2 flex max-h-36 flex-col gap-1.5 overflow-y-auto pr-1">
@@ -3053,44 +4133,70 @@ function PersonaVersionHistoryPanel({
             >
               <button
                 type="button"
-                onClick={() => setSelectedVersion(version)}
-                className="min-w-0 flex-1 text-left"
-                title="Compare with current persona"
+                onClick={() => {
+                  if (!version.isCurrent) setSelectedVersion(version);
+                }}
+                disabled={version.isCurrent}
+                className="min-w-0 flex-1 text-left disabled:cursor-default"
+                title={
+                  version.isCurrent
+                    ? undefined
+                    : localizeUi("ui.personas.personaversionhistorypanel.compareWithCurrentPersona")
+                }
               >
                 <span className="block truncate text-[0.6875rem] font-medium text-[var(--foreground)]">
                   {getPersonaVersionTitle(version)}
                 </span>
                 <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                  {formatVersionTimestamp(version.createdAt)}
-                  {version.source ? ` · ${version.source}` : ""}
+                  {formatCardVersionTimestamp(version.createdAt)}
+                  {!version.isCurrent && version.source
+                    ? localizeUi("ui.personas.personaversionhistorypanel.value1", { value1: version.source })
+                    : ""}
                 </span>
               </button>
-              <button
-                type="button"
-                onClick={() => handleRestore(version)}
-                disabled={restoreVersion.isPending || deleteVersion.isPending}
-                className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
-                title="Restore this version"
-              >
-                {restoreVersion.isPending ? (
-                  <Loader2 size="0.75rem" className="animate-spin" />
-                ) : (
-                  <RotateCcw size="0.75rem" />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDeleteVersion(version)}
-                disabled={restoreVersion.isPending || deleteVersion.isPending}
-	                className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
-                title="Delete this saved version"
-              >
-                {deleteVersion.isPending && deleteVersion.variables?.versionId === version.id ? (
-                  <Loader2 size="0.75rem" className="animate-spin" />
-                ) : (
-                  <Trash2 size="0.75rem" />
-                )}
-              </button>
+              {!version.isCurrent && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleRenameVersion(version)}
+                    disabled={versionMutationPending}
+                    className="mari-editor-action mari-editor-action--compact inline-flex h-7 w-7 rounded-lg p-0"
+                    title={localizeUi("ui.cardversionhistory.renameThisSavedVersion")}
+                  >
+                    {renameVersion.isPending && renameVersion.variables?.versionId === version.id ? (
+                      <Loader2 size="0.75rem" className="animate-spin" />
+                    ) : (
+                      <Pencil size="0.75rem" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRestore(version)}
+                    disabled={versionMutationPending}
+                    className="mari-editor-action mari-editor-action--compact inline-flex h-7 w-7 rounded-lg p-0"
+                    title={localizeUi("ui.personas.personaversionhistorypanel.restoreThisVersion")}
+                  >
+                    {restoreVersion.isPending ? (
+                      <Loader2 size="0.75rem" className="animate-spin" />
+                    ) : (
+                      <RotateCcw size="0.75rem" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteVersion(version)}
+                    disabled={versionMutationPending}
+                    className="mari-editor-action mari-editor-action--compact mari-editor-action--danger inline-flex h-7 w-7 rounded-lg p-0"
+                    title={localizeUi("ui.personas.personaversionhistorypanel.deleteThisSavedVersion")}
+                  >
+                    {deleteVersion.isPending && deleteVersion.variables?.versionId === version.id ? (
+                      <Loader2 size="0.75rem" className="animate-spin" />
+                    ) : (
+                      <Trash2 size="0.75rem" />
+                    )}
+                  </button>
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -3099,26 +4205,39 @@ function PersonaVersionHistoryPanel({
       <Modal
         open={!!selectedVersion}
         onClose={() => setSelectedVersion(null)}
-        title={selectedVersion ? `Compare ${getPersonaVersionTitle(selectedVersion)}` : "Compare Version"}
+        title={
+          selectedVersion
+            ? localizeUi("ui.personas.personaversionhistorypanel.compareValue1", {
+                value1: getPersonaVersionTitle(selectedVersion),
+              })
+            : localizeUi("ui.personas.personaversionhistorypanel.compareVersion")
+        }
         width="max-w-5xl"
       >
         {selectedVersion && (
           <div className="flex max-h-[75vh] flex-col gap-4 overflow-y-auto">
             <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 text-xs md:grid-cols-2">
               <div>
-                <p className="font-semibold text-[var(--foreground)]">Current persona</p>
+                <p className="font-semibold text-[var(--foreground)]">
+                  {localizeUi("ui.personas.personaversionhistorypanel.currentPersona")}
+                </p>
                 <p className="mt-1 text-[var(--muted-foreground)]">
-                  v{currentData.personaVersion || "1.0"}
-                  {currentData.comment ? ` · ${currentData.comment}` : ""}
-                  {currentAvatarPath ? " · has avatar" : ""}
+                  {localizeUi("ui.personas.personaeditor.v")}
+                  {currentData.personaVersion || "1.0"}
+                  {currentData.comment
+                    ? localizeUi("ui.personas.personaversionhistorypanel.value1", { value1: currentData.comment })
+                    : ""}
+                  {currentAvatarPath ? localizeUi("ui.personas.personaversionhistorypanel.hasAvatar") : ""}
                 </p>
               </div>
               <div>
                 <p className="font-semibold text-[var(--foreground)]">{getPersonaVersionTitle(selectedVersion)}</p>
                 <p className="mt-1 text-[var(--muted-foreground)]">
-                  {formatVersionTimestamp(selectedVersion.createdAt)}
-                  {selectedVersion.reason ? ` · ${selectedVersion.reason}` : ""}
-                  {selectedVersion.avatarPath ? " · has avatar" : ""}
+                  {formatCardVersionTimestamp(selectedVersion.createdAt)}
+                  {selectedVersion.reason
+                    ? localizeUi("ui.personas.personaversionhistorypanel.value1", { value1: selectedVersion.reason })
+                    : ""}
+                  {selectedVersion.avatarPath ? localizeUi("ui.personas.personaversionhistorypanel.hasAvatar") : ""}
                 </p>
               </div>
             </div>
@@ -3135,16 +4254,24 @@ function PersonaVersionHistoryPanel({
                       <span className="text-xs font-semibold text-[var(--foreground)]">{field.label}</span>
                       {changed && (
                         <span className="rounded-full bg-[var(--primary)]/10 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--primary)]">
-                          changed
+                          {localizeUi("ui.personas.personaversionhistorypanel.changed")}
                         </span>
                       )}
                     </div>
                     <div className="grid gap-2 md:grid-cols-2">
-                      <div className="min-h-20 whitespace-pre-wrap rounded-lg bg-[var(--secondary)] p-2 text-xs leading-relaxed text-[var(--foreground)]">
-                        {currentValue || <span className="text-[var(--muted-foreground)]">Empty</span>}
+                      <div className="min-h-20 min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg bg-[var(--secondary)] p-2 text-xs leading-relaxed text-[var(--foreground)]">
+                        {currentValue || (
+                          <span className="text-[var(--muted-foreground)]">
+                            {localizeUi("ui.personas.personaversionhistorypanel.empty")}
+                          </span>
+                        )}
                       </div>
-                      <div className="min-h-20 whitespace-pre-wrap rounded-lg bg-[var(--secondary)] p-2 text-xs leading-relaxed text-[var(--foreground)]">
-                        {savedValue || <span className="text-[var(--muted-foreground)]">Empty</span>}
+                      <div className="min-h-20 min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg bg-[var(--secondary)] p-2 text-xs leading-relaxed text-[var(--foreground)]">
+                        {savedValue || (
+                          <span className="text-[var(--muted-foreground)]">
+                            {localizeUi("ui.personas.personaversionhistorypanel.empty")}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -3164,7 +4291,7 @@ function PersonaVersionHistoryPanel({
                 ) : (
                   <RotateCcw size="0.75rem" />
                 )}
-                Restore this version
+                {localizeUi("ui.personas.personaversionhistorypanel.restoreThisVersion")}
               </button>
             </div>
           </div>
@@ -3201,65 +4328,70 @@ function PersonaConvoTab({
 function PersonaCardTab({
   formData,
   updateField,
-  setDirty,
 }: {
   formData: PersonaFormData;
   updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
-  setDirty: (v: boolean) => void;
 }) {
+  const { t: localizeUi } = useUiTranslation();
   return (
     <div>
       <SectionHeader
-        title="Card"
-        subtitle="Write your core persona card fields in one focused workspace."
+        title={localizeUi("editor.tabs.card")}
+        subtitle={localizeUi("ui.personas.personacardtab.writeYourCorePersonaCardFieldsInOneFocused")}
         helpText={PERSONA_CARD_HELP}
       />
       <EditorSectionJumps items={PERSONA_CARD_SECTIONS} />
       <div className="space-y-10">
         <EditorSectionAnchor id="persona-card-description">
-          <DescriptionTab formData={formData} updateField={updateField} setDirty={setDirty} />
+          <DescriptionTab formData={formData} updateField={updateField} />
         </EditorSectionAnchor>
         <EditorSectionAnchor id="persona-card-personality">
           <TextareaTab
-            title="Personality"
-            subtitle="Your personality traits, temperament, and behavioral patterns."
+            title={localizeUi("chat.settings.inlineEditor.fields.personality")}
+            subtitle={localizeUi("ui.personas.personacardtab.yourPersonalityTraitsTemperamentAndBehavioralPatterns")}
             helpText={PERSONA_PERSONALITY_HELP}
             value={formData.personality}
             onChange={(v) => updateField("personality", v)}
-            placeholder="Calm and analytical, but quick to act when someone's in danger. Has a dry sense of humor…"
+            placeholder={localizeUi("ui.personas.personacardtab.calmAndAnalyticalButQuickToActWhenSomeone")}
             rows={8}
           />
         </EditorSectionAnchor>
         <EditorSectionAnchor id="persona-card-backstory">
           <TextareaTab
-            title="Backstory"
-            subtitle="Your character's history, origin story, and formative life events."
+            title={localizeUi("chat.settings.inlineEditor.fields.backstory")}
+            subtitle={localizeUi("ui.personas.personacardtab.yourCharacterSHistoryOriginStoryAndFormativeLife")}
             helpText={PERSONA_BACKSTORY_HELP}
             value={formData.backstory}
             onChange={(v) => updateField("backstory", v)}
-            placeholder="Grew up in a frontier town, apprenticed under a traveling scholar…"
+            placeholder={localizeUi("ui.personas.personacardtab.grewUpInAFrontierTownApprenticedUnderA")}
             rows={12}
           />
         </EditorSectionAnchor>
         <EditorSectionAnchor id="persona-card-appearance">
           <TextareaTab
-            title="Appearance"
-            subtitle="Physical description, height, build, hair, eyes, clothing, distinguishing features."
+            title={localizeUi("chat.settings.inlineEditor.fields.appearance")}
+            subtitle={localizeUi(
+              "ui.personas.personacardtab.physicalDescriptionHeightBuildHairEyesClothingDistinguishingFeatures",
+            )}
             helpText={PERSONA_APPEARANCE_HELP}
             value={formData.appearance}
             onChange={(v) => updateField("appearance", v)}
-            placeholder="Average height, dark hair worn loose. Prefers practical clothing, boots, a worn jacket…"
+            placeholder={localizeUi(
+              "ui.personas.personacardtab.averageHeightDarkHairWornLoosePrefersPracticalClothing",
+            )}
             rows={8}
           />
         </EditorSectionAnchor>
         <EditorSectionAnchor id="persona-card-scenario">
           <TextareaTab
-            title="Scenario"
-            subtitle="Your default situation or context within roleplays."
+            title={localizeUi("chat.settings.inlineEditor.fields.scenario")}
+            subtitle={localizeUi("ui.personas.personacardtab.yourDefaultSituationOrContextWithinRoleplays")}
             helpText={PERSONA_SCENARIO_HELP}
             value={formData.scenario}
             onChange={(v) => updateField("scenario", v)}
-            placeholder="A wandering adventurer seeking answers about a mysterious artifact…"
+            placeholder={localizeUi(
+              "ui.personas.personacardtab.aWanderingAdventurerSeekingAnswersAboutAMysteriousArtifact",
+            )}
             rows={8}
           />
         </EditorSectionAnchor>
@@ -3269,11 +4401,12 @@ function PersonaCardTab({
 }
 
 function PersonaLorebookTab({ personaId, personaName }: { personaId: string; personaName: string }) {
+  const { t: localizeUi } = useUiTranslation();
   return (
     <div className="space-y-4">
       <SectionHeader
-        title="Persona Lorebook"
-        subtitle="World-building entries attached to your persona."
+        title={localizeUi("ui.personas.personalorebooktab.personaLorebook")}
+        subtitle={localizeUi("ui.personas.personalorebooktab.worldBuildingEntriesAttachedToYourPersona")}
         helpText={PERSONA_LOREBOOK_HELP}
       />
       <LorebookAssignmentSection ownerType="persona" ownerId={personaId} ownerName={personaName} />
@@ -3286,25 +4419,25 @@ function PersonaLorebookTab({ personaId, personaName }: { personaId: string; per
 function DescriptionTab({
   formData,
   updateField,
-  setDirty: _setDirty,
 }: {
   formData: PersonaFormData;
   updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
-  setDirty: (v: boolean) => void;
 }) {
+  const { t: localizeUi } = useUiTranslation();
   return (
     <div className="mari-editor-panel space-y-3 p-3">
       <SectionHeader
-        title="Description"
-        subtitle="Your general description. This is sent in every prompt so the AI knows who you are."
+        title={localizeUi("chat.settings.inlineEditor.fields.description")}
+        subtitle={localizeUi("ui.personas.descriptiontab.yourGeneralDescriptionThisIsSentInEveryPrompt")}
         helpText={PERSONA_DESCRIPTION_HELP}
       />
       <MacroTextarea
         value={formData.description}
         onChange={(value) => updateField("description", value)}
-        placeholder="Describe who you are, your role in the story, and your key traits…"
+        placeholder={localizeUi("ui.personas.descriptiontab.describeWhoYouAreYourRoleInTheStory")}
         rows={12}
-        title="Description"
+        title={localizeUi("chat.settings.inlineEditor.fields.description")}
+        showMarkdownPreview
         className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
       <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
@@ -3362,6 +4495,7 @@ function TextareaTab({
         placeholder={placeholder}
         rows={rows}
         title={title}
+        showMarkdownPreview
         className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
       <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">

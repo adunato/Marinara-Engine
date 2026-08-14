@@ -36,6 +36,8 @@ export interface OutboundUrlPolicy {
   allowedProtocols?: string[];
   /** Restrict every request and redirect hop to these exact hostnames. */
   allowedHostnames?: string[];
+  /** Restrict every request and redirect hop to these exact scheme, hostname, and port origins. */
+  allowedOrigins?: string[];
   maxRedirects?: number;
   /**
    * Optional name of the env var that, when set to true, would allow this
@@ -58,6 +60,8 @@ export interface SafeFetchOptions extends Omit<RequestInit, "dispatcher"> {
   bufferResponse?: boolean;
   decodeCompressedResponse?: boolean;
   agentOptions?: Omit<AgentOptions, "connect">;
+  /** Start TCP keepalive probes after this many idle milliseconds without exposing custom DNS/connect hooks. */
+  keepAliveInitialDelayMs?: number;
   dispatcher?: unknown;
 }
 
@@ -289,7 +293,12 @@ async function validateResolvedAddresses(
   policy: OutboundUrlPolicy,
   originalUrl?: string,
 ): Promise<Array<{ address: string; family: 4 | 6 }>> {
-  const addresses = await resolveHostname(hostname);
+  const resolvedAddresses = await resolveHostname(hostname);
+  // Some local inference servers expose an IPv4-only proxy on their public
+  // port even when their ordinary server is dual-stack (KoboldCPP Router Mode
+  // is one example). Prefer IPv4 for ambiguous loopback names such as
+  // `localhost`; explicit IPv6 loopback URLs remain IPv6.
+  const addresses = isLoopbackHostname(hostname) ? preferIpv4Records(resolvedAddresses) : resolvedAddresses;
   if (policy.allowMdns && isMdnsHostname(hostname)) {
     const preferred = preferIpv4Records(addresses);
     if (preferred.length === 0) {
@@ -329,6 +338,19 @@ export async function validateOutboundUrl(url: string | URL, policy: OutboundUrl
   }
 
   if (
+    policy.allowedOrigins?.length &&
+    !policy.allowedOrigins.some((origin) => {
+      try {
+        return new URL(origin).origin === parsed.origin;
+      } catch {
+        return false;
+      }
+    })
+  ) {
+    throw new Error(`Refused to fetch ${original}: origin '${parsed.origin}' is not allowed.`);
+  }
+
+  if (
     policy.allowedHostnames?.length &&
     !policy.allowedHostnames.some((hostname) => hostname.toLowerCase() === parsed.hostname.toLowerCase())
   ) {
@@ -357,9 +379,19 @@ async function validateOutboundUrlForFetch(
   url: string | URL,
   policy: OutboundUrlPolicy = {},
   agentOptions?: Omit<AgentOptions, "connect">,
+  keepAliveInitialDelayMs?: number,
 ): Promise<{ url: URL; dispatcher?: Agent }> {
   const parsed = await validateOutboundUrl(url, policy);
-  if (policy.allowLocal) return { url: parsed, dispatcher: agentOptions ? new Agent(agentOptions) : undefined };
+  if (policy.allowLocal) {
+    const dispatcher =
+      agentOptions || keepAliveInitialDelayMs
+        ? new Agent({
+            ...(agentOptions ?? {}),
+            ...(keepAliveInitialDelayMs ? { connect: { keepAliveInitialDelay: keepAliveInitialDelayMs } } : {}),
+          })
+        : undefined;
+    return { url: parsed, dispatcher };
+  }
 
   const original = typeof url === "string" ? url : parsed.toString();
   const addresses = await validateResolvedAddresses(parsed.hostname, policy, original);
@@ -367,6 +399,7 @@ async function validateOutboundUrlForFetch(
   const dispatcher = new Agent({
     ...(agentOptions ?? {}),
     connect: {
+      ...(keepAliveInitialDelayMs ? { keepAliveInitialDelay: keepAliveInitialDelayMs } : {}),
       lookup(_hostname, options, callback) {
         if (used) {
           callback(new Error("Outbound URL resolver was reused unexpectedly"), "", 4);
@@ -594,6 +627,7 @@ export async function safeFetch(url: string | URL, options: SafeFetchOptions = {
     bufferResponse = true,
     decodeCompressedResponse = false,
     agentOptions,
+    keepAliveInitialDelayMs,
     dispatcher,
     headers,
     ...init
@@ -601,8 +635,22 @@ export async function safeFetch(url: string | URL, options: SafeFetchOptions = {
   if (dispatcher && !policy?.allowLocal) {
     throw new Error("Custom fetch dispatchers are only allowed for explicit local-provider requests");
   }
+  if (
+    keepAliveInitialDelayMs !== undefined &&
+    (!Number.isSafeInteger(keepAliveInitialDelayMs) || keepAliveInitialDelayMs <= 0)
+  ) {
+    throw new Error("TCP keepalive initial delay must be a positive integer");
+  }
+  if (dispatcher && keepAliveInitialDelayMs !== undefined) {
+    throw new Error("TCP keepalive initial delay cannot be combined with a custom fetch dispatcher");
+  }
 
-  let current = await validateOutboundUrlForFetch(url, policy, dispatcher ? undefined : agentOptions);
+  let current = await validateOutboundUrlForFetch(
+    url,
+    policy,
+    dispatcher ? undefined : agentOptions,
+    dispatcher ? undefined : keepAliveInitialDelayMs,
+  );
   const redirects = policy?.maxRedirects ?? MAX_REDIRECTS;
   let currentHeaders = headers;
   let currentInit = { ...init };
@@ -629,7 +677,7 @@ export async function safeFetch(url: string | URL, options: SafeFetchOptions = {
         currentInit = { ...currentInit };
         delete (currentInit as { body?: unknown }).body;
       }
-      current = await validateOutboundUrlForFetch(nextUrl, policy, agentOptions);
+      current = await validateOutboundUrlForFetch(nextUrl, policy, agentOptions, keepAliveInitialDelayMs);
       continue;
     }
 

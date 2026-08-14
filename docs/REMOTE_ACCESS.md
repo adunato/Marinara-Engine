@@ -124,34 +124,36 @@ There is also a broader flag, `ALLOW_UNAUTHENTICATED_REMOTE=true`, which allows 
 
 ## Tailscale and Docker bypass
 
-Two flags let Tailscale and Docker traffic skip both the IP allowlist and Basic Auth, the same way loopback does. Both flags are ON by default. That is why a fresh install is already reachable over Tailscale or from your Docker containers with no setup:
+Two flags let direct Tailscale and Docker traffic skip both the IP allowlist and Basic Auth, the same way loopback does. Leave them empty for automatic detection:
 
 ```env
-BYPASS_AUTH_TAILSCALE=true
-BYPASS_AUTH_DOCKER=true
+BYPASS_AUTH_TAILSCALE=
+BYPASS_AUTH_DOCKER=
 ```
 
-These defaults are safe. A Tailscale peer already logged in to your Tailscale account to join. Docker bridge addresses and the exact gateway detected from inside the container represent the same Docker host. Even with Basic Auth on, your Tailscale and Docker clients still skip the prompt. The rest of your network must log in.
+Automatic mode trusts a Tailscale peer only when both ends of its direct socket use Tailnet addresses. It trusts Docker traffic only when Marinara is running in a container and the source matches a detected container interface or its exact gateway. This keeps the usual private Tailscale and same-host Docker setup working without treating unrelated CGNAT, LAN, host-network, or proxy traffic as authenticated.
 
-Set a flag to false if you want a password from those clients too. There are two less common reasons to turn one off.
+Set a flag to `false` if you want normal Basic Auth and IP allowlist checks for those clients. Set it to `true` to retain the older broad bypass when automatic detection is unavailable: Tailscale then trusts all of `100.64.0.0/10`, while Docker also trusts its detected interfaces/gateway and the legacy `172.16.0.0/12` range. Use that compatibility mode only when every matching peer is trusted.
 
-Your internet provider may use CGNAT on the `100.64.0.0/10` range, the same range Tailscale uses. In that case, turn the Tailscale bypass off:
+For example, if your Tailnet includes less-trusted peers, turn the Tailscale bypass off:
 
 ```env
 BYPASS_AUTH_TAILSCALE=false
 ```
 
-Your regular LAN may use `172.16.x.x` addresses. In that case, turn the Docker bypass off, and add your specific containers to `IP_ALLOWLIST`:
+If you do not want detected Docker peers to bypass authentication, turn the Docker bypass off and add specific clients to `IP_ALLOWLIST` if needed:
 
 ```env
 BYPASS_AUTH_DOCKER=false
 ```
 
-Marinara may also sit behind a reverse proxy container on the Docker bridge or detected gateway. To make Marinara's own access checks apply to the clients the proxy forwards, set:
+Marinara may also sit behind a reverse proxy or tunnel container on the Docker bridge or detected gateway. Forwarding headers (`Forwarded`, `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Host`, or `X-Forwarded-Proto`) indicate that the Docker peer represents another client, so Marinara applies its normal Basic Auth and IP allowlist checks by default:
 
 ```env
 REQUIRE_AUTH_FOR_DOCKER_PROXY=true
 ```
+
+To restore the legacy bypass, set this to `false`. Do that only when every client able to reach the proxy is trusted, because forwarded clients will inherit Docker's passwordless status.
 
 The server logs an `[auth-bypass]` warning the first time one of these bypasses lets a request through. That warning confirms the bypass is active.
 
@@ -211,6 +213,14 @@ To fix it, add your address to the trusted list in `.env`:
 ```env
 CSRF_TRUSTED_ORIGINS=https://chat.example.com,http://203.0.113.10:7831
 ```
+
+When you use a public or reverse-proxy domain, also allow the hostname:
+
+```env
+TRUSTED_HOSTS=chat.example.com
+```
+
+Direct LAN, Tailscale, IPv4, and IPv6 addresses do not need `TRUSTED_HOSTS`. Local `.local`/`.home.arpa` names and single-label machine names are accepted automatically. An exact hostname already listed in `CSRF_TRUSTED_ORIGINS` is accepted too.
 
 Loopback, normal LAN addresses, Tailscale (`100.64.0.0/10`), and Docker bridge (`172.16.0.0/12`) origins are trusted automatically. You only need to list public IP addresses and domain names. The change takes effect within a couple of seconds, no restart needed.
 

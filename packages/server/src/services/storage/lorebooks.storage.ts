@@ -27,7 +27,6 @@ import {
 } from "@marinara-engine/shared";
 import { collectEffectivelyDisabledFolderIds, collectFolderSubtreeIds } from "@marinara-engine/shared";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "../import/import-timestamps.js";
-import { GAME_LOREBOOK_KEEPER_SOURCE_ID } from "../lorebook/game-lorebook-scope.js";
 import { toPaginatedList } from "../../utils/list-pagination.js";
 
 function normalizeLorebookEntryLimit(value: unknown): number {
@@ -127,26 +126,10 @@ type LorebookScopeFilters = {
 
 type LinkedLorebook = {
   id: string;
-  characterId?: string | null;
-  characterIds?: string[];
-  personaId?: string | null;
-  personaIds?: string[];
-  chatId?: string | null;
-  sourceAgentId?: string | null;
 };
 
 function activeLorebookMatchesFilters(book: LinkedLorebook, filters: LorebookScopeFilters): boolean {
-  if (!filters.activeLorebookIds?.includes(book.id)) return false;
-  if (book.sourceAgentId === GAME_LOREBOOK_KEEPER_SOURCE_ID) return true;
-
-  const characterIds = resolveLinkIds(book.characterIds, book.characterId);
-  if (characterIds.length > 0) return characterIds.some((id) => filters.characterIds?.includes(id));
-
-  const personaIds = resolveLinkIds(book.personaIds, book.personaId);
-  if (personaIds.length > 0) return !!filters.personaId && personaIds.includes(filters.personaId);
-
-  if (book.chatId) return book.chatId === filters.chatId;
-  return true;
+  return filters.activeLorebookIds?.includes(book.id) === true;
 }
 
 /** Parse DB row booleans ("true"/"false") → real booleans and JSON strings → objects. */
@@ -167,6 +150,7 @@ function parseLorebookRow(row: Record<string, unknown>) {
     vectorMaxResults: normalizeLorebookVectorMaxResults(row.vectorMaxResults),
     isGlobal: row.isGlobal === "true",
     enabled: row.enabled === "true",
+    hiddenFromLibrary: row.hiddenFromLibrary === "true",
     scope: parseLorebookScope(row.scope),
     imagePath: row.imagePath || null,
     generatedBy: row.generatedBy || null,
@@ -402,7 +386,7 @@ export function createLorebooksStorage(db: DB) {
     },
 
     async listPage(options: LorebookListPageOptions) {
-      const clauses = [];
+      const clauses = [eq(lorebooks.hiddenFromLibrary, "false")];
       if (options.category) clauses.push(eq(lorebooks.category, options.category));
       const pattern = likePattern(options.search);
       if (pattern) {
@@ -516,6 +500,7 @@ export function createLorebooksStorage(db: DB) {
           chatId: input.chatId ?? null,
           isGlobal: String(input.isGlobal ?? false),
           enabled: String(input.enabled ?? true),
+          hiddenFromLibrary: String(input.hiddenFromLibrary ?? false),
           scope: JSON.stringify(parseLorebookScope(input.scope)),
           tags: input.tags ? JSON.stringify(input.tags) : "[]",
           generatedBy: input.generatedBy ?? null,
@@ -549,30 +534,69 @@ export function createLorebooksStorage(db: DB) {
         updates.vectorMaxResults = normalizeLorebookVectorMaxResults(input.vectorMaxResults);
       const shouldUpdateCharacterLinks = input.characterIds !== undefined || input.characterId !== undefined;
       const shouldUpdatePersonaLinks = input.personaIds !== undefined || input.personaId !== undefined;
-      const current = shouldUpdateCharacterLinks || shouldUpdatePersonaLinks ? ((await this.getById(id)) as any) : null;
-      if ((shouldUpdateCharacterLinks || shouldUpdatePersonaLinks) && !current) return null;
-      const nextCharacterIds = shouldUpdateCharacterLinks
-        ? resolveLinkIds(input.characterIds, input.characterId)
-        : ((current?.characterIds as string[] | undefined) ?? []);
-      const nextPersonaIds = shouldUpdatePersonaLinks
-        ? resolveLinkIds(input.personaIds, input.personaId)
-        : ((current?.personaIds as string[] | undefined) ?? []);
-      if (shouldUpdateCharacterLinks) updates.characterId = nextCharacterIds[0] ?? null;
-      if (shouldUpdatePersonaLinks) updates.personaId = nextPersonaIds[0] ?? null;
       if (input.chatId !== undefined) updates.chatId = input.chatId;
       if (input.isGlobal !== undefined) updates.isGlobal = String(input.isGlobal);
       if (input.enabled !== undefined) updates.enabled = String(input.enabled);
+      if (input.hiddenFromLibrary !== undefined) updates.hiddenFromLibrary = String(input.hiddenFromLibrary);
       if (input.scope !== undefined) updates.scope = JSON.stringify(parseLorebookScope(input.scope));
       if (input.tags !== undefined) updates.tags = JSON.stringify(input.tags);
       if (input.generatedBy !== undefined) updates.generatedBy = input.generatedBy;
       if (input.sourceAgentId !== undefined) updates.sourceAgentId = input.sourceAgentId;
 
-      await db.transaction(async (tx) => {
-        await tx.update(lorebooks).set(updates).where(eq(lorebooks.id, id));
+      const updated = await db.transaction(async (tx) => {
+        const transactionalUpdates = { ...updates };
+        let nextCharacterIds: string[] = [];
+        let nextPersonaIds: string[] = [];
+        if (shouldUpdateCharacterLinks || shouldUpdatePersonaLinks) {
+          const currentRows = await tx.select().from(lorebooks).where(eq(lorebooks.id, id));
+          const current = currentRows[0];
+          if (!current) return false;
+          const currentCharacterLinks = await tx
+            .select()
+            .from(lorebookCharacterLinks)
+            .where(eq(lorebookCharacterLinks.lorebookId, id));
+          const currentPersonaLinks = await tx
+            .select()
+            .from(lorebookPersonaLinks)
+            .where(eq(lorebookPersonaLinks.lorebookId, id));
+          const currentCharacterIds = resolveLinkIds(
+            currentCharacterLinks.map((link) => link.characterId),
+            current.characterId,
+          );
+          const currentPersonaIds = resolveLinkIds(
+            currentPersonaLinks.map((link) => link.personaId),
+            current.personaId,
+          );
+          nextCharacterIds = shouldUpdateCharacterLinks
+            ? resolveLinkIds(input.characterIds, input.characterId)
+            : currentCharacterIds;
+          nextPersonaIds = shouldUpdatePersonaLinks
+            ? resolveLinkIds(input.personaIds, input.personaId)
+            : currentPersonaIds;
+          if (shouldUpdateCharacterLinks) transactionalUpdates.characterId = nextCharacterIds[0] ?? null;
+          if (shouldUpdatePersonaLinks) transactionalUpdates.personaId = nextPersonaIds[0] ?? null;
+
+          const nextChatId = input.chatId !== undefined ? input.chatId : current.chatId;
+          const nextIsGlobal = input.isGlobal !== undefined ? input.isGlobal : current.isGlobal === "true";
+          const lostFinalOwner =
+            (currentCharacterIds.length > 0 || currentPersonaIds.length > 0) &&
+            nextCharacterIds.length === 0 &&
+            nextPersonaIds.length === 0 &&
+            !nextChatId &&
+            !nextIsGlobal;
+          if (lostFinalOwner) {
+            if (input.enabled === undefined) transactionalUpdates.enabled = "false";
+            if (input.hiddenFromLibrary === undefined) transactionalUpdates.hiddenFromLibrary = "false";
+          }
+        }
+
+        await tx.update(lorebooks).set(transactionalUpdates).where(eq(lorebooks.id, id));
         if (shouldUpdateCharacterLinks || shouldUpdatePersonaLinks) {
           await syncLorebookLinks(tx, id, nextCharacterIds, nextPersonaIds);
         }
+        return true;
       });
+      if (!updated) return null;
       return this.getById(id);
     },
 
@@ -679,7 +703,7 @@ export function createLorebooksStorage(db: DB) {
      * Get all enabled entries from lorebooks that are relevant for a given context.
      * A lorebook is relevant if it's enabled AND one of:
      *  - `isGlobal` is true
-     *  - Its ID is in `activeLorebookIds`, while any character/persona/chat owner link still matches this context
+     *  - Its ID is in `activeLorebookIds`
      *  - Its `characterId` matches one of the chat's active characters
      *  - Its `personaId` matches the chat's active persona
      *  - Its `chatId` matches the current chat
@@ -722,7 +746,7 @@ export function createLorebooksStorage(db: DB) {
           if (b.sourceAgentId && excludedSourceAgentIds.has(b.sourceAgentId)) return false;
           // Globally active lorebooks bypass all scope filters
           if (b.isGlobal) return true;
-          // Explicitly added to this chat, while still respecting owner links.
+          // Explicitly added to this chat.
           if (activeLorebookMatchesFilters(b, filters)) return true;
           // Belongs to one of the active characters
           if ((b.characterIds ?? []).some((id) => filters.characterIds?.includes(id))) return true;
@@ -809,6 +833,7 @@ export function createLorebooksStorage(db: DB) {
         generationTriggerFilters: JSON.stringify(input.generationTriggerFilters ?? []),
         additionalMatchingSources: JSON.stringify(input.additionalMatchingSources ?? []),
         position: input.position ?? 0,
+        outletName: input.outletName ?? "",
         depth: input.depth ?? 0,
         order: input.order ?? 100,
         role: input.role ?? "system",
@@ -836,8 +861,12 @@ export function createLorebooksStorage(db: DB) {
 
     async updateEntry(id: string, input: UpdateLorebookEntryInput) {
       const updates: Record<string, unknown> = { updatedAt: now() };
+      // Must cover EXACTLY the fields buildLorebookEntryEmbeddingText embeds
+      // (name, description, keys, secondary keys, content) — description was
+      // omitted, so editing only the description left a stale embedding.
       const shouldClearEmbedding =
         input.name !== undefined ||
+        input.description !== undefined ||
         input.content !== undefined ||
         input.keys !== undefined ||
         input.secondaryKeys !== undefined ||
@@ -892,6 +921,7 @@ export function createLorebooksStorage(db: DB) {
       if (input.additionalMatchingSources !== undefined)
         updates.additionalMatchingSources = JSON.stringify(input.additionalMatchingSources);
       if (input.position !== undefined) updates.position = input.position;
+      if (input.outletName !== undefined) updates.outletName = input.outletName;
       if (input.depth !== undefined) updates.depth = input.depth;
       if (input.order !== undefined) updates.order = input.order;
       if (input.role !== undefined) updates.role = input.role;
@@ -933,10 +963,51 @@ export function createLorebooksStorage(db: DB) {
         throw new Error("One or more selected entries do not belong to this lorebook");
       }
 
-      const updates: Record<string, unknown> = { updatedAt: now() };
-      for (const [field, value] of Object.entries(changes)) {
-        if (value !== undefined) updates[field] = String(value);
+      if (changes.folderId !== undefined) {
+        await assertFolderBelongsToLorebook(lorebookId, changes.folderId);
       }
+
+      const updates: Record<string, unknown> = { updatedAt: now() };
+      if (changes.enabled !== undefined) updates.enabled = String(changes.enabled);
+      if (changes.constant !== undefined) updates.constant = String(changes.constant);
+      if (changes.selective !== undefined) updates.selective = String(changes.selective);
+      if (changes.selectiveLogic !== undefined) updates.selectiveLogic = changes.selectiveLogic;
+      if (changes.probability !== undefined) updates.probability = changes.probability;
+      if (changes.scanDepth !== undefined) updates.scanDepth = changes.scanDepth;
+      if (changes.matchWholeWords !== undefined) updates.matchWholeWords = String(changes.matchWholeWords);
+      if (changes.caseSensitive !== undefined) updates.caseSensitive = String(changes.caseSensitive);
+      if (changes.useRegex !== undefined) updates.useRegex = String(changes.useRegex);
+      if (changes.characterFilterMode !== undefined) updates.characterFilterMode = changes.characterFilterMode;
+      if (changes.characterFilterIds !== undefined)
+        updates.characterFilterIds = JSON.stringify(changes.characterFilterIds);
+      if (changes.characterTagFilterMode !== undefined) updates.characterTagFilterMode = changes.characterTagFilterMode;
+      if (changes.characterTagFilters !== undefined)
+        updates.characterTagFilters = JSON.stringify(changes.characterTagFilters);
+      if (changes.generationTriggerFilterMode !== undefined)
+        updates.generationTriggerFilterMode = changes.generationTriggerFilterMode;
+      if (changes.generationTriggerFilters !== undefined)
+        updates.generationTriggerFilters = JSON.stringify(changes.generationTriggerFilters);
+      if (changes.additionalMatchingSources !== undefined)
+        updates.additionalMatchingSources = JSON.stringify(changes.additionalMatchingSources);
+      if (changes.position !== undefined) updates.position = changes.position;
+      if (changes.outletName !== undefined) updates.outletName = changes.outletName;
+      if (changes.depth !== undefined) updates.depth = changes.depth;
+      if (changes.order !== undefined) updates.order = changes.order;
+      if (changes.role !== undefined) updates.role = changes.role;
+      if (changes.sticky !== undefined) updates.sticky = changes.sticky;
+      if (changes.cooldown !== undefined) updates.cooldown = changes.cooldown;
+      if (changes.delay !== undefined) updates.delay = changes.delay;
+      if (changes.ephemeral !== undefined) updates.ephemeral = changes.ephemeral;
+      if (changes.group !== undefined) updates.group = changes.group;
+      if (changes.groupWeight !== undefined) updates.groupWeight = changes.groupWeight;
+      if (changes.folderId !== undefined) updates.folderId = changes.folderId;
+      if (changes.tag !== undefined) updates.tag = changes.tag;
+      if (changes.locked !== undefined) updates.locked = String(changes.locked);
+      if (changes.preventRecursion !== undefined) updates.preventRecursion = String(changes.preventRecursion);
+      if (changes.excludeRecursion !== undefined) updates.excludeRecursion = String(changes.excludeRecursion);
+      if (changes.delayUntilRecursion !== undefined) updates.delayUntilRecursion = String(changes.delayUntilRecursion);
+      if (changes.excludeFromVectorization !== undefined)
+        updates.excludeFromVectorization = String(changes.excludeFromVectorization);
       if (changes.excludeFromVectorization === true) updates.embedding = null;
 
       await db

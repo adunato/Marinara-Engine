@@ -1,7 +1,8 @@
 // ──────────────────────────────────────────────
 // User Persona Types
 // ──────────────────────────────────────────────
-import type { ConvoBehaviorConfig } from "./character.js";
+import type { ConvoBehaviorConfig, RPGStatsConfig } from "./character.js";
+import type { AvatarCrop } from "./avatar-crop.js";
 
 /** A user persona (the player's character/identity). */
 export interface Persona {
@@ -9,6 +10,12 @@ export interface Persona {
   name: string;
   /** Short comment shown under the name (for disambiguation) */
   comment: string;
+  /** Creator/author of this persona card. */
+  creator: string;
+  /** Human-visible persona card version string. */
+  personaVersion: string;
+  /** Private notes about intended use, quirks, or recommended settings. */
+  creatorNotes: string;
   /** Optional pronunciation override used when this persona name is sent to TTS. */
   phoneticName?: string;
   description: string;
@@ -18,10 +25,14 @@ export interface Persona {
   appearance: string;
   /** Avatar image path */
   avatarPath: string | null;
+  /** Persona gallery image selected as the optional character sheet. */
+  characterSheetImageId?: string | null;
+  /** Prefer the selected character sheet over the avatar for likeness references. */
+  useCharacterSheetAsReference?: boolean;
   /** Avatar crop settings for the circle avatar. Accepts both the current
    *  source-rectangle shape and the legacy zoom+offset shape (kept readable so
    *  previously saved crops display unchanged until the user re-edits). */
-  avatarCrop?: PersonaAvatarCrop | LegacyPersonaAvatarCrop | null;
+  avatarCrop?: AvatarCrop | null;
   /** Whether this is the currently active persona */
   isActive: boolean;
   /** Name display color/gradient (CSS value) */
@@ -31,13 +42,13 @@ export interface Persona {
   /** Chat bubble / dialogue box background color */
   boxColor: string;
   /** Tracker card color source + optional custom palette. */
-  trackerCardColors?: TrackerCardColorConfig | string;
+  trackerCardColors: TrackerCardColorConfig;
   /** Persona status bars configuration (Satiety, Energy, etc.) */
   personaStats?: PersonaStatsConfig;
   /** Tags for organizing personas */
-  tags?: string[];
+  tags: string[];
   /** Saved Conversation mode activity/status text options for this persona */
-  savedStatusOptions?: string[];
+  savedStatusOptions: string[];
   /** Conversation mode ONLY: display name shown as the user's sender label in Convo. */
   convoDisplayName?: string;
   /** Conversation mode ONLY: public "about me" profile (cross-chat default). */
@@ -53,6 +64,8 @@ export type TrackerCardPortraitStageBackground = "ambient" | "spotlight" | "soft
 
 export interface TrackerCardColorConfig {
   mode?: TrackerCardColorMode;
+  /** Authored tracker stat icons. Kept outside semantic stat/prompt data. */
+  statIcons?: import("../constants/stat-icons.js").TrackerStatIconAssignment[];
   /** Whether the Display channel is allowed to contribute paint. */
   displayEnabled?: boolean;
   /** Tracker card display color/gradient. */
@@ -89,25 +102,6 @@ export interface TrackerCardColorConfig {
   portraitZoom?: number;
 }
 
-/** Avatar crop — current source-rectangle format. A square region of the source
- *  image (`srcWidth * sourceW === srcHeight * sourceH` in editor-enforced data),
- *  expressed in coordinates normalized to the source's intrinsic dimensions. */
-export interface PersonaAvatarCrop {
-  srcX: number;
-  srcY: number;
-  srcWidth: number;
-  srcHeight: number;
-}
-
-/** Avatar crop — legacy zoom + offset format. Render-only compatibility path so
- *  previously saved crops display unchanged until the user re-edits them. */
-export interface LegacyPersonaAvatarCrop {
-  zoom: number;
-  offsetX: number;
-  offsetY: number;
-  fullImage?: boolean;
-}
-
 /** A single persona status bar definition. */
 export interface PersonaStatBar {
   name: string;
@@ -123,4 +117,6 @@ export interface PersonaStatsConfig {
   enabled: boolean;
   /** The stat bars to track */
   bars: PersonaStatBar[];
+  /** Optional Game mode RPG stats stored alongside the persona status bars. */
+  rpgStats?: RPGStatsConfig;
 }

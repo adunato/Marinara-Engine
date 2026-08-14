@@ -21,9 +21,12 @@ const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
 const DEFAULT_XAI_VIDEO_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_OPENROUTER_VIDEO_MODEL = "google/veo-3.1";
 const DEFAULT_OPENROUTER_VIDEO_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_ATLAS_CLOUD_VIDEO_MODEL = "google/veo3.1/text-to-video";
+const DEFAULT_ATLAS_CLOUD_VIDEO_BASE_URL = "https://api.atlascloud.ai/api/v1";
 const DEFAULT_SEEDANCE_VIDEO_MODEL = "seedance-2-0";
 const DEFAULT_SEEDANCE_VIDEO_BASE_URL = "https://api.seedance2.ai";
 const DEFAULT_COMFYUI_VIDEO_BASE_URL = "http://127.0.0.1:8188";
+const DEFAULT_SWARMUI_VIDEO_BASE_URL = "http://127.0.0.1:7801";
 
 interface VideoRuntimeConnection {
   baseUrl?: string | null;
@@ -39,6 +42,7 @@ interface ActiveVideoDefaults {
   durationSeconds: number;
   aspectRatio: VideoAspectRatio;
   resolution?: VideoResolution;
+  fps?: number;
 }
 
 export interface GameVideoRuntime {
@@ -48,6 +52,8 @@ export interface GameVideoRuntime {
   apiKey: string;
   model: string;
   comfyWorkflow?: string;
+  comfyLoras: VideoGenerationDefaultsProfile["comfyui"]["loras"];
+  comfyFps?: number;
   resolution?: VideoResolution;
   promptLimits: SceneVideoPromptLimits;
   minDurationSeconds: number;
@@ -87,37 +93,45 @@ export function resolveGameVideoRuntime(connection: VideoRuntimeConnection): Gam
       : inferVideoSource(connection.model || "", connection.baseUrl || ""));
   const rawServiceHint = connection.videoService || source;
   const serviceHint =
-    rawServiceHint === "google_ai_studio"
-      ? inferVideoSource(connection.model || "", connection.baseUrl || "")
-      : rawServiceHint;
+    source === "swarmui"
+      ? "swarmui"
+      : rawServiceHint === "google_ai_studio"
+        ? inferVideoSource(connection.model || "", connection.baseUrl || "")
+        : rawServiceHint;
   const isXai = source === "xai" || serviceHint === "xai";
   const isGeminiOmni = source === "gemini_omni" || serviceHint === "gemini_omni";
   const isGoogleVeo = source === "google_veo" || serviceHint === "google_veo";
   const isOpenRouter = source === "openrouter" || serviceHint === "openrouter";
+  const isAtlas = source === "atlas" || serviceHint === "atlas";
   const isSeedance = source === "seedance" || serviceHint === "seedance";
-  const isComfyUi = source === "comfyui" || serviceHint === "comfyui";
+  const isSwarmUi = source === "swarmui" || serviceHint === "swarmui";
+  const isComfyUi = source === "comfyui" || serviceHint === "comfyui" || isSwarmUi;
   const activeDefaults = isXai
     ? videoDefaults.xai
     : isGoogleVeo
       ? videoDefaults.googleVeo
       : isOpenRouter
         ? videoDefaults.openrouter
-        : isSeedance
-          ? videoDefaults.seedance
-          : isComfyUi
-            ? videoDefaults.comfyui
-            : videoDefaults.geminiOmni;
+        : isAtlas
+          ? videoDefaults.atlas
+          : isSeedance
+            ? videoDefaults.seedance
+            : isComfyUi
+              ? videoDefaults.comfyui
+              : videoDefaults.geminiOmni;
   const resolution = isXai
     ? videoDefaults.xai.resolution
     : isGoogleVeo
       ? videoDefaults.googleVeo.resolution
       : isOpenRouter
         ? videoDefaults.openrouter.resolution
-        : isSeedance
-          ? videoDefaults.seedance.resolution
-          : isComfyUi
-            ? videoDefaults.comfyui.resolution
-            : undefined;
+        : isAtlas
+          ? videoDefaults.atlas.resolution
+          : isSeedance
+            ? videoDefaults.seedance.resolution
+            : isComfyUi
+              ? videoDefaults.comfyui.resolution
+              : undefined;
 
   return {
     source,
@@ -130,11 +144,15 @@ export function resolveGameVideoRuntime(connection: VideoRuntimeConnection): Gam
           ? DEFAULT_GOOGLE_VEO_BASE_URL
           : isOpenRouter
             ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
-            : isSeedance
-              ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
-              : isComfyUi
-                ? DEFAULT_COMFYUI_VIDEO_BASE_URL
-                : DEFAULT_GEMINI_OMNI_BASE_URL),
+            : isAtlas
+              ? DEFAULT_ATLAS_CLOUD_VIDEO_BASE_URL
+              : isSeedance
+                ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
+                : isSwarmUi
+                  ? DEFAULT_SWARMUI_VIDEO_BASE_URL
+                  : isComfyUi
+                    ? DEFAULT_COMFYUI_VIDEO_BASE_URL
+                    : DEFAULT_GEMINI_OMNI_BASE_URL),
     apiKey: connection.apiKey || "",
     model:
       connection.model ||
@@ -144,12 +162,16 @@ export function resolveGameVideoRuntime(connection: VideoRuntimeConnection): Gam
           ? DEFAULT_GOOGLE_VEO_MODEL
           : isOpenRouter
             ? DEFAULT_OPENROUTER_VIDEO_MODEL
-            : isSeedance
-              ? DEFAULT_SEEDANCE_VIDEO_MODEL
-              : isComfyUi
-                ? ""
-                : DEFAULT_GEMINI_OMNI_MODEL),
+            : isAtlas
+              ? DEFAULT_ATLAS_CLOUD_VIDEO_MODEL
+              : isSeedance
+                ? DEFAULT_SEEDANCE_VIDEO_MODEL
+                : isComfyUi
+                  ? ""
+                  : DEFAULT_GEMINI_OMNI_MODEL),
     comfyWorkflow: connection.comfyuiWorkflow || undefined,
+    comfyLoras: isComfyUi ? videoDefaults.comfyui.loras : [],
+    comfyFps: isComfyUi ? videoDefaults.comfyui.fps : undefined,
     resolution,
     promptLimits: getSceneVideoPromptLimits(isXai, isGeminiOmni),
     minDurationSeconds: isGoogleVeo || isSeedance ? 4 : 1,

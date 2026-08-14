@@ -6,7 +6,7 @@ import { fileTable, text, integer } from "../file-schema.js";
 export const chatFolders = fileTable("chat_folders", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  mode: text("mode", { enum: ["conversation", "roleplay", "visual_novel", "game"] }).notNull(),
+  mode: text("mode", { enum: ["conversation", "roleplay", "game"] }).notNull(),
   color: text("color").notNull().default(""),
   sortOrder: integer("sort_order").notNull().default(0),
   collapsed: text("collapsed").notNull().default("false"),
@@ -17,7 +17,7 @@ export const chatFolders = fileTable("chat_folders", {
 export const chats = fileTable("chats", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  mode: text("mode", { enum: ["conversation", "roleplay", "visual_novel", "game"] }).notNull(),
+  mode: text("mode", { enum: ["conversation", "roleplay", "game"] }).notNull(),
   /** JSON array of character IDs */
   characterIds: text("character_ids").notNull().default("[]"),
   /** Groups related chats together (like ST "chat files" per character) */
@@ -35,6 +35,8 @@ export const chats = fileTable("chats", {
   sortOrder: integer("sort_order").notNull().default(0),
   /** Timestamp of the newest saved message; null until the chat has messages. */
   lastMessageAt: text("last_message_at"),
+  /** Pre-computed semantic embedding of the chat's name/tags/summary (JSON float[]), null until vectorized (#4768) */
+  embedding: text("embedding"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

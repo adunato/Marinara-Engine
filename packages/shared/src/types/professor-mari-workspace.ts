@@ -2,7 +2,21 @@
 // Professor Mari Workspace Agent Contracts
 // ──────────────────────────────────────────────
 
-export type MariWorkspaceToolName = "read" | "grep" | "find" | "ls" | "edit" | "write" | "bash" | "app_data";
+export type MariWorkspaceToolName =
+  | "docs_search"
+  | "docs_read"
+  | "read"
+  | "grep"
+  | "find"
+  | "ls"
+  | "edit"
+  | "write"
+  | "copy"
+  | "move"
+  | "remove"
+  | "bash"
+  | "dependency"
+  | "app_data";
 
 export type MariChipEntity =
   | "characters"
@@ -215,6 +229,7 @@ export interface MariWorkspaceConnectionSummary {
   name: string;
   provider: string;
   model: string;
+  maxContext: number;
 }
 
 export interface MariWorkspaceSkillSummary {
@@ -235,6 +250,32 @@ export interface MariWorkspaceSkillDetail extends MariWorkspaceSkillSummary {
 export interface MariWorkspaceSkillsResponse {
   skills: MariWorkspaceSkillDetail[];
   diagnostics: string[];
+}
+
+// #4851: Professor Mari's saved memories (the mari_instructions store). The list
+// surfaces full detail (content included) so the Memories management panel can edit
+// in place, mirroring the Skills panel.
+export interface MariInstructionSummary {
+  id: string;
+  name: string;
+  description: string;
+  persistent: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MariInstructionDetail extends MariInstructionSummary {
+  content: string;
+}
+
+export interface MariInstructionsResponse {
+  instructions: MariInstructionDetail[];
+}
+
+export interface MariInstructionMutationResponse {
+  ok: boolean;
+  instruction: MariInstructionDetail;
 }
 
 export interface MariDbValidationIssue {
@@ -271,11 +312,28 @@ export interface MariDbDiffSummary {
   truncated: boolean;
 }
 
+/**
+ * Signals how a structured read was bounded so the model gets a machine-readable
+ * cue instead of a silent mid-field cut. `fields` lists whole values elided from
+ * an object read (largest first) with the exact `field` path to re-read each;
+ * `field` describes a single windowed field read (`app_data { field, offset }`).
+ */
+export interface MariDbReadTruncation {
+  truncated: boolean;
+  fields?: Array<{ path: string; fullLength: number; returnedLength: number }>;
+  field?: { path: string; offset: number; returned: number; total: number };
+  /** Set when even structured elision could not fit the overview and it was hard-capped. */
+  hardCapped?: boolean;
+  /** Set when a `field=` read named a path that did not resolve on this row. */
+  unresolvedField?: string;
+}
+
 export interface MariDbCommandResult {
   ok: boolean;
   mode: "read" | "dry-run" | "apply";
   command: string;
   output?: unknown;
+  truncation?: MariDbReadTruncation;
   summary?: MariDbDiffSummary;
   validation?: MariDbValidationResult;
   approval?: {
@@ -302,6 +360,44 @@ export interface MariDbPendingApproval {
   diffPreview: MariDbRowChange[];
   diffTruncated: boolean;
 }
+
+export type MariDependencyTarget = "root" | "client" | "server" | "shared";
+
+export interface MariDependencyInstallApproval {
+  kind: "dependency_install";
+  id: string;
+  sessionId: string;
+  packageName: string;
+  version: string;
+  target: MariDependencyTarget;
+  dependencyType: "dependency" | "devDependency";
+  integrity: string;
+  tarballUrl: string;
+  directDependencies: Array<{ name: string; range: string }>;
+  reason: string | null;
+  requestedAt: string;
+  expiresAt: string;
+}
+
+export interface MariSensitiveFileApproval {
+  kind: "sensitive_file";
+  id: string;
+  sessionId: string;
+  path: string;
+  changeType: "create" | "update";
+  beforeHash: string | null;
+  afterHash: string;
+  preview: string;
+  previewTruncated: boolean;
+  reason: string | null;
+  requestedAt: string;
+  expiresAt: string;
+}
+
+export type MariWorkspacePendingApproval =
+  | MariDbPendingApproval
+  | MariDependencyInstallApproval
+  | MariSensitiveFileApproval;
 
 export interface MariDbHistoryEntry {
   id: string;
@@ -334,12 +430,17 @@ export interface MariWorkspaceStatus {
   workspace: string;
   dataDir: string;
   tools: MariWorkspaceToolName[];
+  shellSandbox: {
+    available: boolean;
+    backend: "macos-seatbelt" | "linux-bubblewrap" | null;
+    reason?: string;
+  };
   dbAccess: "server-managed";
   connection: MariWorkspaceConnectionSummary | null;
   skills: MariWorkspaceSkillSummary[];
   skillDiagnostics: string[];
   active: boolean;
-  pendingApprovals: MariDbPendingApproval[];
+  pendingApprovals: MariWorkspacePendingApproval[];
   history: MariDbHistoryEntry[];
   error?: string | null;
 }
@@ -361,7 +462,7 @@ export type MariWorkspacePromptEvent =
   | { type: "tool_start"; data: { id?: string; name: string; input?: unknown } }
   | { type: "tool_update"; data: { id?: string; name?: string; output?: string } }
   | { type: "tool_end"; data: { id?: string; name?: string; isError?: boolean; output?: string } }
-  | { type: "approval_pending"; data: MariDbPendingApproval }
+  | { type: "approval_pending"; data: MariWorkspacePendingApproval }
   | { type: "metadata"; data: Record<string, unknown> }
   | { type: "suggestions"; data: MariSuggestionChip[] }
   | { type: "plan"; data: MariGuidedPlanStep[] }

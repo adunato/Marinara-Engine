@@ -1,11 +1,14 @@
 import { mkdir, rename, unlink, writeFile } from "fs/promises";
 import { join } from "path";
+import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { newId } from "../../utils/id-generator.js";
-import { logger } from "../../lib/logger.js";
+import { logger, logDebugOverride } from "../../lib/logger.js";
 import { assertInsideDir, safeFetch } from "../../utils/security.js";
 import { notifyGenerationFallback, type GenerationFallbackNotifier } from "../generation/fallback-notification.js";
 import { runMediaGenerationRequest } from "../image/image-generation-queue.js";
+import { buildAtlasCloudVideoRequest, runAtlasCloudPrediction } from "../media/atlas-cloud.js";
+import { buildComfyUiLoraWorkflowReplacements, type ComfyUiLoraSetting } from "@marinara-engine/shared";
 
 export interface VideoReferenceImage {
   base64: string;
@@ -20,6 +23,12 @@ export interface VideoReferencePublicUploadOptions {
   expiry?: VideoReferencePublicUploadExpiry | string | null;
 }
 
+export interface LtxDirectorPromptInput {
+  globalPrompt: string;
+  localPrompts: string;
+  segmentLengths: string;
+}
+
 export interface VideoGenerationRequest {
   prompt: string;
   model?: string;
@@ -30,9 +39,17 @@ export interface VideoGenerationRequest {
   referenceImage?: VideoReferenceImage | null;
   /** API-format workflow JSON for local ComfyUI video generation. */
   comfyWorkflow?: string;
+  /** Optional LTX Director global/local prompt inputs for workflows using the matching placeholders. */
+  ltxDirectorPrompt?: LtxDirectorPromptInput;
+  /** Up to five connection-scoped LoRAs for custom ComfyUI workflow placeholders. */
+  comfyLoras?: ComfyUiLoraSetting[];
+  /** ComfyUI workflow frame rate exposed through %fps% and used by the legacy %length% macro. */
+  fps?: number;
   lastFrameImage?: VideoReferenceImage | null;
   publicReferenceUpload?: VideoReferencePublicUploadOptions | null;
   signal?: AbortSignal;
+  /** UI debug mode: surface provider payload logging without LOG_LEVEL=debug. */
+  debugMode?: boolean;
   /** Serialize this request with other media jobs using the same configured connection. */
   queue?: boolean;
   /** Stable configured connection ID used to scope queued media jobs. */
@@ -49,6 +66,8 @@ export interface VideoGenerationRequest {
     serviceHint: string;
     model: string;
     comfyWorkflow?: string;
+    comfyLoras?: ComfyUiLoraSetting[];
+    fps?: number;
   };
 }
 
@@ -61,10 +80,12 @@ export interface VideoGenerationResult {
 const GAME_SCENE_VIDEOS_DIR = join(DATA_DIR, "game-scene-videos");
 const VIDEO_GEN_TIMEOUT = Number(process.env.VIDEO_GEN_TIMEOUT_MS ?? 1_800_000);
 const MAX_VIDEO_RESPONSE_BYTES = Number(process.env.VIDEO_GEN_MAX_RESPONSE_BYTES ?? 160 * 1024 * 1024);
+const MAX_VIDEO_JSON_RESPONSE_BYTES = Math.ceil((MAX_VIDEO_RESPONSE_BYTES * 4) / 3) + 1024 * 1024;
 const DEFAULT_GEMINI_OMNI_MODEL = "gemini-omni-flash-preview";
 const DEFAULT_GOOGLE_VEO_MODEL = "veo-3.1-generate-preview";
 const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
 const DEFAULT_OPENROUTER_VIDEO_MODEL = "google/veo-3.1";
+const DEFAULT_ATLAS_CLOUD_VIDEO_MODEL = "google/veo3.1/text-to-video";
 const DEFAULT_SEEDANCE_VIDEO_MODEL = "seedance-2-0";
 const DEFAULT_GOOGLE_VEO_RESOLUTION = "720p";
 const DEFAULT_XAI_VIDEO_RESOLUTION = "720p";
@@ -119,7 +140,8 @@ async function generateVideoUnqueued(
   serviceHint: string,
   request: VideoGenerationRequest,
 ): Promise<VideoGenerationResult> {
-  const resolvedService = normalizeVideoService(serviceHint || source);
+  const resolvedService =
+    normalizeVideoService(source) === "swarmui" ? "swarmui" : normalizeVideoService(serviceHint || source);
   const primaryRequest = { ...request, fallback: undefined };
   try {
     if (resolvedService === "gemini_omni") {
@@ -142,6 +164,11 @@ async function generateVideoUnqueued(
         generateOpenRouterVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
       );
     }
+    if (resolvedService === "atlas") {
+      return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
+        generateAtlasCloudVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
+      );
+    }
     if (resolvedService === "seedance") {
       return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
         generateSeedanceVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
@@ -150,6 +177,11 @@ async function generateVideoUnqueued(
     if (resolvedService === "comfyui") {
       return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
         generateComfyUiVideo(baseUrl, { ...primaryRequest, signal }),
+      );
+    }
+    if (resolvedService === "swarmui") {
+      return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
+        generateSwarmUiVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
       );
     }
     throw new Error(`Unsupported video generation service: ${resolvedService || serviceHint || source}`);
@@ -177,6 +209,8 @@ async function generateVideoUnqueued(
       fallback: undefined,
       model: fallback.model,
       comfyWorkflow: fallback.comfyWorkflow,
+      comfyLoras: fallback.comfyLoras,
+      fps: fallback.fps,
       connectionKey: fallback.connectionId,
     });
   }
@@ -218,6 +252,9 @@ export function resolveVideoRequestDuration(
   }
   if (resolvedService === "seedance") {
     return Math.min(15, Math.max(4, durationSeconds));
+  }
+  if (resolvedService === "atlas") {
+    return Math.min(60, durationSeconds);
   }
   return durationSeconds;
 }
@@ -268,11 +305,17 @@ function normalizeVideoService(value: string): string {
   if (normalized === "openrouter" || normalized === "open-router") {
     return "openrouter";
   }
+  if (normalized === "atlas" || normalized === "atlas-cloud" || normalized === "atlascloud") {
+    return "atlas";
+  }
   if (normalized === "seedance" || normalized === "seedance2" || normalized === "seedance-2") {
     return "seedance";
   }
   if (normalized === "comfyui" || normalized === "comfy-ui") {
     return "comfyui";
+  }
+  if (normalized === "swarmui" || normalized === "swarm-ui") {
+    return "swarmui";
   }
   return normalized;
 }
@@ -306,6 +349,60 @@ function replaceComfyUiVideoPlaceholders(value: unknown, replacements: Record<st
     );
   }
   return value;
+}
+
+export function resolveLtxDirectorPromptInput(
+  request: Pick<VideoGenerationRequest, "prompt" | "ltxDirectorPrompt">,
+): LtxDirectorPromptInput {
+  return {
+    globalPrompt: request.ltxDirectorPrompt?.globalPrompt.trim() || request.prompt,
+    localPrompts: request.ltxDirectorPrompt?.localPrompts.trim() || "",
+    segmentLengths: request.ltxDirectorPrompt?.segmentLengths.trim() || "",
+  };
+}
+
+function normalizeComfyUiVideoFps(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(1, Math.min(120, Math.round(value))) : 16;
+}
+
+function resolveComfyUiVideoFrameLength(durationSeconds: number, fps?: number): number {
+  return Math.max(1, Math.round(durationSeconds * normalizeComfyUiVideoFps(fps)));
+}
+
+export function resolveComfyUiVideoWorkflowPlaceholders(
+  workflow: unknown,
+  request: Pick<
+    VideoGenerationRequest,
+    "prompt" | "model" | "durationSeconds" | "ltxDirectorPrompt" | "comfyLoras" | "fps"
+  >,
+  runtime: {
+    seed: number;
+    width: number;
+    height: number;
+    referenceImageName?: string;
+    referenceImageBase64?: string;
+  },
+): unknown {
+  const ltxDirectorPrompt = resolveLtxDirectorPromptInput(request);
+  const fps = normalizeComfyUiVideoFps(request.fps);
+  const replacements: Record<string, string | number> = {
+    "%prompt%": request.prompt,
+    "%width%": runtime.width,
+    "%height%": runtime.height,
+    "%seed%": runtime.seed,
+    "%length%": resolveComfyUiVideoFrameLength(request.durationSeconds, fps),
+    "%length_s%": request.durationSeconds,
+    "%fps%": fps,
+    "%duration_seconds%": request.durationSeconds,
+    "%global_prompt%": ltxDirectorPrompt.globalPrompt,
+    "%local_prompts%": ltxDirectorPrompt.localPrompts,
+    "%segment_lengths%": ltxDirectorPrompt.segmentLengths,
+  };
+  Object.assign(replacements, buildComfyUiLoraWorkflowReplacements(request.comfyLoras));
+  if (request.model?.trim()) replacements["%model%"] = request.model.trim();
+  if (runtime.referenceImageName) replacements["%reference_image_name%"] = runtime.referenceImageName;
+  if (runtime.referenceImageBase64) replacements["%reference_image%"] = runtime.referenceImageBase64;
+  return replaceComfyUiVideoPlaceholders(workflow, replacements);
 }
 
 function comfyUiVideoFetch(url: string | URL, init?: RequestInit, maxResponseBytes = 2 * 1024 * 1024) {
@@ -381,6 +478,162 @@ function collectComfyUiVideoFiles(entry: ComfyUiHistoryEntry): ComfyUiOutputFile
   return files;
 }
 
+function swarmUiVideoHeaders(apiKey: string): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = apiKey.trim();
+  if (token) headers.Cookie = `swarm_token=${encodeURIComponent(token)}`;
+  return headers;
+}
+
+function swarmUiVideoApiError(value: unknown): string | null {
+  const record = asRecord(value);
+  const error = readString(record.error);
+  const errorId = readString(record.error_id);
+  return error || errorId;
+}
+
+async function createSwarmUiVideoSession(baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<string> {
+  const response = await comfyUiVideoFetch(`${baseUrl}/API/GetNewSession`, {
+    method: "POST",
+    headers: swarmUiVideoHeaders(apiKey),
+    body: "{}",
+    signal,
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`SwarmUI session request failed (${response.status}): ${formatProviderError(text)}`);
+  }
+  let result: unknown;
+  try {
+    result = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("SwarmUI session request returned invalid JSON");
+  }
+  const apiError = swarmUiVideoApiError(result);
+  if (apiError) throw new Error(`SwarmUI API error: ${apiError}`);
+  const sessionId = readString(asRecord(result).session_id);
+  if (!sessionId) throw new Error("SwarmUI did not return a session_id");
+  return sessionId;
+}
+
+export function buildSwarmUiVideoGenerationBody(
+  request: VideoGenerationRequest,
+  sessionId: string,
+  seed = Math.floor(Math.random() * 2 ** 32),
+): Record<string, unknown> {
+  const workflowText = request.comfyWorkflow?.trim();
+  if (!workflowText) throw new Error("SwarmUI video generation requires an API-format workflow");
+  if (/%reference_image_name(?:_0[1-4])?%/.test(workflowText)) {
+    throw new Error(
+      "SwarmUI workflows must use %reference_image% placeholders; backend-local filenames cannot be distributed safely.",
+    );
+  }
+  let workflow: unknown;
+  try {
+    workflow = JSON.parse(workflowText) as unknown;
+  } catch {
+    throw new Error("Invalid SwarmUI video workflow JSON");
+  }
+
+  const landscape =
+    request.resolution === "480p"
+      ? { width: 832, height: 480 }
+      : request.resolution === "1080p"
+        ? { width: 1920, height: 1080 }
+        : { width: 1280, height: 720 };
+  const dimensions = request.aspectRatio === "9:16" ? { width: landscape.height, height: landscape.width } : landscape;
+  const resolvedWorkflow = resolveComfyUiVideoWorkflowPlaceholders(workflow, request, {
+    seed,
+    width: dimensions.width,
+    height: dimensions.height,
+    referenceImageBase64: request.referenceImage ? stripDataUrl(request.referenceImage.base64) : undefined,
+  });
+  return {
+    session_id: sessionId,
+    images: 1,
+    donotsave: true,
+    prompt: request.prompt,
+    width: dimensions.width,
+    height: dimensions.height,
+    seed,
+    ...(request.model?.trim() ? { model: request.model.trim() } : {}),
+    comfyworkflowraw: JSON.stringify(resolvedWorkflow),
+  };
+}
+
+export function parseSwarmUiVideoReference(value: unknown): string {
+  const apiError = swarmUiVideoApiError(value);
+  if (apiError) throw new Error(`SwarmUI API error: ${apiError}`);
+  const outputs = asRecord(value).images;
+  if (!Array.isArray(outputs)) throw new Error("SwarmUI did not return an images array");
+  const video = outputs.find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" &&
+      (candidate.trim().toLowerCase().split(/[?#]/u, 1)[0]?.endsWith(".mp4") === true ||
+        candidate.trim().toLowerCase().startsWith("data:video/mp4")),
+  );
+  if (!video) throw new Error("SwarmUI completed without an MP4 video output");
+  return video.trim();
+}
+
+async function generateSwarmUiVideo(
+  baseUrl: string,
+  apiKey: string,
+  request: VideoGenerationRequest,
+): Promise<VideoGenerationResult> {
+  const base = baseUrl.replace(/\/+$/, "");
+  const sessionId = await createSwarmUiVideoSession(base, apiKey, request.signal);
+  const body = buildSwarmUiVideoGenerationBody(request, sessionId);
+  const debugBody: Record<string, unknown> = { ...body, session_id: "[session]" };
+  if (request.referenceImage && typeof debugBody.comfyworkflowraw === "string") {
+    debugBody.comfyworkflowraw = debugBody.comfyworkflowraw.replaceAll(
+      stripDataUrl(request.referenceImage.base64),
+      "[redacted reference image]",
+    );
+  }
+  logDebugOverride(
+    request.debugMode === true || isDebugAgentsEnabled(),
+    "[video-gen/swarmui] final request payload:\n%s",
+    JSON.stringify(debugBody, null, 2),
+  );
+
+  const response = await comfyUiVideoFetch(
+    `${base}/API/GenerateText2Image`,
+    {
+      method: "POST",
+      headers: swarmUiVideoHeaders(apiKey),
+      body: JSON.stringify(body),
+      signal: request.signal,
+    },
+    MAX_VIDEO_JSON_RESPONSE_BYTES,
+  );
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`SwarmUI video generation failed (${response.status}): ${formatProviderError(text)}`);
+  }
+  let result: unknown;
+  try {
+    result = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("SwarmUI video generation returned invalid JSON");
+  }
+  const videoReference = parseSwarmUiVideoReference(result);
+  let videoBuffer: Buffer;
+  if (videoReference.startsWith("data:video/mp4")) {
+    videoBuffer = Buffer.from(stripDataUrl(videoReference), "base64");
+  } else {
+    const videoResponse = await comfyUiVideoFetch(
+      new URL(videoReference, `${base}/`),
+      { headers: swarmUiVideoHeaders(apiKey), signal: request.signal },
+      MAX_VIDEO_RESPONSE_BYTES,
+    );
+    if (!videoResponse.ok) throw new Error(`SwarmUI video fetch failed (${videoResponse.status})`);
+    videoBuffer = Buffer.from(await videoResponse.arrayBuffer());
+  }
+  if (!isMp4Buffer(videoBuffer)) throw new Error("SwarmUI returned a non-MP4 video output");
+  return { base64: videoBuffer.toString("base64"), mimeType: "video/mp4", ext: "mp4" };
+}
+
 async function generateComfyUiVideo(baseUrl: string, request: VideoGenerationRequest): Promise<VideoGenerationResult> {
   const workflowText = request.comfyWorkflow?.trim();
   if (!workflowText) throw new Error("ComfyUI video generation requires an API-format workflow");
@@ -399,26 +652,34 @@ async function generateComfyUiVideo(baseUrl: string, request: VideoGenerationReq
         ? { width: 1920, height: 1080 }
         : { width: 1280, height: 720 };
   const dimensions = request.aspectRatio === "9:16" ? { width: landscape.height, height: landscape.width } : landscape;
-  const replacements: Record<string, string | number> = {
-    "%prompt%": request.prompt,
-    "%width%": dimensions.width,
-    "%height%": dimensions.height,
-    "%seed%": Math.floor(Math.random() * 2 ** 32),
-    "%length%": Math.max(1, Math.round(request.durationSeconds * 16)),
-  };
-  if (request.model?.trim()) replacements["%model%"] = request.model.trim();
+  let referenceImageName: string | undefined;
   if (request.referenceImage && workflowText.includes("%reference_image_name%")) {
-    replacements["%reference_image_name%"] = await uploadComfyUiVideoReference(
-      base,
-      request.referenceImage,
-      request.signal,
+    referenceImageName = await uploadComfyUiVideoReference(base, request.referenceImage, request.signal);
+  }
+  const resolvedWorkflow = resolveComfyUiVideoWorkflowPlaceholders(workflow, request, {
+    seed: Math.floor(Math.random() * 2 ** 32),
+    width: dimensions.width,
+    height: dimensions.height,
+    referenceImageName,
+  });
+  if (["%global_prompt%", "%local_prompts%", "%segment_lengths%"].some((value) => workflowText.includes(value))) {
+    const ltxDirectorPrompt = resolveLtxDirectorPromptInput(request);
+    logDebugOverride(
+      request.debugMode === true || isDebugAgentsEnabled(),
+      "[video-gen/comfyui] LTX Director duration_seconds=%d duration_frames=%d reference_image=%s\nglobal_prompt:\n%s\nlocal_prompts:\n%s\nsegment_lengths=%s",
+      request.durationSeconds,
+      resolveComfyUiVideoFrameLength(request.durationSeconds, request.fps),
+      referenceImageName ?? "(none)",
+      ltxDirectorPrompt.globalPrompt,
+      ltxDirectorPrompt.localPrompts,
+      JSON.stringify(ltxDirectorPrompt.segmentLengths),
     );
   }
 
   const queueResponse = await comfyUiVideoFetch(`${base}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: replaceComfyUiVideoPlaceholders(workflow, replacements) }),
+    body: JSON.stringify({ prompt: resolvedWorkflow }),
     signal: request.signal,
   });
   const queueText = await queueResponse.text();
@@ -433,6 +694,11 @@ async function generateComfyUiVideo(baseUrl: string, request: VideoGenerationReq
   }
   const promptId = readString(asRecord(queued).prompt_id);
   if (!promptId) throw new Error(`ComfyUI video queue did not return a prompt_id: ${formatProviderError(queueText)}`);
+  logDebugOverride(
+    request.debugMode === true || isDebugAgentsEnabled(),
+    "[video-gen/comfyui] queued prompt_id=%s",
+    promptId,
+  );
 
   while (true) {
     await delayWithSignal(1000, request.signal);
@@ -968,6 +1234,37 @@ async function generateSeedanceVideo(
   throw new Error("Seedance video generation failed after retrying an opaque provider task failure");
 }
 
+async function generateAtlasCloudVideo(
+  baseUrl: string,
+  apiKey: string,
+  request: VideoGenerationRequest,
+): Promise<VideoGenerationResult> {
+  const referenceImageDataUrl = request.referenceImage
+    ? `data:${request.referenceImage.mimeType};base64,${stripDataUrl(request.referenceImage.base64)}`
+    : undefined;
+  const body = buildAtlasCloudVideoRequest({
+    model: request.model?.trim() || DEFAULT_ATLAS_CLOUD_VIDEO_MODEL,
+    prompt: request.prompt,
+    durationSeconds: request.durationSeconds,
+    aspectRatio: request.aspectRatio,
+    resolution: request.resolution,
+    referenceImageDataUrl,
+  });
+  logDebugOverride(
+    request.debugMode === true,
+    "[video-gen/atlas-cloud] final request payload:\n%s",
+    JSON.stringify(body, null, 2),
+  );
+  const outputUrl = await runAtlasCloudPrediction({
+    baseUrl,
+    apiKey,
+    kind: "video",
+    body,
+    signal: request.signal,
+  });
+  return downloadAtlasCloudVideo(outputUrl, baseUrl, apiKey, request.signal);
+}
+
 function withVideoGenerationDeadline<T>(
   externalSignal: AbortSignal | undefined,
   timeoutMs: number,
@@ -1204,6 +1501,42 @@ async function downloadSeedanceVideo(
   }
   const buffer = Buffer.from(await res.arrayBuffer());
   if (!isMp4Buffer(buffer)) throw new Error("Seedance returned a non-MP4 video payload");
+  return { base64: buffer.toString("base64"), mimeType: "video/mp4", ext: "mp4" };
+}
+
+async function downloadAtlasCloudVideo(
+  url: string,
+  baseUrl: string,
+  apiKey: string,
+  signal: AbortSignal | undefined,
+): Promise<VideoGenerationResult> {
+  const headers: Record<string, string> = { Accept: "video/mp4,video/*;q=0.9,*/*;q=0.1" };
+  try {
+    if (new URL(url).origin === new URL(baseUrl).origin) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+  } catch {
+    throw new Error("Atlas Cloud returned an invalid video URL");
+  }
+  const res = await safeFetch(url, {
+    method: "GET",
+    headers,
+    signal,
+    policy: {
+      allowLocal: false,
+      allowLoopback: false,
+      allowMdns: false,
+      allowedProtocols: ["https:"],
+    },
+    maxResponseBytes: MAX_VIDEO_RESPONSE_BYTES,
+    decodeCompressedResponse: true,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to download Atlas Cloud video (${res.status}): ${formatProviderError(text)}`);
+  }
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!isMp4Buffer(buffer)) throw new Error("Atlas Cloud returned a non-MP4 video payload");
   return { base64: buffer.toString("base64"), mimeType: "video/mp4", ext: "mp4" };
 }
 

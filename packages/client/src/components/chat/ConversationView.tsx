@@ -13,20 +13,16 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import {
-  Loader2,
-  ChevronUp,
-  Settings2,
-  Image as ImageIcon,
-  ArrowRightLeft,
-} from "lucide-react";
+import { useTranslation, useTranslation as useUiTranslation } from "react-i18next";
+import { Loader2, ChevronUp, Settings2, Image as ImageIcon, ArrowRightLeft } from "lucide-react";
 import { ConversationMessage } from "./ConversationMessage";
 import { ConversationInput } from "./ConversationInput";
 import { ConversationGamesPicker } from "./ConversationGamesPicker";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
+import { ChatMessageSearch } from "./ChatMessageSearch";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
-import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
+import { ChatToolbarButton, ChatToolbarMenu, getChatToolbarButtonClass } from "./ChatToolbarControls";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
 import { TrackerPanelIcon } from "../ui/TrackerPanelIcon";
 import { PendingTypingDots } from "./PendingTypingDots";
@@ -54,6 +50,11 @@ import { CapabilityElement } from "../capabilities/CapabilityElement";
 import { TURN_GAME_BOT_REQUEST_EVENT } from "../../lib/capability-turn-game-events";
 import { useGenerate } from "../../hooks/use-generate";
 import { isCustomTrackerActiveForChat } from "../../features/tracker-panel/lib/tracker-panel-availability";
+import {
+  useChatComposerFocused,
+  useChatKeyboardOpen,
+  useKeepLatestChatMessageVisible,
+} from "../../hooks/use-visual-viewport-chat-bottom";
 
 const ConversationAutonomousEffects = lazy(async () => {
   const module = await import("./ConversationAutonomousEffects");
@@ -309,6 +310,8 @@ export function ConversationView({
   onAbandonScene,
   expressionAvatarResolver,
 }: ConversationViewProps) {
+  const { t: localizeUi } = useUiTranslation();
+  const { t } = useTranslation();
   useRenderTimer("convo-messages"); // [#3104 diagnostic]
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreaming = useChatStore((s) => s.isStreaming) && streamingChatId === chatId;
@@ -329,14 +332,11 @@ export function ConversationView({
   }, [chatId, generateTurnGameBots]);
   const gamesPickerOpen = useConversationGamesStore((s) => s.pickerChatId === chatId);
   const closeGamesPicker = useConversationGamesStore((s) => s.closePicker);
-  const gameSetup = useConversationGamesStore((s) => s.setup?.chatId === chatId ? s.setup : null);
+  const gameSetup = useConversationGamesStore((s) => (s.setup?.chatId === chatId ? s.setup : null));
   const closeGameSetup = useConversationGamesStore((s) => s.closeSetup);
   const { data: installedCapabilities = [] } = useInstalledCapabilityPackages();
   const turnGamePackages = installedCapabilities.filter(
-    (item) =>
-      item.status === "active" &&
-      item.manifest.kind.includes("turn-game") &&
-      item.manifest.entrypoints.client,
+    (item) => item.status === "active" && item.manifest.kind.includes("turn-game") && item.manifest.entrypoints.client,
   );
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(chatId));
   const hasLiveStream = isStreaming && !isStreamCommitted;
@@ -350,7 +350,7 @@ export function ConversationView({
   const trackerPanelEnabled = useUIStore((s) => s.trackerPanelEnabled);
   const trackerPanelOpen = useUIStore((s) => s.trackerPanelOpen);
   const toggleTrackerPanel = useUIStore((s) => s.toggleTrackerPanel);
-  const hasDraftInput = useChatStore((s) => s.currentInput.trim().length > 0);
+  const hasDraftInput = useChatStore((s) => s.hasCurrentInput);
   const isGroupConversation = chatCharIds.length > 1;
   const liveTypingName = useMemo(() => {
     if (isGroupConversation) return "Multiple people";
@@ -441,11 +441,26 @@ export function ConversationView({
   const customTrackerActive = isCustomTrackerActiveForChat(chatMeta);
   const callsPackage = installedCapabilities.find(
     (item) =>
-      item.status === "active" &&
-      item.manifest.kind.includes("conversation-calls") &&
-      item.manifest.entrypoints.client,
+      item.status === "active" && item.manifest.kind.includes("conversation-calls") && item.manifest.entrypoints.client,
   );
   const callCapabilityProps = { chatId, metadata: chatMeta, characterMap, chatCharIds, personaInfo };
+  const activeAgentIds = chatMeta.activeAgentIds;
+  const enabledConversationCapabilities =
+    chatMeta.enableAgents === true
+      ? installedCapabilities.filter((item) => {
+          if (item.status !== "active" || !item.manifest.entrypoints.client) return false;
+          if (item.manifest.kind.includes("conversation-calls")) return false;
+          const contributedAgentIds = item.manifest.contributions?.agentDetail?.agentIds ?? [];
+          return activeAgentIds.includes(item.id) || contributedAgentIds.some((id) => activeAgentIds.includes(id));
+        })
+      : [];
+  const conversationToolbarPackages = enabledConversationCapabilities.filter((item) =>
+    item.manifest.contributions?.slots?.includes("conversation-toolbar"),
+  );
+  const conversationSurfacePackages = enabledConversationCapabilities.filter((item) =>
+    item.manifest.contributions?.slots?.includes("conversation-surface"),
+  );
+  const conversationCapabilityProps = { chatId, metadata: chatMeta, characterMap, chatCharIds, personaInfo };
   const renderToolbarActions = (compact = false) => (
     <>
       <ChatBranchSelector
@@ -460,27 +475,40 @@ export function ConversationView({
         <span data-tracker-panel-toggle="conversation-custom-tracker">
           <ChatToolbarButton
             icon={<TrackerPanelIcon size="0.875rem" />}
-            title="Custom Tracker"
+            title={localizeUi("ui.chat.customtrackerwidget.customTracker")}
             onClick={() => toggleTrackerPanel(chatId)}
             size={compact ? "sm" : undefined}
           />
         </span>
       )}
-      <ChatToolbarButton icon={<ImageIcon size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
+      <ChatToolbarButton
+        icon={<ImageIcon size="0.875rem" />}
+        title={t("chat.toolbar.gallery")}
+        panelAction="gallery"
+        onClick={onOpenGallery}
+      />
       {onSwitchChat && (
         <ChatToolbarButton
           icon={<ArrowRightLeft size="0.875rem" />}
-          title={connectedChatName ? `Switch to ${connectedChatName}` : "Switch to connected chat"}
+          title={
+            connectedChatName
+              ? t("chat.toolbar.switchTo", { name: connectedChatName })
+              : t("chat.toolbar.switchToConnected")
+          }
           onClick={onSwitchChat}
         />
       )}
-      <ChatToolbarButton icon={<Settings2 size="0.875rem" />} title="Chat Settings" onClick={onOpenSettings} />
+      <ChatMessageSearch chatId={chatId} />
+      <ChatToolbarButton
+        icon={<Settings2 size="0.875rem" />}
+        title={t("chat.toolbar.settings")}
+        panelAction="settings"
+        onClick={onOpenSettings}
+      />
     </>
   );
   const renderHeader = () => (
-    <div
-      className="sticky top-0 z-30 flex items-center justify-between px-4 py-2"
-    >
+    <div className="sticky top-0 z-30 flex items-center justify-between px-4 py-2">
       <ConversationPresenceCard
         chatId={chatId}
         chatMeta={chatMeta}
@@ -492,6 +520,18 @@ export function ConversationView({
       />
 
       <div className="ml-2 flex min-w-0 flex-1 items-center justify-end gap-2">
+        {conversationToolbarPackages.map((item) => (
+          <CapabilityElement
+            key={`${item.id}-toolbar`}
+            packageId={item.id}
+            view="toolbar"
+            capabilityProps={{
+              ...conversationCapabilityProps,
+              toolbarButtonClass: getChatToolbarButtonClass(),
+            }}
+            className="contents"
+          />
+        ))}
         {callsPackage && (
           <CapabilityElement
             packageId={callsPackage.id}
@@ -522,7 +562,10 @@ export function ConversationView({
   const userScrolledAtRef = useRef(0);
   const openedAtBottomChatIdRef = useRef<string | null>(null);
   const streamScrollFrameRef = useRef(0);
-  const shouldKeepMobileComposerOpen = hasLiveStream || hasDraftInput || isFetchingNextPage;
+  const keyboardOpen = useChatKeyboardOpen();
+  const composerFocused = useChatComposerFocused();
+  const shouldKeepMobileComposerOpen =
+    keyboardOpen || composerFocused || hasLiveStream || hasDraftInput || isFetchingNextPage;
 
   const scrollToMessagesBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = scrollRef.current;
@@ -557,6 +600,7 @@ export function ConversationView({
     },
     [scrollToMessagesBottom],
   );
+  useKeepLatestChatMessageVisible(scrollRef, scheduleScrollToMessagesBottom);
 
   useEffect(() => {
     if (shouldKeepMobileComposerOpen) setMobileHistoryComposerCollapsed(false);
@@ -572,7 +616,8 @@ export function ConversationView({
       const currentTop = el.scrollTop;
       const previousComposerTop = composerScrollTopRef.current;
       const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
-      if (!isMobile || shouldKeepMobileComposerOpen || nearBottom) {
+      const composerHasFocus = document.activeElement?.matches("[data-chat-composer]") === true;
+      if (!isMobile || shouldKeepMobileComposerOpen || composerHasFocus || nearBottom) {
         setMobileHistoryComposerCollapsed(false);
       } else if (currentTop > previousComposerTop + 18) {
         setMobileHistoryComposerCollapsed(false);
@@ -663,6 +708,30 @@ export function ConversationView({
     () => getTranscriptRenderWindow(messages, { startIndex: transcriptWindowStart }),
     [messages, transcriptWindowStart],
   );
+  const gotoRequest = useChatStore((state) => state.gotoRequest);
+  // ChatArea clears the request after scrolling; only reveal its transcript window once.
+  const handledTranscriptGotoRef = useRef<typeof gotoRequest>(null);
+
+  useLayoutEffect(() => {
+    handledTranscriptGotoRef.current = null;
+  }, [chatId]);
+
+  useLayoutEffect(() => {
+    if (
+      !gotoRequest ||
+      gotoRequest.chatId !== chatId ||
+      !messages ||
+      handledTranscriptGotoRef.current === gotoRequest
+    ) {
+      return;
+    }
+    const loadedMessageOffset = totalMessageCount - messages.length;
+    const localIndex = gotoRequest.messageNumber - 1 - loadedMessageOffset;
+    if (localIndex >= 0 && localIndex < messages.length) {
+      handledTranscriptGotoRef.current = gotoRequest;
+      setTranscriptWindowStart(localIndex);
+    }
+  }, [chatId, gotoRequest, messages, totalMessageCount]);
 
   const showOlderTranscriptMessages = useCallback(() => {
     setTranscriptWindowStart((current) => {
@@ -1076,6 +1145,9 @@ export function ConversationView({
           if (!renderedMessageKeysRef.current.has(key)) {
             staggerTimersRef.current[key]?.forEach(clearTimeout);
             delete staggerTimersRef.current[key];
+            // Reveal fully so an interrupted stagger never leaves the message
+            // permanently truncated at a part boundary (#4039).
+            setVisiblePartCounts((prev) => ({ ...prev, [key]: count }));
             return;
           }
           setVisiblePartCounts((prev) => ({ ...prev, [key]: partIndex }));
@@ -1099,6 +1171,9 @@ export function ConversationView({
           if (!renderedMessageKeysRef.current.has(key)) {
             staggerTimersRef.current[key]?.forEach(clearTimeout);
             delete staggerTimersRef.current[key];
+            // Reveal fully so an interrupted stagger never leaves the message
+            // permanently truncated at a speaker-segment boundary (#4039).
+            setVisibleSegmentCounts((prev) => ({ ...prev, [key]: count }));
             return;
           }
           setVisibleSegmentCounts((prev) => ({ ...prev, [key]: segmentIndex }));
@@ -1142,7 +1217,12 @@ export function ConversationView({
       style={{ ...gradientStyle, isolation: "isolate" }}
     >
       {/* ── Messages scroll area ── */}
-      <div ref={scrollRef} className="mari-messages-scroll flex-1 overflow-y-auto overflow-x-hidden">
+      <div
+        ref={scrollRef}
+        data-chat-scroll
+        data-chat-resource-drop-surface
+        className="mari-messages-scroll flex-1 overflow-y-auto overflow-x-hidden"
+      >
         {/* Floating header — character info + action buttons */}
         {renderHeader()}
 
@@ -1155,7 +1235,7 @@ export function ConversationView({
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] disabled:opacity-50"
             >
               {isFetchingNextPage ? <Loader2 size="0.75rem" className="animate-spin" /> : <ChevronUp size="0.75rem" />}
-              Load More
+              {localizeUi("ui.chat.chatroleplaysurface.loadMore")}
             </button>
           </div>
         )}
@@ -1176,7 +1256,7 @@ export function ConversationView({
         {!isLoading && !hasNextPage && messages && messages.length === 0 && (
           <div className="px-4 pt-2">
             <p className="text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
-              This is the start of your conversation with{" "}
+              {localizeUi("ui.chat.conversationview.thisIsTheStartOfYourConversationWith")}{" "}
               <span className="font-medium text-[var(--marinara-chat-chrome-panel-title)]">
                 {(() => {
                   const names = chatCharIds.map((id) => characterMap.get(id)?.name).filter(Boolean) as string[];
@@ -1185,7 +1265,7 @@ export function ConversationView({
                   return names.slice(0, -1).join(", ") + " & " + names[names.length - 1];
                 })()}
               </span>
-              . Say hi!
+              {localizeUi("ui.chat.conversationview.sayHi")}
             </p>
           </div>
         )}
@@ -1218,8 +1298,11 @@ export function ConversationView({
                   const parsed = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
                   return {
                     ...msg,
-                    content: streamBuffer || (thinkingBuffer ? "Thinking..." : msg.content),
-                    extra: { ...parsed, attachments: null, thinking: thinkingBuffer || parsed.thinking },
+                    content: streamBuffer || (thinkingBuffer ? t("chat.message.thinking") : msg.content),
+                    // Only the live buffer belongs here: falling back to the
+                    // previous swipe's thinking would show stale thoughts in
+                    // the viewer while the replacement is still streaming.
+                    extra: { ...parsed, attachments: null, thinking: thinkingBuffer || null },
                   };
                 })()
               : msg;
@@ -1229,6 +1312,7 @@ export function ConversationView({
             !contentParts && item.groupSegmentCount && item.groupSegmentCount > 1
               ? (visibleSegmentCounts[item.key] ?? item.groupSegmentCount)
               : undefined;
+          const messageDepth = Math.max(0, totalMessageCount - 1 - item.index);
           const originalContent = item.rawContent ?? (displayMsg.content !== msg.content ? msg.content : undefined);
           const regenerationDraftMessage =
             isBubbleRegenerating && !isStreamWindingDown
@@ -1268,6 +1352,7 @@ export function ConversationView({
                 chatCharacterIds={chatCharIds}
                 messageIndex={item.index + 1}
                 messageOrderIndex={item.index}
+                messageDepth={messageDepth}
                 multiSelectMode={multiSelectMode}
                 isSelected={selectedMessageIds?.has(msg.id)}
                 onToggleSelect={onToggleSelectMessage}
@@ -1280,6 +1365,7 @@ export function ConversationView({
                 bubbleGroupPosition={item.bubbleGroupPosition}
                 originalContent={originalContent}
                 expressionAvatarResolver={expressionAvatarResolver}
+                translationDisplayOnly={chatMeta.translationDisplayOnly === true}
               />
               {regenerationDraftMessage && (
                 <ConversationMessage
@@ -1300,12 +1386,14 @@ export function ConversationView({
                   emojiMap={conversationEmojiMap}
                   stickerMap={conversationStickerMap}
                   chatCharacterIds={chatCharIds}
+                  messageDepth={messageDepth}
                   hasDraftInput={hasDraftInput}
                   messageStyle={conversationMessageStyle}
                   contentParts={liveStreamContentParts}
                   visiblePartCount={liveStreamContentParts?.length}
                   bubbleGroupPosition="single"
                   expressionAvatarResolver={expressionAvatarResolver}
+                  translationDisplayOnly={chatMeta.translationDisplayOnly === true}
                 />
               )}
             </Fragment>
@@ -1331,12 +1419,14 @@ export function ConversationView({
             emojiMap={conversationEmojiMap}
             stickerMap={conversationStickerMap}
             chatCharacterIds={chatCharIds}
+            messageDepth={0}
             hasDraftInput={hasDraftInput}
             messageStyle={conversationMessageStyle}
             contentParts={liveStreamContentParts}
             visiblePartCount={liveStreamContentParts?.length}
             bubbleGroupPosition="single"
             expressionAvatarResolver={expressionAvatarResolver}
+            translationDisplayOnly={chatMeta.translationDisplayOnly === true}
           />
         )}
 
@@ -1352,8 +1442,14 @@ export function ConversationView({
           <div className="flex items-center gap-2 px-4 py-1.5 text-[0.8125rem] text-[var(--text-secondary)]">
             <span className="italic">
               {delayedCharacterInfo.status === "dnd"
-                ? `${delayedDisplayName} ${delayedDisplayVerb} busy — they'll respond when they're back`
-                : `${delayedDisplayName} ${delayedDisplayVerb} away — they'll respond in a moment`}
+                ? localizeUi("ui.chat.conversationview.value1Value2BusyTheyLlRespondWhenTheyRe", {
+                    value1: delayedDisplayName,
+                    value2: delayedDisplayVerb,
+                  })
+                : localizeUi("ui.chat.conversationview.value1Value2AwayTheyLlRespondInAMoment", {
+                    value1: delayedDisplayName,
+                    value2: delayedDisplayVerb,
+                  })}
             </span>
           </div>
         )}
@@ -1377,8 +1473,8 @@ export function ConversationView({
 
         {/* Scene banner — inline at bottom of messages (origin variant only); hidden during a turn-game */}
         {sceneInfo?.variant === "origin" && (
-            <SceneBanner variant="origin" sceneChatId={sceneInfo.sceneChatId} sceneChatName={sceneInfo.sceneChatName} />
-          )}
+          <SceneBanner variant="origin" sceneChatId={sceneInfo.sceneChatId} sceneChatName={sceneInfo.sceneChatName} />
+        )}
 
         <div ref={messagesEndRef} className="h-1" />
       </div>
@@ -1409,12 +1505,7 @@ export function ConversationView({
 
       {/* Downloaded games own their board and setup UI. The base client only provides stable slots. */}
       {turnGamePackages.map((game) => (
-        <CapabilityElement
-          key={`${game.id}-surface`}
-          packageId={game.id}
-          view="surface"
-          capabilityProps={{ chatId }}
-        />
+        <CapabilityElement key={`${game.id}-surface`} packageId={game.id} view="surface" capabilityProps={{ chatId }} />
       ))}
       {callsPackage && (
         <CapabilityElement
@@ -1424,6 +1515,15 @@ export function ConversationView({
           className="contents"
         />
       )}
+      {conversationSurfacePackages.map((item) => (
+        <CapabilityElement
+          key={`${item.id}-conversation-surface`}
+          packageId={item.id}
+          view="surface"
+          capabilityProps={conversationCapabilityProps}
+          className="contents"
+        />
+      ))}
       {/* Setup modals mounted once here (stable position) so they never double-render.
           Keyed by chatId so their internal selection state resets on a chat switch
           (matches ConversationInput below) — otherwise stale selected ids would

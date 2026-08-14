@@ -33,6 +33,14 @@ export interface SpatialLocation {
   modelMemory?: string;
   awarenessSummary?: string;
   icon?: string;
+  /** Chat Gallery image used as the visual identity for this location. */
+  referenceImageId?: string;
+  /** Whether visual generation may send the location image to the configured provider. */
+  useReferenceImage?: boolean;
+  /** Chat Gallery image displayed behind this location's child map. */
+  mapBackgroundImageId?: string;
+  /** Saved focal point used to position the child map background. */
+  mapBackgroundPosition?: SpatialLocationPlacement;
   /** Stable lorebook entry IDs activated only while this exact location is current. */
   lorebookEntryIds: string[];
   childPresentation: SpatialChildPresentation;
@@ -72,11 +80,36 @@ export interface SpatialContextSnapshot {
   createdAt: string;
 }
 
+export type SpatialTravelMode = "step_by_step" | "travel_now";
+
 export interface PendingSpatialTransition {
   destinationId: string;
+  /** When omitted, preserve the legacy one-hop destination semantics. */
+  travelMode?: SpatialTravelMode;
   expectedDefinitionRevision: number;
   expectedCurrentLocationId: string | null;
   commandId: string;
+}
+
+/** The authoritative route result for one accepted owner turn. */
+export interface ResolvedSpatialTravel {
+  mode: SpatialTravelMode;
+  fromLocationId: string;
+  targetLocationId: string;
+  /** Ordered destination IDs after the current location, including the target. */
+  routeLocationIds: string[];
+  /** Destination IDs still queued after this turn's accepted destination. */
+  remainingLocationIds: string[];
+  complete: boolean;
+}
+
+export interface SpatialTravelPromptSummary {
+  mode: SpatialTravelMode;
+  fromLocationName: string;
+  acceptedLocationName: string;
+  targetLocationName: string;
+  routeLocationNames: string[];
+  remainingLocationNames: string[];
 }
 
 export type SpatialDestinationRelation = "enter" | "leave" | "link";
@@ -99,9 +132,17 @@ export interface ResolvedOwnerSpatialProjection {
   breadcrumb: Array<{ id: string; name: string }>;
   description: string;
   modelMemory: string | null;
+  referenceImageId: string | null;
+  useReferenceImage: boolean;
   lorebookEntryIds: string[];
   destinations: SpatialDestination[];
   omittedDestinationCount: number;
+  /** Accepted route facts for the owner turn currently being generated. */
+  travel?: ResolvedSpatialTravel;
+  /** Bounded public names for the accepted route; IDs remain authoritative. */
+  travelSummary?: SpatialTravelPromptSummary;
+  /** Active map locations exposed as name-only breadcrumb paths for narrated travel. */
+  knownLocations?: Array<{ id: string; path: string }>;
 }
 
 export type SpatialDefinitionIssueCode =
@@ -148,6 +189,7 @@ export type SpatialTransitionValidationResult =
   | {
       ok: true;
       destination: SpatialDestination;
+      travel?: ResolvedSpatialTravel;
     }
   | {
       ok: false;

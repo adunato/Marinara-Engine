@@ -19,7 +19,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { Chat, GameState, PlayerStats } from "@marinara-engine/shared";
+import type { Chat, GameState } from "@marinara-engine/shared";
 import {
   useAgentMemory,
   useAgentSuiteRewrite,
@@ -37,11 +37,13 @@ import { showConfirmDialog } from "../../lib/app-dialogs";
 import { deriveActiveLorebookViews, getChatActiveLorebookIds, getChatExcludedLorebookIds } from "../../lib/chat-lorebooks";
 import { getChatCharacterIds } from "../../lib/chat-macros";
 import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import { AGENT_SUITE_TRACKER_SLICES } from "../../lib/agent-suite-tracker-slices";
 import { cn } from "../../lib/utils";
 import { useAgentStore } from "../../stores/agent.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
 import { Modal } from "../ui/Modal";
+import { useTranslation as useUiTranslation } from "react-i18next";
 
 export interface AgentSuiteAgent {
   id: string;
@@ -109,85 +111,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   custom: "Custom",
 };
 
-function createEmptyPlayerStats(): PlayerStats {
-  return {
-    stats: [],
-    attributes: null,
-    skills: {},
-    inventory: [],
-    activeQuests: [],
-    status: "",
-  };
-}
-
-/** Per-tracker-agent slice of the latest game-state snapshot. */
-const TRACKER_SLICES: Record<
-  string,
-  {
-    label: string;
-    description: string;
-    getValue: (gs: GameState) => unknown;
-    buildPatch: (gs: GameState, parsed: unknown) => Record<string, unknown> | { error: string };
-  }
-> = {
-  "world-state": {
-    label: "Scene",
-    description: "Date, time, location, weather, and temperature of the current scene.",
-    getValue: (gs) => ({
-      date: gs.date,
-      time: gs.time,
-      location: gs.location,
-      weather: gs.weather,
-      temperature: gs.temperature,
-    }),
-    buildPatch: (_gs, parsed) => {
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { error: "Scene data must be a JSON object" };
-      }
-      const record = parsed as Record<string, unknown>;
-      // Only send keys present in the edited JSON: a dropped key (e.g. from an
-      // AI rewrite) means "leave unchanged" — an explicit null still clears.
-      const patch: Record<string, unknown> = {};
-      for (const key of ["date", "time", "location", "weather", "temperature"] as const) {
-        if (key in record) patch[key] = record[key] ?? null;
-      }
-      return patch;
-    },
-  },
-  "character-tracker": {
-    label: "Present Characters",
-    description: "Characters in the current scene with mood, appearance, outfit, and thoughts.",
-    getValue: (gs) => gs.presentCharacters ?? [],
-    buildPatch: (_gs, parsed) =>
-      Array.isArray(parsed) ? { presentCharacters: parsed } : { error: "Present characters must be a JSON array" },
-  },
-  "persona-stats": {
-    label: "Persona Stats",
-    description: "Your persona's status bars (satiety, energy, etc.).",
-    getValue: (gs) => gs.personaStats ?? [],
-    buildPatch: (_gs, parsed) =>
-      Array.isArray(parsed) ? { personaStats: parsed } : { error: "Persona stats must be a JSON array" },
-  },
-  "custom-tracker": {
-    label: "Custom Tracker Fields",
-    description: "User-defined tracker fields maintained by the Custom Tracker agent.",
-    getValue: (gs) => gs.playerStats?.customTrackerFields ?? [],
-    buildPatch: (gs, parsed) =>
-      Array.isArray(parsed)
-        ? { playerStats: { ...(gs.playerStats ?? createEmptyPlayerStats()), customTrackerFields: parsed } }
-        : { error: "Custom tracker fields must be a JSON array" },
-  },
-  quest: {
-    label: "Active Quests",
-    description: "Quest progress tracked for this chat.",
-    getValue: (gs) => gs.playerStats?.activeQuests ?? [],
-    buildPatch: (gs, parsed) =>
-      Array.isArray(parsed)
-        ? { playerStats: { ...(gs.playerStats ?? createEmptyPlayerStats()), activeQuests: parsed } }
-        : { error: "Active quests must be a JSON array" },
-  },
-};
-
 function serializeValue(value: unknown, mode: "text" | "json"): string {
   if (mode === "text") return typeof value === "string" ? value : String(value ?? "");
   return JSON.stringify(value ?? null, null, 2);
@@ -238,6 +161,7 @@ function DataBlock({
   contextOverLimit,
   buildContextSections,
 }: DataBlockProps) {
+  const { t: localizeUi } = useUiTranslation();
   const rewrite = useAgentSuiteRewrite();
 
   // draft === null means pristine: the textarea mirrors the server value and
@@ -333,7 +257,7 @@ function DataBlock({
         : result.rewrittenText;
       setDraft(next);
       setSelection(null);
-      toast.success("AI rewrite applied to the draft — review and save");
+      toast.success(localizeUi("ui.chat.datablock.aiRewriteAppliedToTheDraftReviewAndSave"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "AI rewrite failed");
     }
@@ -347,7 +271,7 @@ function DataBlock({
     label,
     rewrite,
     rewriteConnectionId,
-    selection,
+    selection, localizeUi,
   ]);
 
   return (
@@ -357,9 +281,9 @@ function DataBlock({
           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="text-[0.6875rem] font-semibold">{label}</span>
             <span className="rounded bg-[var(--secondary)]/55 px-1 py-0.5 text-[0.5rem] uppercase tracking-wide text-[var(--muted-foreground)]">
-              {mode === "json" ? "JSON" : "Text"}
+              {mode === "json" ?localizeUi("ui.agents.tooleditor.json") :localizeUi("ui.chat.chatbranchselector.text")}
             </span>
-            {isDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--primary)]" title="Unsaved changes" />}
+            {isDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--primary)]" title={localizeUi("ui.chat.datablock.unsavedChanges")} />}
           </div>
           {description && <p className="text-[0.625rem] text-[var(--muted-foreground)]">{description}</p>}
         </div>
@@ -376,11 +300,9 @@ function DataBlock({
               ? "bg-[var(--primary)]/10 text-[var(--primary)] ring-[var(--primary)]/30"
               : "bg-[var(--secondary)] text-[var(--foreground)] ring-[var(--border)] hover:bg-[var(--accent)]",
           )}
-          title="Rewrite a selection (or all of this text) with AI"
+          title={localizeUi("ui.chat.datablock.rewriteASelectionOrAllOfThisTextWith")}
         >
-          <Wand2 size="0.6875rem" />
-          AI Edit
-        </button>
+          <Wand2 size="0.6875rem" />{localizeUi("ui.chat.datablock.aiEdit")}</button>
       </div>
 
       <textarea
@@ -411,15 +333,15 @@ function DataBlock({
         >
           <p className="text-[0.625rem] text-[var(--muted-foreground)]">
             {selection && selection.start < selection.end
-              ? `Rewriting the selected ${selection.end - selection.start} characters.`
-              : "No text selected — the whole block will be rewritten. Select a chunk in the editor to target it."}
+              ?localizeUi("ui.chat.datablock.rewritingTheSelectedValue1Characters", { value1: selection.end - selection.start })
+              :localizeUi("ui.chat.datablock.noTextSelectedTheWholeBlockWillBeRewritten")}
           </p>
           <textarea
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
             rows={2}
             maxLength={4000}
-            placeholder="How should this text change? e.g. Fix the garbled character names — she is called Mira."
+            placeholder={localizeUi("ui.chat.datablock.howShouldThisTextChangeEGFixThe")}
             spellCheck={false}
             className="w-full resize-y rounded-md border border-[var(--input)] bg-[var(--background)]/60 px-2 py-1.5 text-[0.625rem] leading-relaxed text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:border-[var(--ring)] focus:ring-1 focus:ring-[var(--ring)]"
           />
@@ -427,11 +349,9 @@ function DataBlock({
             type="button"
             onClick={() => setContextOpen((open) => !open)}
             className="inline-flex min-h-7 items-center gap-1 rounded-md border border-[var(--border)]/70 bg-[var(--secondary)]/45 px-2 py-1 text-[0.625rem] font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
-            title="Attach character cards or lorebook entries so the model knows what the data refers to"
+            title={localizeUi("ui.chat.datablock.attachCharacterCardsOrLorebookEntriesSoTheModel")}
           >
-            <Paperclip size="0.6875rem" />
-            Add Context
-            {contextCount > 0 && (
+            <Paperclip size="0.6875rem" />{localizeUi("ui.chat.datablock.addContext")}{contextCount > 0 && (
               <span className="rounded-full bg-[var(--primary)]/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--primary)]">
                 {contextCount}
               </span>
@@ -445,11 +365,11 @@ function DataBlock({
               onChange={(event) => onRewriteConnectionChange(event.target.value)}
               className="min-w-0 flex-1 rounded-md bg-[var(--secondary)] px-2 py-1.5 text-[0.625rem] outline-none ring-1 ring-[var(--border)] transition-shadow focus:ring-[var(--primary)]/40"
             >
-              {connectionOptions.length === 0 && <option value="">No connections available</option>}
+              {connectionOptions.length === 0 && <option value="">{localizeUi("ui.chat.datablock.noConnectionsAvailable")}</option>}
               {connectionOptions.map((conn) => (
                 <option key={conn.id} value={conn.id}>
                   {conn.name}
-                  {conn.model ? ` — ${conn.model}` : ""}
+                  {conn.model ?localizeUi("ui.chat.datablock.value1", { value1: conn.model }) : ""}
                 </option>
               ))}
             </select>
@@ -460,7 +380,7 @@ function DataBlock({
               className="inline-flex min-h-7 items-center gap-1 rounded-md bg-[var(--primary)] px-2.5 py-1 text-[0.625rem] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {rewrite.isPending ? <Loader2 size="0.6875rem" className="animate-spin" /> : <Wand2 size="0.6875rem" />}
-              {rewrite.isPending ? "Rewriting..." : "Rewrite"}
+              {rewrite.isPending ?localizeUi("ui.chat.datablock.rewriting") :localizeUi("ui.chat.datablock.rewrite")}
             </button>
           </div>
         </div>
@@ -479,9 +399,7 @@ function DataBlock({
           disabled={!isDirty || busy}
           className="inline-flex min-h-7 items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <RotateCcw size="0.625rem" />
-          Reset
-        </button>
+          <RotateCcw size="0.625rem" />{localizeUi("ui.characters.charactercliptrimmodal.reset")}</button>
         <button
           type="button"
           onClick={handleSave}
@@ -489,7 +407,7 @@ function DataBlock({
           className="inline-flex min-h-7 items-center gap-1 rounded-md bg-[var(--primary)] px-2.5 py-1 text-[0.625rem] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving ? <Loader2 size="0.625rem" className="animate-spin" /> : <Save size="0.625rem" />}
-          {saving ? "Saving..." : "Save"}
+          {saving ?localizeUi("ui.noodle.stageprofileform.saving") :localizeUi("ui.noodle.noodlehome.save")}
         </button>
       </div>
     </div>
@@ -499,6 +417,7 @@ function DataBlock({
 // ── Modal ──
 
 export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agents }: AgentSuiteModalProps) {
+  const { t: localizeUi } = useUiTranslation();
   const qc = useQueryClient();
 
   // 1. Zustand selectors
@@ -509,7 +428,7 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
   const effectiveAgentId =
     selectedAgentId && agents.some((a) => a.id === selectedAgentId) ? selectedAgentId : (agents[0]?.id ?? null);
   const selectedAgent = agents.find((a) => a.id === effectiveAgentId) ?? null;
-  const isTrackerAgent = !!selectedAgent && !!TRACKER_SLICES[selectedAgent.id];
+  const isTrackerAgent = !!selectedAgent && !!AGENT_SUITE_TRACKER_SLICES[selectedAgent.id];
 
   // 2. React Query hooks
   const { data: connections } = useConnections();
@@ -597,15 +516,15 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
   const confirmDiscardDrafts = useCallback(async () => {
     if (dirtyBlocksRef.current.size === 0) return true;
     const ok = await showConfirmDialog({
-      title: "Discard Unsaved Changes",
-      message: "You have unsaved edits in the Agent Suite. Discard them?",
-      confirmLabel: "Discard",
+      title:localizeUi("ui.chat.agentsuitemodal.discardUnsavedChanges"),
+      message:localizeUi("ui.chat.agentsuitemodal.youHaveUnsavedEditsInTheAgentSuiteDiscard"),
+      confirmLabel:localizeUi("ui.agents.agenteditor.discard"),
       cancelLabel: "Keep Editing",
       tone: "destructive",
     });
     if (ok) dirtyBlocksRef.current.clear();
     return ok;
-  }, []);
+  }, [localizeUi]);
 
   useEffect(() => {
     if (!onCloseGuardChange) return;
@@ -766,7 +685,7 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
 
   const saveTrackerSlice = useCallback(
     async (agentId: string, draftText: string) => {
-      const slice = TRACKER_SLICES[agentId];
+      const slice = AGENT_SUITE_TRACKER_SLICES[agentId];
       if (!slice) throw new Error("No tracker snapshot to update");
       // Flush queued HUD edits, then build the patch from a fresh snapshot so
       // the whole-playerStats write can't revert concurrent agent or HUD
@@ -794,9 +713,9 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
   const clearAgentMemory = useCallback(async () => {
     if (!selectedAgent) return;
     const confirmed = await showConfirmDialog({
-      title: "Clear Agent Memory",
-      message: `Delete everything ${selectedAgent.name} remembers about this chat? This cannot be undone.`,
-      confirmLabel: "Clear Memory",
+      title:localizeUi("ui.chat.agentsuitemodal.clearAgentMemory"),
+      message:localizeUi("ui.chat.agentsuitemodal.deleteEverythingValue1RemembersAboutThisChatThisCannot", { value1: selectedAgent.name }),
+      confirmLabel:localizeUi("ui.chat.agentsuitemodal.clearMemory_0d31fa2"),
       cancelLabel: "Cancel",
       tone: "destructive",
     });
@@ -804,11 +723,11 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
     try {
       await api.delete(`/agents/memory/${selectedAgent.id}/${chat.id}`);
       qc.invalidateQueries({ queryKey: agentKeys.memory(selectedAgent.id, chat.id) });
-      toast.success(`${selectedAgent.name} memory cleared`);
+      toast.success(localizeUi("ui.chat.agentsuitemodal.value1MemoryCleared", { value1: selectedAgent.name }));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to clear memory");
+      toast.error(err instanceof Error ? err.message :localizeUi("ui.chat.agentsuitemodal.failedToClearMemory"));
     }
-  }, [chat.id, qc, selectedAgent]);
+  }, [chat.id, qc, selectedAgent, localizeUi]);
 
   const memoryEntries = useMemo(() => {
     const memory = memoryQuery.data?.memory ?? {};
@@ -825,15 +744,13 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
   }, [customRunsQuery.data, selectedAgent]);
 
   const hideSpoilers = selectedAgent?.id === "director" && !spoilersRevealed && memoryEntries.length > 0;
-  const trackerSlice = selectedAgent ? TRACKER_SLICES[selectedAgent.id] : undefined;
+  const trackerSlice = selectedAgent ? AGENT_SUITE_TRACKER_SLICES[selectedAgent.id] : undefined;
 
   const contextPicker: ReactNode = (
     <div className="space-y-1.5 rounded-md border border-[var(--border)] bg-[var(--background)]/40 p-2">
-      <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
-        Attached sources ground the rewrite. The selection applies to every AI Edit in this window.
-      </p>
+      <p className="text-[0.5625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.attachedSourcesGroundTheRewriteTheSelectionAppliesTo")}</p>
       {contextSourcesLoading ? (
-        <p className="py-1 text-center text-[0.625rem] text-[var(--muted-foreground)]">Loading context sources...</p>
+        <p className="py-1 text-center text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.loadingContextSources")}</p>
       ) : contextSources.length === 0 ? (
         <p
           className={cn(
@@ -842,15 +759,13 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
           )}
         >
           {entriesError
-            ? "Couldn't load lorebook entries — close and reopen the Agent Suite to retry."
-            : "No context sources available — this chat has no character cards or active lorebooks."}
+            ?localizeUi("ui.chat.agentsuitemodal.couldnTLoadLorebookEntriesCloseAndReopenThe")
+            :localizeUi("ui.chat.agentsuitemodal.noContextSourcesAvailableThisChatHasNoCharacter")}
         </p>
       ) : (
         <>
           {entriesError && (
-            <p className="text-[0.5625rem] text-[var(--destructive)]">
-              Couldn't load lorebook entries — showing character cards only.
-            </p>
+            <p className="text-[0.5625rem] text-[var(--destructive)]">{localizeUi("ui.chat.agentsuitemodal.couldnTLoadLorebookEntriesShowingCharacterCardsOnly")}</p>
           )}
           {groupedContextSources.map(([group, sources]) => (
           <div key={group}>
@@ -871,8 +786,7 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
                   />
                   <span className="min-w-0 flex-1 truncate">{source.display}</span>
                   <span className="shrink-0 text-[0.5rem] text-[var(--muted-foreground)]">
-                    ~{Math.ceil(source.content.length / 4).toLocaleString()} tokens
-                  </span>
+                    ~{Math.ceil(source.content.length / 4).toLocaleString()} {localizeUi("ui.agents.agenteditor.tokens")}</span>
                 </label>
               ))}
             </div>
@@ -887,9 +801,7 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
             contextOverLimit ? "text-[var(--destructive)]" : "text-[var(--muted-foreground)]",
           )}
         >
-          {selectedContextSources.length} source{selectedContextSources.length === 1 ? "" : "s"} attached · ~
-          {Math.ceil(contextTotalChars / 4).toLocaleString()} tokens
-          {contextOverLimit &&
+          {selectedContextSources.length} {localizeUi("ui.chat.agentsuitemodal.source")}{selectedContextSources.length === 1 ? "" :localizeUi("ui.noodle.stageprofileview.s")} {localizeUi("ui.chat.agentsuitemodal.attached")}{Math.ceil(contextTotalChars / 4).toLocaleString()} {localizeUi("ui.agents.agenteditor.tokens")}{contextOverLimit &&
             ` — too large (max ${MAX_CONTEXT_SECTIONS} sources / ${MAX_CONTEXT_TOTAL_CHARS.toLocaleString()} characters), deselect some sources`}
         </p>
       )}
@@ -898,11 +810,9 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
 
   // 5. Render
   return (
-    <Modal open={open} onClose={guardedClose} title="Agent Suite" width="max-w-3xl" chatFloatingPanel>
+    <Modal open={open} onClose={guardedClose} title={localizeUi("ui.chat.agentsuitemodal.agentSuite")} width="max-w-3xl" chatFloatingPanel>
       {agents.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-[0.6875rem] text-[var(--muted-foreground)]">
-          No agents are active in this chat. Add agents in the Agents section first.
-        </div>
+        <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-[0.6875rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.noAgentsAreActiveInThisChatAddAgents")}</div>
       ) : (
         <div className="flex flex-col gap-3 sm:flex-row">
           {/* Agent picker — dropdown on mobile, rail on desktop */}
@@ -954,15 +864,13 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
 
                 {isAgentProcessing && (
                   <div className="flex items-center gap-1.5 rounded-lg bg-amber-400/10 px-2.5 py-2 text-[0.625rem] text-amber-400/90 ring-1 ring-amber-400/30">
-                    <AlertTriangle size="0.75rem" className="shrink-0" />
-                    Agents are currently running for this chat — saving is disabled until they finish.
-                  </div>
+                    <AlertTriangle size="0.75rem" className="shrink-0" />{localizeUi("ui.chat.agentsuitemodal.agentsAreCurrentlyRunningForThisChatSavingIs")}</div>
                 )}
 
                 {/* Stored memory */}
                 <section className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">Stored Memory</h4>
+                    <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.storedMemory")}</h4>
                     <div className="flex items-center gap-1.5">
                       {selectedAgent.id === "director" && memoryEntries.length > 0 && (
                         <button
@@ -971,7 +879,7 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
                           className="inline-flex min-h-7 items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
                         >
                           {spoilersRevealed ? <EyeOff size="0.625rem" /> : <Eye size="0.625rem" />}
-                          {spoilersRevealed ? "Hide spoilers" : "Reveal spoilers"}
+                          {spoilersRevealed ?localizeUi("ui.agents.secretplotpanel.hideSpoilers") :localizeUi("ui.chat.agentsuitemodal.revealSpoilers")}
                         </button>
                       )}
                       {memoryEntries.length > 0 && (
@@ -981,31 +889,21 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
                           disabled={isAgentProcessing}
                           className="inline-flex min-h-7 items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[0.625rem] text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/15 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          <Trash2 size="0.625rem" />
-                          Clear memory
-                        </button>
+                          <Trash2 size="0.625rem" />{localizeUi("ui.chat.agentsuitemodal.clearMemory")}</button>
                       )}
                     </div>
                   </div>
                   {memoryQuery.isLoading && (
-                    <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-                      Loading stored memory...
-                    </p>
+                    <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.loadingStoredMemory")}</p>
                   )}
                   {memoryQuery.isError && (
-                    <p className="rounded-md border border-[var(--destructive)]/25 bg-[var(--destructive)]/10 px-2 py-1.5 text-center text-[0.625rem] text-[var(--destructive)]">
-                      Could not load this agent's memory.
-                    </p>
+                    <p className="rounded-md border border-[var(--destructive)]/25 bg-[var(--destructive)]/10 px-2 py-1.5 text-center text-[0.625rem] text-[var(--destructive)]">{localizeUi("ui.chat.agentsuitemodal.couldNotLoadThisAgentSMemory")}</p>
                   )}
                   {!memoryQuery.isLoading && !memoryQuery.isError && memoryEntries.length === 0 && (
-                    <p className="rounded-md border border-dashed border-[var(--border)] px-2 py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-                      No stored memory for this agent in this chat.
-                    </p>
+                    <p className="rounded-md border border-dashed border-[var(--border)] px-2 py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.noStoredMemoryForThisAgentInThisChat")}</p>
                   )}
                   {hideSpoilers ? (
-                    <p className="rounded-md border border-dashed border-[var(--border)] px-2 py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-                      Contains hidden narrative spoilers. Use "Reveal spoilers" to view and edit.
-                    </p>
+                    <p className="rounded-md border border-dashed border-[var(--border)] px-2 py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.containsHiddenNarrativeSpoilersUseRevealSpoilersToView")}</p>
                   ) : (
                     memoryEntries.map((entry) => (
                       <DataBlock
@@ -1033,21 +931,15 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
                 {/* Tracker slice */}
                 {trackerSlice && (
                   <section className="space-y-2">
-                    <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">Tracker Data</h4>
+                    <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.trackerData")}</h4>
                     {gameStateQuery.isLoading && (
-                      <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-                        Loading tracker data...
-                      </p>
+                      <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.loadingTrackerData")}</p>
                     )}
                     {gameStateQuery.isError && (
-                      <p className="rounded-md border border-[var(--destructive)]/25 bg-[var(--destructive)]/10 px-2 py-1.5 text-center text-[0.625rem] text-[var(--destructive)]">
-                        Could not load tracker data.
-                      </p>
+                      <p className="rounded-md border border-[var(--destructive)]/25 bg-[var(--destructive)]/10 px-2 py-1.5 text-center text-[0.625rem] text-[var(--destructive)]">{localizeUi("ui.chat.agentsuitemodal.couldNotLoadTrackerData")}</p>
                     )}
                     {!gameStateQuery.isLoading && !gameStateQuery.isError && !gameStateQuery.data && (
-                      <p className="rounded-md border border-dashed border-[var(--border)] px-2 py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-                        No tracker data recorded for this chat yet.
-                      </p>
+                      <p className="rounded-md border border-dashed border-[var(--border)] px-2 py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.noTrackerDataRecordedForThisChatYet")}</p>
                     )}
                     {gameStateQuery.data && (
                       <>
@@ -1072,10 +964,8 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
                         />
                         {selectedAgent.id === "world-state" && (gameStateQuery.data.recentEvents?.length ?? 0) > 0 && (
                           <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2.5">
-                            <span className="text-[0.6875rem] font-semibold">Recent Events</span>
-                            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                              Maintained by the agent and rewritten on each run — view only.
-                            </p>
+                            <span className="text-[0.6875rem] font-semibold">{localizeUi("ui.chat.agentsuitemodal.recentEvents")}</span>
+                            <p className="text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.maintainedByTheAgentAndRewrittenOnEachRun")}</p>
                             <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[0.625rem] text-[var(--muted-foreground)]">
                               {gameStateQuery.data.recentEvents.map((event, index) => (
                                 <li key={index}>{event}</li>
@@ -1091,16 +981,12 @@ export function AgentSuiteModal({ chat, open, onClose, onCloseGuardChange, agent
                 {/* Custom agent outputs */}
                 {selectedAgent.category === "custom" && (
                   <section className="space-y-2">
-                    <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">Recent Outputs</h4>
+                    <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.recentOutputs")}</h4>
                     {customRunsQuery.isLoading && (
-                      <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-                        Loading outputs...
-                      </p>
+                      <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.loadingOutputs")}</p>
                     )}
                     {!customRunsQuery.isLoading && customRuns.length === 0 && (
-                      <p className="rounded-md border border-dashed border-[var(--border)] px-2 py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-                        No stored outputs from this agent in this chat.
-                      </p>
+                      <p className="rounded-md border border-dashed border-[var(--border)] px-2 py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">{localizeUi("ui.chat.agentsuitemodal.noStoredOutputsFromThisAgentInThisChat")}</p>
                     )}
                     {customRuns.map((run) => {
                       const mode: "text" | "json" = typeof run.resultData === "string" ? "text" : "json";

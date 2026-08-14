@@ -3,6 +3,11 @@
 // ──────────────────────────────────────────────
 import { z } from "zod";
 
+export const managedGenerationParameterValueSchema = z.object({
+  enabled: z.boolean(),
+  value: z.number().finite(),
+});
+
 export const promptRoleSchema = z.enum(["system", "user", "assistant"]);
 
 export const injectionPositionSchema = z.enum(["ordered", "depth"]);
@@ -15,6 +20,7 @@ export const markerTypeSchema = z.enum([
   "persona",
   "chat_history",
   "chat_summary",
+  "id_macro_cards",
   "world_info_before",
   "world_info_after",
   "dialogue_examples",
@@ -57,6 +63,7 @@ export const generationParametersSchema = z.object({
     .max(20)
     .default([]),
   customParameters: z.record(z.unknown()).default({}),
+  managedCustomParameters: z.record(managedGenerationParameterValueSchema).default({}),
   enabledParameters: z
     .object({
       temperature: z.boolean().optional(),
@@ -130,6 +137,7 @@ export const updatePromptGroupSchema = createPromptGroupSchema.omit({ presetId: 
 export const createPromptPresetSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().default(""),
+  imagePath: z.string().nullable().default(null),
   conversationPrompt: z.string().default(""),
   conversationBriefingPrompt: z.string().default(""),
   conversationWriterPrompt: z.string().default(""),
@@ -145,6 +153,7 @@ export const createPromptPresetSchema = z.object({
 export const updatePromptPresetSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().optional(),
+  imagePath: z.string().nullable().optional(),
   conversationPrompt: z.string().optional(),
   conversationBriefingPrompt: z.string().optional(),
   conversationWriterPrompt: z.string().optional(),

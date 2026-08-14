@@ -10,6 +10,7 @@ import {
   useSaveDailyIntentionsOutputs,
 } from "../../hooks/use-daily-intentions";
 import { Modal } from "../ui/Modal";
+import { useTranslation as useUiTranslation } from "react-i18next";
 
 interface DailyIntentionsEditorModalProps {
   chatId: string;
@@ -20,6 +21,7 @@ interface DailyIntentionsEditorModalProps {
 type AreaStatus = "idle" | "running" | "success" | "error";
 
 export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyIntentionsEditorModalProps) {
+  const { t: localizeUi } = useUiTranslation();
   const query = useDailyIntentions(chatId, open);
   const saveMutation = useSaveDailyIntentionsOutputs(chatId);
   const generateMutation = useGenerateDailyIntention(chatId);
@@ -57,7 +59,11 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
   const busy = generateMutation.isPending || runAllMutation.isPending || saveMutation.isPending;
 
   const close = () => {
-    if (dirtyKeys.length > 0 && !window.confirm("Discard Daily Intentions edits?")) return;
+    if (
+      dirtyKeys.length > 0 &&
+      !window.confirm(localizeUi("ui.chat.dailyintentionseditormodal.discardDailyIntentionsEdits"))
+    )
+      return;
     onClose();
   };
 
@@ -65,14 +71,22 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
     if (dirtyKeys.length === 0) return;
     try {
       await saveMutation.mutateAsync(Object.fromEntries(dirtyKeys.map((key) => [key, drafts[key] ?? ""])));
-      toast.success("Daily Intentions saved");
+      toast.success(localizeUi("ui.chat.dailyintentionseditormodal.dailyIntentionsSaved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save Daily Intentions");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localizeUi("ui.chat.dailyintentionseditormodal.couldNotSaveDailyIntentions"),
+      );
     }
   };
 
   const generateArea = async (key: DailyIntentionAreaKey) => {
-    if (dirtyKeys.includes(key) && !window.confirm("Replace the unsaved text in this area?")) return;
+    if (
+      dirtyKeys.includes(key) &&
+      !window.confirm(localizeUi("ui.chat.dailyintentionseditormodal.replaceTheUnsavedTextInThisArea"))
+    )
+      return;
     setStatuses((current) => ({ ...current, [key]: "running" }));
     setErrors((current) => ({ ...current, [key]: undefined }));
     try {
@@ -86,7 +100,10 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
   };
 
   const runAll = async () => {
-    if (dirtyKeys.length > 0 && !window.confirm("Run All will replace unsaved text as each area succeeds. Continue?")) {
+    if (
+      dirtyKeys.length > 0 &&
+      !window.confirm(localizeUi("ui.chat.dailyintentionseditormodal.runAllWillReplaceUnsavedTextAsEachArea"))
+    ) {
       return;
     }
     setStatuses(Object.fromEntries(enabledAreas.map((area) => [area.key, "idle"])));
@@ -106,7 +123,11 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
         }
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not run Daily Intentions");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localizeUi("ui.chat.dailyintentionseditormodal.couldNotRunDailyIntentions"),
+      );
     }
   };
 
@@ -114,7 +135,7 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
     <Modal
       open={open}
       onClose={close}
-      title="Daily Intentions"
+      title={localizeUi("ui.chat.chatsettingsdrawer.dailyIntentions")}
       width="max-w-5xl"
       contentTestId="daily-intentions-editor-scroll"
       chatFloatingPanel
@@ -125,15 +146,18 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
           <Loader2 className="animate-spin text-[var(--primary)]" size="1.25rem" />
         </div>
       ) : query.isError || !query.data ? (
-        <p className="py-8 text-center text-sm text-red-400">Could not load Daily Intentions.</p>
+        <p className="py-8 text-center text-sm text-red-400">
+          {localizeUi("ui.chat.dailyintentionseditormodal.couldNotLoadDailyIntentions")}
+        </p>
       ) : !query.data.eligible ? (
         <p className="rounded-lg bg-amber-400/10 p-4 text-sm text-amber-300">{query.data.eligibilityError}</p>
       ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-2xl text-xs leading-relaxed text-[var(--muted-foreground)]">
-              Current first-person intentions for {query.data.characterName ?? "this character"}. Successful runs replace
-              one area immediately; failed areas keep their previous text.
+              {localizeUi("ui.chat.dailyintentionseditormodal.currentFirstPersonIntentionsFor")}{" "}
+              {query.data.characterName ?? "this character"}
+              {localizeUi("ui.chat.dailyintentionseditormodal.successfulRunsReplaceOneAreaImmediatelyFailedAreasKeep")}
             </p>
             <button
               type="button"
@@ -143,7 +167,9 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
               className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] disabled:opacity-50"
             >
               {runAllMutation.isPending ? <Loader2 size="0.8rem" className="animate-spin" /> : <Play size="0.8rem" />}
-              {runAllMutation.isPending ? "Running areas..." : "Run/Re-run All"}
+              {runAllMutation.isPending
+                ? localizeUi("ui.chat.dailyintentionseditormodal.runningAreas")
+                : localizeUi("ui.chat.dailyintentionseditormodal.runReRunAll")}
             </button>
           </div>
 
@@ -159,25 +185,41 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <div>
                       <h3 className="text-sm font-semibold">{area.heading}</h3>
-                      {status === "success" && <p className="text-[0.625rem] text-emerald-400">Updated successfully</p>}
+                      {status === "success" && (
+                        <p className="text-[0.625rem] text-emerald-400">
+                          {localizeUi("ui.chat.dailyintentionseditormodal.updatedSuccessfully")}
+                        </p>
+                      )}
                       {status === "error" && <p className="text-[0.625rem] text-red-400">{errors[area.key]}</p>}
                     </div>
                     <button
                       type="button"
-                      aria-label={`Run ${area.heading} intention`}
+                      aria-label={localizeUi("ui.chat.dailyintentionseditormodal.runValue1Intention", {
+                        value1: area.heading,
+                      })}
                       disabled={busy}
                       onClick={() => void generateArea(area.key)}
                       className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] font-medium hover:bg-[var(--accent)] disabled:opacity-50"
                     >
-                      {status === "running" ? <Loader2 size="0.75rem" className="animate-spin" /> : <Play size="0.75rem" />}
-                      {status === "running" ? "Running..." : "Run/Re-run"}
+                      {status === "running" ? (
+                        <Loader2 size="0.75rem" className="animate-spin" />
+                      ) : (
+                        <Play size="0.75rem" />
+                      )}
+                      {status === "running"
+                        ? localizeUi("ui.chat.roleplayhudactionsmenu.running")
+                        : localizeUi("ui.chat.dailyintentionseditormodal.runReRun")}
                     </button>
                   </div>
                   <textarea
-                    aria-label={`${area.heading} current intention`}
+                    aria-label={localizeUi("ui.chat.dailyintentionseditormodal.value1CurrentIntention", {
+                      value1: area.heading,
+                    })}
                     value={drafts[area.key] ?? ""}
                     disabled={status === "running"}
-                    placeholder="No current intention. Run this area or write one manually."
+                    placeholder={localizeUi(
+                      "ui.chat.dailyintentionseditormodal.noCurrentIntentionRunThisAreaOrWriteOne",
+                    )}
                     onChange={(event) => setDrafts((current) => ({ ...current, [area.key]: event.target.value }))}
                     className="min-h-28 w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs leading-relaxed outline-none focus:border-[var(--primary)]/50 disabled:opacity-60"
                   />
@@ -193,7 +235,7 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
               onClick={close}
               className="rounded-lg px-3 py-2 text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)] disabled:opacity-50"
             >
-              Cancel
+              {localizeUi("chat.delete.dialog.cancel")}
             </button>
             <button
               type="button"
@@ -202,7 +244,7 @@ export function DailyIntentionsEditorModal({ chatId, open, onClose }: DailyInten
               className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] disabled:opacity-50"
             >
               {saveMutation.isPending ? <Loader2 size="0.75rem" className="animate-spin" /> : <Save size="0.75rem" />}
-              Save edits
+              {localizeUi("ui.chat.dailyintentionseditormodal.saveEdits")}
             </button>
           </div>
         </div>

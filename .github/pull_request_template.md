@@ -46,6 +46,7 @@ Closes #
 
 - [ ] No docs changes needed
 - [ ] Updated docs (README / CONTRIBUTING / android/README / CHANGELOG) as needed
+- [ ] Translated docs on the `docs-i18n` branch updated to match, or a `[docs-i18n]` follow-up issue opened (see CONTRIBUTING.md § Translated documentation)
 - [ ] Version/release files updated (only if this PR includes a version bump)
 
 ## UI evidence (if applicable)

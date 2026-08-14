@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { AlertTriangle, CheckCircle2, ExternalLink, GitBranch, Pencil, Sliders, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, CheckCircle2, GitBranch, Pencil, RotateCcw, Sliders, Trash2 } from "lucide-react";
 import {
   CONVERSATION_CURATOR_OUTPUT_TOKENS,
   DEFAULT_CONVERSATION_BRIEFING_PROMPT,
@@ -8,7 +8,9 @@ import {
   type ConversationGenerationPipeline,
 } from "@marinara-engine/shared";
 import { ExpandedTextarea } from "../../../components/ui/ExpandedTextarea";
+import { MacroTextarea } from "../../../components/ui/MacroTextarea";
 import { ChatSettingsSection } from "../ChatSettingsSection";
+import { useTranslation as useUiTranslation } from "react-i18next";
 
 interface PromptPresetOption {
   id: string;
@@ -29,7 +31,6 @@ interface ConversationPromptSectionProps {
   customPrompt: string;
   promptPresetId: string | null;
   promptPresets: PromptPresetOption[];
-  selectedPresetName: string | null;
   selectedPresetPrompt: string;
   selectedPresetBriefingPrompt: string;
   selectedPresetWriterPrompt: string;
@@ -46,7 +47,6 @@ interface ConversationPromptSectionProps {
   onCustomBriefingPromptChange: (prompt: string | null) => void;
   onCustomWriterPromptChange: (prompt: string | null) => void;
   onPromptPresetChange: (presetId: string | null) => void;
-  onOpenPromptPreset: () => void;
 }
 
 export function ConversationPromptSection({
@@ -54,7 +54,6 @@ export function ConversationPromptSection({
   customPrompt,
   promptPresetId,
   promptPresets,
-  selectedPresetName,
   selectedPresetPrompt,
   selectedPresetBriefingPrompt,
   selectedPresetWriterPrompt,
@@ -71,167 +70,166 @@ export function ConversationPromptSection({
   onCustomBriefingPromptChange,
   onCustomWriterPromptChange,
   onPromptPresetChange,
-  onOpenPromptPreset,
 }: ConversationPromptSectionProps) {
-  const [promptOpen, setPromptOpen] = useState(false);
-  const [promptDraft, setPromptDraft] = useState("");
+  const { t: localizeUi } = useUiTranslation();
+  const basePrompt = selectedPresetPrompt.trim() || DEFAULT_CONVERSATION_PROMPT;
+  const baseBriefingPrompt = selectedPresetBriefingPrompt.trim() || DEFAULT_CONVERSATION_BRIEFING_PROMPT;
+  const baseWriterPrompt = selectedPresetWriterPrompt.trim() || DEFAULT_CONVERSATION_WRITER_PROMPT;
+  const [draft, setDraft] = useState(customPrompt || basePrompt);
   const [briefingPromptOpen, setBriefingPromptOpen] = useState(false);
   const [briefingPromptDraft, setBriefingPromptDraft] = useState("");
   const [writerPromptOpen, setWriterPromptOpen] = useState(false);
   const [writerPromptDraft, setWriterPromptDraft] = useState("");
-  const basePrompt = selectedPresetPrompt.trim() || DEFAULT_CONVERSATION_PROMPT;
-  const baseBriefingPrompt = selectedPresetBriefingPrompt.trim() || DEFAULT_CONVERSATION_BRIEFING_PROMPT;
-  const baseWriterPrompt = selectedPresetWriterPrompt.trim() || DEFAULT_CONVERSATION_WRITER_PROMPT;
   const missingCuratorConnection =
     !!curatorConnectionId && !connections.some((connection) => connection.id === curatorConnectionId);
+  const selectedPresetName = promptPresets.find((preset) => preset.id === promptPresetId)?.name;
 
-  const openPromptEditor = () => {
-    setPromptDraft(customPrompt || basePrompt);
-    setPromptOpen(true);
-  };
+  useEffect(() => {
+    setDraft(customPrompt || basePrompt);
+  }, [customPrompt, basePrompt]);
 
-  const closePromptEditor = () => {
-    const isPresetPrompt = promptDraft.trim() === basePrompt.trim();
-    const nextPrompt = !promptDraft.trim() || isPresetPrompt ? null : promptDraft;
-    onCustomPromptChange(chatId, nextPrompt);
-    setPromptOpen(false);
+  const commitDraft = () => {
+    onCustomPromptChange(chatId, !draft.trim() || draft.trim() === basePrompt.trim() ? null : draft);
   };
 
   const resetPrompt = () => {
     onCustomPromptChange(chatId, null);
+    setDraft(basePrompt);
   };
 
   const closeBriefingPromptEditor = () => {
-    const nextPrompt =
+    onCustomBriefingPromptChange(
       !briefingPromptDraft.trim() || briefingPromptDraft.trim() === baseBriefingPrompt.trim()
         ? null
-        : briefingPromptDraft;
-    onCustomBriefingPromptChange(nextPrompt);
+        : briefingPromptDraft,
+    );
     setBriefingPromptOpen(false);
   };
 
   const closeWriterPromptEditor = () => {
-    const nextPrompt =
-      !writerPromptDraft.trim() || writerPromptDraft.trim() === baseWriterPrompt.trim() ? null : writerPromptDraft;
-    onCustomWriterPromptChange(nextPrompt);
+    onCustomWriterPromptChange(
+      !writerPromptDraft.trim() || writerPromptDraft.trim() === baseWriterPrompt.trim() ? null : writerPromptDraft,
+    );
     setWriterPromptOpen(false);
   };
 
   return (
     <>
       <ChatSettingsSection
-        label="Message generation pipeline"
+        id="conversation-generation-pipeline"
+        label={localizeUi("ui.chatSettings.conversationpromptsection.messageGenerationPipeline")}
         icon={<GitBranch size="0.875rem" />}
-        help="Standard writes directly from the resolved context. Two-pass first creates a hidden Conversation Briefing, then writes only from that briefing."
+        help={localizeUi(
+          "ui.chatSettings.conversationpromptsection.standardWritesDirectlyFromResolvedContextTwoPassCreates",
+        )}
       >
         <select
           value={pipeline}
           onChange={(event) => onPipelineChange(event.target.value as ConversationGenerationPipeline)}
           className="mari-preset-native-select w-full rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]/40"
         >
-          <option value="standard">Standard</option>
-          <option value="two_pass">Two-pass</option>
+          <option value="standard">{localizeUi("ui.game.gamesetupwizard.standard")}</option>
+          <option value="two_pass">{localizeUi("ui.chatSettings.conversationpromptsection.twoPass")}</option>
         </select>
       </ChatSettingsSection>
+
       <ChatSettingsSection
-        label="Prompt Preset"
+        id="conversation-prompt"
+        label={localizeUi("chat.toolbar.promptPreset")}
         icon={<Sliders size="0.875rem" />}
-        help="Choose a preset's Conversation prompt, then optionally edit a chat-local copy."
+        help={localizeUi("ui.chatSettings.conversationpromptsection.chooseAPresetConversationPromptAndOptionallyMakeA")}
       >
-        <div className="space-y-2">
+        <div className="space-y-3">
           <label className="flex flex-col gap-1.5">
-            <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Prompt source</span>
-            <div className="flex items-center gap-1.5">
-              <select
-                value={promptPresetId ?? ""}
-                onChange={(event) => onPromptPresetChange(event.target.value || null)}
-                disabled={promptPresets.length === 0}
-                className="mari-preset-native-select min-w-0 flex-1 truncate rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-shadow focus:ring-[var(--primary)]/40 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <option value="">
-                  {promptPresets.length === 0 ? "No presets available" : "Default conversation prompt"}
-                </option>
-                {promptPresets.length > 0 &&
-                  promptPresets.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {preset.name}
-                    </option>
-                  ))}
-              </select>
-              <button
-                type="button"
-                onClick={onOpenPromptPreset}
-                disabled={!promptPresetId}
-                className="mari-chrome-control mari-chrome-control--small shrink-0 px-2 py-2 text-[0.625rem] disabled:cursor-not-allowed disabled:opacity-45"
-                title="Open selected preset"
-              >
-                <ExternalLink size="0.75rem" />
-                <span className="max-sm:hidden">Preset</span>
-              </button>
-            </div>
-          </label>
-          <div className="flex items-center justify-between gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-[var(--border)]">
-            <div className="min-w-0">
-              <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">Conversation Prompt</span>
-              <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                {pipeline === "two_pass"
-                  ? "Unused while Two-pass is active"
-                  : customPrompt
-                    ? "Using chat-local edit"
-                    : promptPresetId
-                      ? `From ${selectedPresetName ?? "selected preset"}`
-                      : "Using default conversation prompt"}
-              </span>
-            </div>
-            <span className="shrink-0 rounded-full bg-[var(--background)] px-2 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              {customPrompt ? "Custom" : promptPresetId ? "Preset" : "Default"}
+            <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+              {localizeUi("ui.chatSettings.conversationpromptsection.promptSource")}
             </span>
-          </div>
-          <div className="flex gap-1.5">
-            <button
-              type="button"
-              onClick={openPromptEditor}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            <select
+              value={promptPresetId ?? ""}
+              onChange={(event) => onPromptPresetChange(event.target.value || null)}
+              disabled={promptPresets.length === 0}
+              className="mari-preset-native-select w-full rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Pencil size="0.625rem" />
-              Edit Prompt
-            </button>
-            {customPrompt && (
-              <button
-                type="button"
-                onClick={resetPrompt}
-                className="flex items-center justify-center rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                title="Reset to default prompt"
-              >
-                <Trash2 size="0.625rem" />
-              </button>
-            )}
+              <option value="">
+                {promptPresets.length === 0
+                  ? localizeUi("ui.chatSettings.conversationpromptsection.noPresetsAvailable")
+                  : localizeUi("ui.chatSettings.conversationpromptsection.defaultConversationPrompt")}
+              </option>
+              {promptPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
+              {localizeUi("ui.chatSettings.conversationpromptsection.conversationPrompt_2a3897c")}
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="rounded-full bg-[var(--background)] px-2 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                {customPrompt
+                  ? localizeUi("settings.notifications.customSound.status.custom")
+                  : promptPresetId
+                    ? localizeUi("chat.toolbar.preset")
+                    : localizeUi("ui.noodle.noodlehome.default")}
+              </span>
+              {customPrompt && (
+                <button
+                  type="button"
+                  onClick={resetPrompt}
+                  className="mari-chrome-control mari-chrome-control--small p-2"
+                  title={localizeUi("ui.chatSettings.conversationpromptsection.resetPrompt")}
+                >
+                  <RotateCcw size="0.625rem" />
+                </button>
+              )}
+            </div>
           </div>
+
+          <MacroTextarea
+            value={draft}
+            onChange={setDraft}
+            onBlur={commitDraft}
+            onExpandedClose={commitDraft}
+            title={localizeUi("ui.chatSettings.conversationpromptsection.editConversationPrompt")}
+            placeholder={localizeUi("ui.chatSettings.conversationpromptsection.enterYourCustomConversationPrompt")}
+            rows={6}
+            className="mari-editor-field min-h-[9rem] w-full p-3 font-mono text-xs"
+            spellCheck={false}
+          />
+
           {pipeline === "two_pass" && (
             <div className="space-y-3 rounded-lg bg-[var(--secondary)]/60 p-3 ring-1 ring-[var(--border)]">
               <label className="flex flex-col gap-1.5">
                 <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
-                  Context curator connection
+                  {localizeUi("ui.chatSettings.conversationpromptsection.contextCuratorConnection")}
                 </span>
                 <select
                   value={curatorConnectionId}
                   onChange={(event) => onCuratorConnectionChange(event.target.value || null)}
-                  className="mari-preset-native-select w-full rounded-lg bg-[var(--background)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]/40"
+                  className="mari-preset-native-select w-full rounded-lg bg-[var(--background)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]"
                 >
-                  <option value="">Use chat connection</option>
+                  <option value="">{localizeUi("ui.agents.agenteditor.useChatConnection")}</option>
                   {connections.map((connection) => (
                     <option key={connection.id} value={connection.id}>
                       {connection.name}
-                      {connection.model ? ` — ${connection.model}` : ""}
+                      {connection.model
+                        ? localizeUi("ui.chatSettings.connectionsection.value1", { value1: connection.model })
+                        : ""}
                     </option>
                   ))}
-                  {missingCuratorConnection && <option value={curatorConnectionId}>Unavailable connection</option>}
+                  {missingCuratorConnection && (
+                    <option value={curatorConnectionId}>
+                      {localizeUi("ui.chatSettings.conversationpromptsection.unavailableConnection")}
+                    </option>
+                  )}
                 </select>
               </label>
-
               <label className="flex flex-col gap-1.5">
                 <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
-                  Curator maximum output tokens
+                  {localizeUi("ui.chatSettings.conversationpromptsection.curatorMaximumOutputTokens")}
                 </span>
                 <input
                   type="number"
@@ -242,11 +240,11 @@ export function ConversationPromptSection({
                   className="mari-editor-field w-full px-3 py-2 text-xs"
                 />
               </label>
-
               {[
                 {
                   label: "Conversation Briefing prompt",
                   custom: customBriefingPrompt,
+                  base: baseBriefingPrompt,
                   open: () => {
                     setBriefingPromptDraft(customBriefingPrompt || baseBriefingPrompt);
                     setBriefingPromptOpen(true);
@@ -256,6 +254,7 @@ export function ConversationPromptSection({
                 {
                   label: "Conversation Writer prompt",
                   custom: customWriterPrompt,
+                  base: baseWriterPrompt,
                   open: () => {
                     setWriterPromptDraft(customWriterPrompt || baseWriterPrompt);
                     setWriterPromptOpen(true);
@@ -271,17 +270,21 @@ export function ConversationPromptSection({
                     <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">{item.label}</span>
                     <span className="block text-[0.625rem] text-[var(--muted-foreground)]">
                       {item.custom
-                        ? "Using chat-local edit"
+                        ? localizeUi("ui.chatSettings.conversationpromptsection.usingChatLocalEdit")
                         : promptPresetId
-                          ? `From ${selectedPresetName ?? "selected preset"}`
-                          : "Using built-in default"}
+                          ? localizeUi("ui.chatSettings.conversationpromptsection.fromValue1", {
+                              value1:
+                                selectedPresetName ??
+                                localizeUi("ui.chatSettings.conversationpromptsection.selectedPreset"),
+                            })
+                          : localizeUi("ui.agents.agenteditor.usingBuiltInDefault")}
                     </span>
                   </div>
                   <button
                     type="button"
                     onClick={item.open}
                     className="mari-chrome-control mari-chrome-control--small p-2"
-                    title={`Edit ${item.label}`}
+                    title={localizeUi("ui.chat.worldfieldrow.editValue1", { value1: item.label })}
                   >
                     <Pencil size="0.625rem" />
                   </button>
@@ -290,54 +293,43 @@ export function ConversationPromptSection({
                       type="button"
                       onClick={item.reset}
                       className="mari-chrome-control mari-chrome-control--small p-2"
-                      title={`Reset ${item.label}`}
+                      title={localizeUi("ui.chatSettings.conversationpromptsection.resetValue1", {
+                        value1: item.label,
+                      })}
                     >
                       <Trash2 size="0.625rem" />
                     </button>
                   )}
                 </div>
               ))}
-
               <div
                 className={`flex items-center gap-2 text-[0.6875rem] ${missingCuratorConnection ? "text-[var(--destructive)]" : "text-[var(--muted-foreground)]"}`}
               >
                 {missingCuratorConnection ? <AlertTriangle size="0.75rem" /> : <CheckCircle2 size="0.75rem" />}
                 {missingCuratorConnection
-                  ? "The selected curator connection is unavailable."
-                  : "Two-pass configuration is ready."}
+                  ? localizeUi("ui.chatSettings.conversationpromptsection.theSelectedCuratorConnectionIsUnavailable")
+                  : localizeUi("ui.chatSettings.conversationpromptsection.twoPassConfigurationIsReady")}
               </div>
-              <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                Prompt Patch agents cannot edit the isolated writer prompt and are skipped by this pipeline.
-              </p>
             </div>
           )}
         </div>
       </ChatSettingsSection>
       <ExpandedTextarea
-        open={promptOpen}
-        onClose={closePromptEditor}
-        title="Edit Conversation Prompt"
-        value={promptDraft}
-        onChange={setPromptDraft}
-        placeholder="Enter your custom conversation prompt..."
-        surface="chat"
-      />
-      <ExpandedTextarea
         open={briefingPromptOpen}
         onClose={closeBriefingPromptEditor}
-        title="Edit Conversation Briefing Prompt"
+        title={localizeUi("ui.chatSettings.conversationpromptsection.editConversationBriefingPrompt")}
         value={briefingPromptDraft}
         onChange={setBriefingPromptDraft}
-        placeholder="Enter the context curator prompt..."
+        placeholder={localizeUi("ui.chatSettings.conversationpromptsection.enterTheContextCuratorPrompt")}
         surface="chat"
       />
       <ExpandedTextarea
         open={writerPromptOpen}
         onClose={closeWriterPromptEditor}
-        title="Edit Conversation Writer Prompt"
+        title={localizeUi("ui.chatSettings.conversationpromptsection.editConversationWriterPrompt")}
         value={writerPromptDraft}
         onChange={setWriterPromptDraft}
-        placeholder="Enter the isolated response writer prompt..."
+        placeholder={localizeUi("ui.chatSettings.conversationpromptsection.enterTheIsolatedResponseWriterPrompt")}
         surface="chat"
       />
     </>

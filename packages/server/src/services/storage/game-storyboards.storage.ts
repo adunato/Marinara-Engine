@@ -31,6 +31,7 @@ export interface CreateGameTurnStoryboardKeyframeInput {
   mangaPanelPrompt?: string;
   imagePrompt?: string;
   videoPrompt?: string;
+  animationSuitability?: string;
   characters?: string;
   continuityNotes?: string;
   cameraMotion?: string;
@@ -51,6 +52,15 @@ export function createGameStoryboardsStorage(db: DB) {
         .from(gameTurnStoryboards)
         .where(eq(gameTurnStoryboards.chatId, chatId))
         .orderBy(desc(gameTurnStoryboards.createdAt));
+    },
+
+    async listRecentByChatId(chatId: string, limit: number) {
+      return db
+        .select()
+        .from(gameTurnStoryboards)
+        .where(eq(gameTurnStoryboards.chatId, chatId))
+        .orderBy(desc(gameTurnStoryboards.createdAt))
+        .limit(limit);
     },
 
     async listForTurn(chatId: string, messageId: string, swipeIndex: number) {
@@ -165,6 +175,7 @@ export function createGameStoryboardsStorage(db: DB) {
             mangaPanelPrompt: frame.mangaPanelPrompt ?? "",
             imagePrompt: frame.imagePrompt ?? "",
             videoPrompt: frame.videoPrompt ?? "",
+            animationSuitability: frame.animationSuitability ?? "",
             characters: frame.characters ?? "[]",
             continuityNotes: frame.continuityNotes ?? "",
             cameraMotion: frame.cameraMotion ?? "",

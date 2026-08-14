@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
-import { mkdir, symlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
@@ -10,11 +11,13 @@ import {
   type CapabilityRuntimeHost,
   type CapabilityRuntimeLogArgument,
   type InstalledCapabilityPackage,
+  parseAgentSettingsRecord,
 } from "@marinara-engine/shared";
 import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { logger, logDebugOverride } from "../../lib/logger.js";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { parseGameJsonish } from "../game/jsonish.js";
+import { createAgentsStorage } from "../storage/agents.storage.js";
 import { capabilityPackageManager } from "./package-manager.service.js";
 import {
   registerCapabilityConversationCommand,
@@ -22,8 +25,17 @@ import {
 } from "./capability-command-registry.service.js";
 import { registerCapabilityService } from "./capability-service-registry.service.js";
 import { createCapabilityLanguageModelHost } from "./capability-language-model.service.js";
+import {
+  createCapabilityEmbeddingHost,
+  createConfiguredCapabilityEmbeddingHost,
+} from "./capability-embedding.service.js";
 import { createCapabilityPersistenceHost } from "./capability-persistence.service.js";
 import { createCapabilityResourceHost } from "./capability-resources.service.js";
+import { registerCapabilityPrivilegedRoutes } from "./capability-route-registration.service.js";
+import {
+  registerCapabilityPromptContext,
+  type CapabilityPromptContextContributor,
+} from "./capability-prompt-context.service.js";
 
 type Cleanup = () => void | Promise<void>;
 type CapabilityActivationContext = {
@@ -33,13 +45,29 @@ type CapabilityActivationContext = {
   api: {
     runtime: CapabilityRuntimeHost;
     registerTurnGameEngine(engine: AnyTurnGameEngine): Cleanup;
-    registerConversationCommand(registration: CapabilityConversationCommandRegistration): Cleanup;
+  registerConversationCommand(registration: CapabilityConversationCommandRegistration): Cleanup;
     registerService<T>(key: string, service: T): Cleanup;
+    /** Contribute text to each turn's system prompt. Requires the `prompt-context` permission. */
+    registerPromptContext(contributor: CapabilityPromptContextContributor): Cleanup;
+    registerPrivilegedRoutes(
+      routes: import("fastify").FastifyPluginAsync,
+      options: { prefix: string },
+    ): Promise<Cleanup>;
   };
 };
 
-function createCapabilityRuntimeHost(app: FastifyInstance): CapabilityRuntimeHost {
+async function createCapabilityRuntimeHost(app: FastifyInstance, packageId: string): Promise<CapabilityRuntimeHost> {
+  const agents = app.db ? createAgentsStorage(app.db) : null;
+  const config = await agents?.getByType(packageId);
+  const embeddings = app.db
+    ? await createConfiguredCapabilityEmbeddingHost(app.db, config?.connectionId)
+    : createCapabilityEmbeddingHost();
   return Object.freeze({
+    embeddings,
+    async getAgentConfig() {
+      const config = await agents?.getByType(packageId);
+      return config ? { connectionId: config.connectionId, settings: parseAgentSettingsRecord(config.settings) } : null;
+    },
     isDebugAgentsEnabled,
     json: Object.freeze({ parseJsonish: parseGameJsonish }),
     languageModels: createCapabilityLanguageModelHost(app.db),
@@ -112,23 +140,52 @@ class CapabilityModuleRuntime {
     }
   }
 
+  private async createVerifiedRuntimeSnapshot(
+    installed: InstalledCapabilityPackage,
+    verified: Awaited<ReturnType<typeof capabilityPackageManager.verifiedRuntimeFiles>>,
+  ) {
+    const snapshotsRoot = join(DATA_DIR, "capability-runtime-snapshots");
+    const root = join(snapshotsRoot, `${installed.id}-${installed.version}-${randomUUID()}`);
+    await mkdir(snapshotsRoot, { recursive: true, mode: 0o700 });
+    await mkdir(root, { mode: 0o700 });
+    try {
+      for (const [relativePath, data] of verified.files) {
+        const output = join(root, relativePath);
+        await mkdir(dirname(output), { recursive: true, mode: 0o700 });
+        await writeFile(output, data, { flag: "wx", mode: 0o400 });
+      }
+      await writeFile(join(root, "manifest.json"), JSON.stringify(installed.manifest), { flag: "wx", mode: 0o400 });
+      const nodeModules = join(DATA_DIR, "capability-packages", "node_modules");
+      if (existsSync(nodeModules) && !existsSync(join(root, "node_modules"))) {
+        await symlink(nodeModules, join(root, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+      }
+      return {
+        entrypoint: join(root, verified.entrypoint),
+        cleanup: () => rm(root, { recursive: true, force: true }),
+      };
+    } catch (error) {
+      await rm(root, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
   private async activateOne(
     app: FastifyInstance,
     runtimePackage: Awaited<ReturnType<typeof capabilityPackageManager.runtimePackages>>[number],
     allowRollback: boolean,
     throwOnFailure: boolean,
   ): Promise<void> {
-    const { installed, serverEntrypoint } = runtimePackage;
+    const { installed } = runtimePackage;
     const registeredCleanups: Cleanup[] = [];
     let moduleCleanup: Cleanup | undefined;
     try {
       await capabilityPackageManager.markRuntimeReadiness(installed.id, "pending");
       const blockReason = capabilityPackageManager.runtimeBlockReason(installed);
       if (blockReason) throw new Error(blockReason);
-
-      const moduleUrl = new URL(pathToFileURL(serverEntrypoint).href);
-      moduleUrl.searchParams.set("activation", `${installed.version}-${Date.now()}`);
-      const module = (await import(moduleUrl.href)) as CapabilityModule;
+      const verified = await capabilityPackageManager.verifiedRuntimeFiles(installed);
+      const runtimeSnapshot = await this.createVerifiedRuntimeSnapshot(installed, verified);
+      registeredCleanups.push(runtimeSnapshot.cleanup);
+      const module = (await import(pathToFileURL(runtimeSnapshot.entrypoint).href)) as CapabilityModule;
       if (typeof module.activate !== "function") throw new Error("Server entrypoint must export activate(context)");
       const trackCleanup = (cleanup: Cleanup) => {
         let called = false;
@@ -145,11 +202,29 @@ class CapabilityModuleRuntime {
         dataDir: DATA_DIR,
         package: installed,
         api: {
-          runtime: createCapabilityRuntimeHost(app),
+          runtime: await createCapabilityRuntimeHost(app, installed.id),
           registerTurnGameEngine: (engine) => trackCleanup(registerTurnGameEngine(engine)),
-          registerConversationCommand: (registration) =>
-            trackCleanup(registerCapabilityConversationCommand(registration)),
+          registerConversationCommand: (registration) => {
+            if (registration.handler && !installed.manifest.permissions?.includes("conversation-actions")) {
+              throw new Error(
+                `Capability package ${installed.id} must declare the "conversation-actions" permission to handle model actions`,
+              );
+            }
+            return trackCleanup(registerCapabilityConversationCommand(registration));
+          },
           registerService: (key, service) => trackCleanup(registerCapabilityService(key, service)),
+          // Gated on the permission the manifest already declares, so a package can't reach the prompt
+          // without asking for it up front. Contract in capability-prompt-context.service.ts.
+          registerPromptContext: (contributor) => {
+            if (!installed.manifest.permissions?.includes("prompt-context")) {
+              throw new Error(
+                `Capability package ${installed.id} must declare the "prompt-context" permission to contribute prompt context`,
+              );
+            }
+            return trackCleanup(registerCapabilityPromptContext(installed.id, contributor));
+          },
+          registerPrivilegedRoutes: async (routes, options) =>
+            trackCleanup(await registerCapabilityPrivilegedRoutes(app, installed, routes, options)),
         },
       };
       const cleanup = await module.activate(context);

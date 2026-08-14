@@ -59,7 +59,7 @@ function asStringArray(value: unknown): string[] {
 function toCharacterBookEntry(entry: LoreEntryRow, index: number): CharacterBookEntry {
   const order = asNumber(entry.order, 100);
   const positionValue = asNumber(entry.position, 0);
-  const position = positionValue === 2 ? 4 : positionValue === 1 ? "after_char" : "before_char";
+  const position = positionValue === 7 ? 7 : positionValue === 2 ? 4 : positionValue === 1 ? "after_char" : "before_char";
   const role = entry.role === "user" ? 1 : entry.role === "assistant" ? 2 : 0;
   return {
     keys: asStringArray(entry.keys),
@@ -77,6 +77,7 @@ function toCharacterBookEntry(entry: LoreEntryRow, index: number): CharacterBook
     secondary_keys: asStringArray(entry.secondaryKeys),
     constant: asBoolean(entry.constant),
     position,
+    outletName: asString(entry.outletName),
     depth: asNumber(entry.depth, 4),
     role,
     selectiveLogic: asString(entry.selectiveLogic, "and"),
@@ -291,10 +292,9 @@ export async function syncCharacterBookFromLorebook(db: DB, lorebookId: string):
  * `lorebookId` pointer cannot leave a broken "Edit Embedded Lorebook"
  * button behind.
  *
- * The character storage layer's `update` does a shallow merge of
- * `CharacterData` fields, so we read-modify-write the `extensions`
- * subtree explicitly instead of relying on the merge to preserve sibling
- * keys.
+ * The character storage layer recursively merges `extensions`, so this helper
+ * builds the full replacement subtree and disables that merge. Otherwise the
+ * omitted `embeddedLorebook` key would be restored from the old data.
  */
 export async function clearCharacterEmbeddedLorebook(db: DB, characterId: string, lorebookId: string): Promise<void> {
   try {
@@ -325,7 +325,7 @@ export async function clearCharacterEmbeddedLorebook(db: DB, characterId: string
         extensions: extensions as never,
       },
       undefined,
-      { skipVersionSnapshot: true },
+      { skipVersionSnapshot: true, mergeExtensions: false },
     );
   } catch (err) {
     logger.error(err, "Failed to clear embedded lorebook for character %s", characterId);
@@ -365,7 +365,7 @@ export async function clearEmbeddedLorebookFromCharacter(db: DB, characterId: st
     characterId,
     { character_book: null, extensions: extensions as never },
     undefined,
-    { skipVersionSnapshot: true },
+    { skipVersionSnapshot: true, mergeExtensions: false },
   );
   return true;
 }

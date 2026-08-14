@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useConnections } from "../../hooks/use-connections";
 import { useDailyIntentions, useUpdateDailyIntentionsSettings } from "../../hooks/use-daily-intentions";
 import { Modal } from "../ui/Modal";
+import { useTranslation as useUiTranslation } from "react-i18next";
 
 interface DailyIntentionsConfigModalProps {
   chatId: string;
@@ -18,6 +19,7 @@ interface DailyIntentionsConfigModalProps {
 }
 
 export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyIntentionsConfigModalProps) {
+  const { t: localizeUi } = useUiTranslation();
   const query = useDailyIntentions(chatId, open);
   const update = useUpdateDailyIntentionsSettings(chatId);
   const { data: connections = [] } = useConnections();
@@ -34,7 +36,11 @@ export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyInten
   );
 
   const close = () => {
-    if (dirty && !window.confirm("Discard Daily Intentions configuration changes?")) return;
+    if (
+      dirty &&
+      !window.confirm(localizeUi("ui.chat.dailyintentionsconfigmodal.discardDailyIntentionsConfigurationChanges"))
+    )
+      return;
     onClose();
   };
 
@@ -50,34 +56,46 @@ export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyInten
     if (!draft) return;
     try {
       await update.mutateAsync(draft);
-      toast.success("Daily Intentions settings saved");
+      toast.success(localizeUi("ui.chat.dailyintentionsconfigmodal.dailyIntentionsSettingsSaved"));
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save Daily Intentions settings");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localizeUi("ui.chat.dailyintentionsconfigmodal.couldNotSaveDailyIntentionsSettings"),
+      );
     }
   };
 
   return (
-    <Modal open={open} onClose={close} title="Configure Daily Intentions" width="max-w-4xl" chatFloatingPanel>
+    <Modal
+      open={open}
+      onClose={close}
+      title={localizeUi("ui.chat.dailyintentionsconfigmodal.configureDailyIntentions")}
+      width="max-w-4xl"
+      chatFloatingPanel
+    >
       {query.isLoading || !draft ? (
         <div className="flex min-h-40 items-center justify-center">
           <Loader2 className="animate-spin text-[var(--primary)]" size="1.25rem" />
         </div>
       ) : query.isError ? (
-        <p className="py-8 text-center text-sm text-red-400">Could not load Daily Intentions configuration.</p>
+        <p className="py-8 text-center text-sm text-red-400">
+          {localizeUi("ui.chat.dailyintentionsconfigmodal.couldNotLoadDailyIntentionsConfiguration")}
+        </p>
       ) : (
         <div className="space-y-4" data-testid="daily-intentions-config">
           <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 p-3">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-1.5 text-xs font-medium">
-                <span>Generation connection</span>
+                <span>{localizeUi("ui.noodle.noodlehome.generationConnection")}</span>
                 <select
-                  aria-label="Daily Intentions generation connection"
+                  aria-label={localizeUi("ui.chat.dailyintentionsconfigmodal.dailyIntentionsGenerationConnection")}
                   value={draft.connectionId ?? ""}
                   onChange={(event) => setDraft({ ...draft, connectionId: event.target.value || null })}
                   className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs outline-none focus:border-[var(--primary)]/50"
                 >
-                  <option value="">Default agent connection</option>
+                  <option value="">{localizeUi("ui.chat.dailyintentionsconfigmodal.defaultAgentConnection")}</option>
                   {connectionOptions.map((connection) => (
                     <option key={connection.id} value={connection.id}>
                       {connection.name} ({connection.model})
@@ -86,22 +104,23 @@ export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyInten
                 </select>
               </label>
               <label className="space-y-1.5 text-xs font-medium">
-                <span>Daily cutoff</span>
+                <span>{localizeUi("ui.chat.dailyintentionsconfigmodal.dailyCutoff")}</span>
                 <select
-                  aria-label="Daily Intentions cutoff time"
+                  aria-label={localizeUi("ui.chat.dailyintentionsconfigmodal.dailyIntentionsCutoffTime")}
                   value={draft.cutoffHour}
                   onChange={(event) => setDraft({ ...draft, cutoffHour: Number(event.target.value) })}
                   className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs outline-none focus:border-[var(--primary)]/50"
                 >
                   {Array.from({ length: 24 }, (_, hour) => (
-                    <option key={hour} value={hour}>{`${String(hour).padStart(2, "0")}:00`}</option>
+                    <option key={hour} value={hour}>
+                      {localizeUi("ui.chat.chatsettingsdrawer.value100", { value1: String(hour).padStart(2, "0") })}
+                    </option>
                   ))}
                 </select>
               </label>
             </div>
             <p className="mt-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-              Daily Intentions is manual-only in this version. The cutoff is saved for future scheduling but does not
-              trigger, expire, or gate a run.
+              {localizeUi("ui.chat.dailyintentionsconfigmodal.dailyIntentionsIsManualOnlyInThisVersionThe")}
             </p>
           </div>
 
@@ -116,9 +135,11 @@ export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyInten
                 >
                   <div className="flex items-center justify-between gap-3">
                     <label className="min-w-0 flex-1 space-y-1 text-[0.6875rem] font-medium">
-                      <span>Heading</span>
+                      <span>{localizeUi("ui.chat.dailyintentionsconfigmodal.heading")}</span>
                       <input
-                        aria-label={`${defaults.heading} intention heading`}
+                        aria-label={localizeUi("ui.chat.dailyintentionsconfigmodal.value1IntentionHeading", {
+                          value1: defaults.heading,
+                        })}
                         value={area.heading}
                         maxLength={120}
                         onChange={(event) => patchArea(area.key, { heading: event.target.value })}
@@ -128,18 +149,22 @@ export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyInten
                     <label className="mt-4 inline-flex shrink-0 items-center gap-2 text-xs font-medium">
                       <input
                         type="checkbox"
-                        aria-label={`Enable ${defaults.heading} intentions`}
+                        aria-label={localizeUi("ui.chat.dailyintentionsconfigmodal.enableValue1Intentions", {
+                          value1: defaults.heading,
+                        })}
                         checked={area.enabled}
                         onChange={(event) => patchArea(area.key, { enabled: event.target.checked })}
                         className="accent-[var(--primary)]"
                       />
-                      Enabled
+                      {localizeUi("ui.chat.mariediteasyviewer.toggleEnabled")}
                     </label>
                   </div>
                   <label className="mt-3 block space-y-1 text-[0.6875rem] font-medium">
-                    <span>Area prompt</span>
+                    <span>{localizeUi("ui.chat.dailyintentionsconfigmodal.areaPrompt")}</span>
                     <textarea
-                      aria-label={`${defaults.heading} intention prompt`}
+                      aria-label={localizeUi("ui.chat.dailyintentionsconfigmodal.value1IntentionPrompt", {
+                        value1: defaults.heading,
+                      })}
                       value={area.prompt}
                       onChange={(event) => patchArea(area.key, { prompt: event.target.value })}
                       className="min-h-36 w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs leading-relaxed outline-none focus:border-[var(--primary)]/50"
@@ -150,7 +175,7 @@ export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyInten
                     onClick={() => patchArea(area.key, { heading: defaults.heading, prompt: defaults.prompt })}
                     className="mt-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                   >
-                    <RotateCcw size="0.7rem" /> Reset heading and prompt
+                    <RotateCcw size="0.7rem" /> {localizeUi("ui.chat.dailyintentionsconfigmodal.resetHeadingAndPrompt")}
                   </button>
                 </section>
               );
@@ -163,7 +188,7 @@ export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyInten
               onClick={close}
               className="rounded-lg px-3 py-2 text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
             >
-              Cancel
+              {localizeUi("chat.delete.dialog.cancel")}
             </button>
             <button
               type="button"
@@ -172,7 +197,7 @@ export function DailyIntentionsConfigModal({ chatId, open, onClose }: DailyInten
               className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] disabled:opacity-50"
             >
               {update.isPending ? <Loader2 size="0.75rem" className="animate-spin" /> : <Save size="0.75rem" />}
-              Save settings
+              {localizeUi("ui.chat.dailyintentionsconfigmodal.saveSettings")}
             </button>
           </div>
         </div>

@@ -4,14 +4,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useGameModeStore } from "../../stores/game-mode.store";
-import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
+import type { AvatarCrop } from "@marinara-engine/shared";
+import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { NEUTRAL_SURFACE_VARIABLES } from "../ui/neutral-surface-styles";
+import { useReducedAmbientEffects } from "../../hooks/use-reduced-ambient-effects";
+import { useTranslation as useUiTranslation } from "react-i18next";
 
 interface PartyBarMember {
   id: string;
   name: string;
   avatarUrl?: string | null;
-  avatarCrop?: AvatarCropValue | null;
+  avatarCrop?: AvatarCrop | null;
   nameColor?: string;
   canRemove?: boolean;
 }
@@ -23,7 +26,7 @@ interface PartyBarCard {
   status?: string;
   level?: number;
   avatarUrl?: string | null;
-  avatarCrop?: AvatarCropValue | null;
+  avatarCrop?: AvatarCrop | null;
   stats?: Array<{ name: string; value: number; max?: number; color?: string }>;
   inventory?: Array<{ name: string; quantity?: number; location?: string }>;
   customFields?: Record<string, string>;
@@ -39,7 +42,7 @@ interface GamePartyBarProps {
 type PartyMemberVisual = {
   member: PartyBarMember;
   avatarSrc?: string | null;
-  avatarCrop?: AvatarCropValue | null;
+  avatarCrop?: AvatarCrop | null;
 };
 
 function PartyAvatar({ visual, className }: { visual: PartyMemberVisual; className?: string }) {
@@ -82,7 +85,9 @@ export function GamePartyBar({
   onRemovePartyMember,
   removingPartyMemberId,
 }: GamePartyBarProps) {
+  const { t: localizeUi } = useUiTranslation();
   const openCharacterSheet = useGameModeStore((s) => s.openCharacterSheet);
+  const reduceAmbientEffects = useReducedAmbientEffects();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
@@ -106,12 +111,12 @@ export function GamePartyBar({
   }, [memberVisuals.length]);
 
   useEffect(() => {
-    if (memberVisuals.length <= 1) return undefined;
+    if (reduceAmbientEffects || memberVisuals.length <= 1) return undefined;
     const intervalId = window.setInterval(() => {
       setPreviewIndex((index) => (index + 1) % memberVisuals.length);
     }, 2500);
     return () => window.clearInterval(intervalId);
-  }, [memberVisuals.length]);
+  }, [memberVisuals.length, reduceAmbientEffects]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return undefined;
@@ -144,8 +149,8 @@ export function GamePartyBar({
             }}
             className="group relative block rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--marinara-chat-chrome-focus-ring)]"
             aria-expanded={mobileMenuOpen}
-            aria-label={mobileMenuOpen ? "Close party members" : "Open party members"}
-            title={memberVisuals.length === 1 ? "Open character sheet" : "Open party members"}
+            aria-label={mobileMenuOpen ?localizeUi("ui.game.gamepartybar.closePartyMembers") :localizeUi("ui.game.gamepartybar.openPartyMembers")}
+            title={memberVisuals.length === 1 ?localizeUi("ui.game.gamepartybar.openCharacterSheet") :localizeUi("ui.game.gamepartybar.openPartyMembers")}
           >
             <PartyAvatar visual={memberVisuals[previewIndex]} className="h-9 w-9" />
             {memberVisuals.length > 1 && (
@@ -173,7 +178,7 @@ export function GamePartyBar({
                       setMobileMenuOpen(false);
                     }}
                     className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--marinara-chat-chrome-focus-ring)]"
-                    title={`${visual.member.name} - Click to open character sheet`}
+                    title={localizeUi("ui.game.gamepartybar.value1ClickToOpenCharacterSheet", { value1: visual.member.name })}
                   >
                     <PartyAvatar visual={visual} className="h-9 w-9" />
                   </button>
@@ -186,8 +191,8 @@ export function GamePartyBar({
                       }}
                       disabled={removingPartyMemberId === visual.member.id}
                       className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-button-bg)] text-[var(--marinara-chat-chrome-button-text-hover)] shadow-md transition-colors hover:bg-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-60"
-                      aria-label={`Remove ${visual.member.name} from party`}
-                      title={`Remove ${visual.member.name} from party`}
+                      aria-label={localizeUi("ui.game.gamepartybar.removeValue1FromParty", { value1: visual.member.name })}
+                      title={localizeUi("ui.game.gamepartybar.removeValue1FromParty", { value1: visual.member.name })}
                     >
                       <X className="h-2.5 w-2.5" aria-hidden="true" />
                     </button>
@@ -212,7 +217,7 @@ export function GamePartyBar({
                 type="button"
                 onClick={() => openCharacterSheet(member.id)}
                 className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--marinara-chat-chrome-focus-ring)]"
-                title={`${member.name} - Click to open character sheet`}
+                title={localizeUi("ui.game.gamepartybar.value1ClickToOpenCharacterSheet", { value1: member.name })}
               >
                 <PartyAvatar visual={visual} />
               </button>
@@ -225,8 +230,8 @@ export function GamePartyBar({
                   }}
                   disabled={removingPartyMemberId === member.id}
                   className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-button-bg)] text-[var(--marinara-chat-chrome-button-text-hover)] opacity-80 shadow-md transition-opacity hover:bg-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-60 group-hover:opacity-100 focus:opacity-100 md:opacity-0"
-                  aria-label={`Remove ${member.name} from party`}
-                  title={`Remove ${member.name} from party`}
+                  aria-label={localizeUi("ui.game.gamepartybar.removeValue1FromParty", { value1: member.name })}
+                  title={localizeUi("ui.game.gamepartybar.removeValue1FromParty", { value1: member.name })}
                 >
                   <X className="h-2.5 w-2.5" aria-hidden="true" />
                 </button>

@@ -11,6 +11,7 @@ import type { BaseLLMProvider } from "./base-provider.js";
 import { withConnectionDefaultParameters } from "./connection-default-provider.js";
 import { withPhoenixLlmTracing } from "./phoenix-tracing-provider.js";
 import { withLlmTransportRetries } from "./transport-retry-provider.js";
+import { withConnectionAdmissionProvider } from "../generation/connection-admission.js";
 
 export function normalizeCohereOpenAIBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
@@ -50,6 +51,8 @@ export function createLLMProvider(
   treatAsLocalEndpoint?: boolean,
   /** Stored connection defaults. Custom Parameters are bound to every text request made by this provider. */
   defaultParameters?: unknown,
+  /** Configured connection ID for direct foreground calls. Fallback wrappers admit their providers separately. */
+  connectionId?: string,
 ): BaseLLMProvider {
   const normalizedMaxContext =
     typeof maxContext === "number" && Number.isFinite(maxContext) && maxContext > 0
@@ -67,6 +70,7 @@ export function createLLMProvider(
     case "nanogpt":
     case "xai":
     case "mistral":
+    case "arli":
       resolved = new OpenAIProvider(
         baseUrl,
         apiKey,
@@ -167,7 +171,7 @@ export function createLLMProvider(
       );
       break;
   }
-  return withLlmTransportRetries(
-    withPhoenixLlmTracing(withConnectionDefaultParameters(resolved, defaultParameters), provider),
-  );
+  const configured = withPhoenixLlmTracing(withConnectionDefaultParameters(resolved, defaultParameters), provider);
+  const retrying = withLlmTransportRetries(configured);
+  return connectionId ? withConnectionAdmissionProvider(retrying, connectionId) : retrying;
 }

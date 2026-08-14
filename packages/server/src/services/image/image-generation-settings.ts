@@ -14,6 +14,8 @@ export interface ImageGenerationSize {
 export interface ImageGenerationUserSettings {
   background: ImageGenerationSize;
   illustration: ImageGenerationSize;
+  noodle: ImageGenerationSize;
+  game: ImageGenerationSize;
   portrait: ImageGenerationSize;
   selfie: ImageGenerationSize;
   styleProfiles: ImageStyleProfileSettings;
@@ -25,6 +27,8 @@ const IMAGE_DIMENSION_MAX = 4096;
 const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationUserSettings = {
   background: { width: 1280, height: 720 },
   illustration: { width: 896, height: 1280 },
+  noodle: { width: 1024, height: 1536 },
+  game: { width: 1280, height: 720 },
   portrait: { width: 1024, height: 1024 },
   selfie: { width: 896, height: 1152 },
   styleProfiles: normalizeImageStyleProfileSettings(null),
@@ -84,6 +88,8 @@ export function parseImageGenerationUserSettings(raw: string | null): ImageGener
         "imageIllustrationHeight",
         DEFAULT_IMAGE_GENERATION_SETTINGS.illustration,
       ),
+      noodle: readSize(parsed, "imageNoodleWidth", "imageNoodleHeight", DEFAULT_IMAGE_GENERATION_SETTINGS.noodle),
+      game: readSize(parsed, "imageGameWidth", "imageGameHeight", DEFAULT_IMAGE_GENERATION_SETTINGS.game),
       portrait: readSize(
         parsed,
         "imagePortraitWidth",

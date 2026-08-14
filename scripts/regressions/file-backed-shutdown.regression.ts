@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "../../packages/server/src/db/file-query.js";
@@ -49,10 +49,50 @@ try {
     key: string;
   }>;
   assert.deepEqual(persisted.map((row) => row.key).sort(), ["before-active-flush", "queued-during-flush"]);
+  if (process.platform !== "win32") {
+    assert.equal(statSync(join(storageDir, "tables")).mode & 0o777, 0o700);
+    assert.equal(statSync(join(storageDir, "tables", "app_settings.json")).mode & 0o777, 0o600);
+  }
   console.info("File-backed graceful shutdown regression passed.");
 } finally {
   releaseWrite();
   rmSync(storageDir, { recursive: true, force: true });
+}
+
+const malformedRowStorageDir = mkdtempSync(join(tmpdir(), "marinara-file-malformed-row-"));
+process.env.FILE_STORAGE_DIR = malformedRowStorageDir;
+try {
+  const tablesDir = join(malformedRowStorageDir, "tables");
+  const settingsPath = join(tablesDir, "app_settings.json");
+  const originalRows = [{ key: "valid-setting", value: "preserved", updatedAt: "2026-08-01" }, null, "invalid", 42, []];
+  mkdirSync(tablesDir, { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(originalRows));
+  if (process.platform !== "win32") {
+    chmodSync(malformedRowStorageDir, 0o755);
+    chmodSync(tablesDir, 0o755);
+    chmodSync(settingsPath, 0o644);
+  }
+
+  const db = await createFileNativeDB();
+  if (process.platform !== "win32") {
+    assert.equal(statSync(malformedRowStorageDir).mode & 0o777, 0o700);
+    assert.equal(statSync(tablesDir).mode & 0o777, 0o700);
+    assert.equal(statSync(settingsPath).mode & 0o777, 0o600);
+  }
+  const rows = await db.select().from(appSettings);
+  assert.deepEqual(rows, [{ key: "valid-setting", value: "preserved", updatedAt: "2026-08-01" }]);
+
+  const quarantined = db._fileStore.getQuarantinedTables().find((entry) => entry.table === "app_settings");
+  assert.equal(quarantined?.files.length, 1);
+  const preservedPath = quarantined?.files[0]?.to;
+  assert.ok(preservedPath);
+  assert.deepEqual(JSON.parse(readFileSync(preservedPath, "utf8")), originalRows);
+  assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), [originalRows[0]]);
+
+  await db._fileStore.close();
+  console.info("File-backed malformed-row recovery regression passed.");
+} finally {
+  rmSync(malformedRowStorageDir, { recursive: true, force: true });
 }
 
 const failingStorageDir = mkdtempSync(join(tmpdir(), "marinara-file-close-failure-"));
