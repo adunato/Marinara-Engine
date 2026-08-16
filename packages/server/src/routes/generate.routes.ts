@@ -2973,7 +2973,7 @@ export async function generateRoutes(app: FastifyInstance) {
           finalMessages,
         });
 
-        if (chatMode === "roleplay" && !isSceneChat) {
+        if (chatMode === "roleplay") {
           const contextSourcesBlock = await buildRoleplayContextSourcesBlock({
             chatId: input.chatId,
             chats,

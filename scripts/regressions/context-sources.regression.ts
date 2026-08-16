@@ -1,11 +1,33 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createFileNativeDB } from "../../packages/server/src/db/file-backed-store.js";
 import { buildRoleplayContextSourcesBlock } from "../../packages/server/src/routes/generate/roleplay-context-sources.js";
 import { createChatsStorage } from "../../packages/server/src/services/storage/chats.storage.js";
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const generateRouteSource = readFileSync(
+  join(repositoryRoot, "packages/server/src/routes/generate.routes.ts"),
+  "utf8",
+).replace(/\r\n/gu, "\n");
+const contextSourcesGateStart = generateRouteSource.indexOf('if (chatMode === "roleplay") {');
+const contextSourcesGateEnd = generateRouteSource.indexOf("const noodlePromptContext", contextSourcesGateStart);
+assert.notEqual(contextSourcesGateStart, -1, "Roleplay Source Chats gate must remain in the generation route");
+assert.notEqual(contextSourcesGateEnd, -1, "Roleplay Source Chats gate must precede the noodle prompt context");
+const contextSourcesGateSource = generateRouteSource.slice(contextSourcesGateStart, contextSourcesGateEnd);
+assert.match(
+  contextSourcesGateSource,
+  /if \(chatMode === "roleplay"\) \{[\s\S]{0,180}buildRoleplayContextSourcesBlock/u,
+  "Roleplay Source Chats must be included for active Scenes as well as ordinary Roleplays",
+);
+assert.doesNotMatch(
+  contextSourcesGateSource,
+  /!isSceneChat/u,
+  "Scene generation must not gate explicitly selected Source Chats",
+);
 
 const contextBlockWithoutSummaryMemories = await buildRoleplayContextSourcesBlock({
   chatId: "target",

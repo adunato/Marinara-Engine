@@ -81,7 +81,13 @@ To keep the two fork paths clear: **Clone from here** lets you fork scene branch
 
 A Conversation chat can be connected to a roleplay so that context flows between them. Scenes work differently on purpose. A scene is self-contained.
 
+### Explicit Source Chats are still included
+
+Source Chats are a separate, explicitly selected read-only context source. If you select Conversation, Roleplay, or Game chats as Source Chats for a scene's roleplay, their configured summaries and recent messages are included when the scene generates. This lets you bring in specific story material without making the scene inherit its connected conversation automatically.
+
 A scene does not automatically pull in the back-and-forth context from a connected conversation, even when the parent chat does. A connected conversation can quietly pass short steering notes into a linked roleplay to nudge its story, but a scene ignores those notes. This keeps a scene focused on its own moment instead of dragging in the whole conversation.
+
+That exclusion applies to the connected Conversation context and its OOC notes and influences. It does not remove Source Chats that you selected deliberately.
 
 This is why a scene reads cleanly as its own little story. If you want the ongoing two-way link between a conversation and a roleplay, use a connected chat rather than a scene. See the connected chats guide linked below for that feature.
 
