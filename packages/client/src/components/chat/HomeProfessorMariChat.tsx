@@ -52,6 +52,8 @@ import { toast } from "sonner";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
   MARI_STARTER_CHIPS,
+  DEFAULT_PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS,
+  PROFESSOR_MARI_CUSTOM_PROMPT_MAX_LENGTH,
   PROFESSOR_MARI_ID,
   type APIConnection,
   type Chat,
@@ -66,12 +68,17 @@ import {
   type MariInstructionsResponse,
   type MariInstructionMutationResponse,
   type MariWorkspaceStatus,
+  type ProfessorMariCustomPromptSettings,
   type MariWorkspacePendingApproval,
   type MariSensitiveFileApproval,
   type MariWorkspaceTraceItem,
   type Message,
 } from "@marinara-engine/shared";
 import { useConnections } from "../../hooks/use-connections";
+import {
+  useProfessorMariCustomPromptSettings,
+  useUpdateProfessorMariCustomPromptSettings,
+} from "../../hooks/use-professor-mari-custom-prompt";
 import { useTrackAchievement } from "../../hooks/use-achievements";
 import { chatKeys } from "../../hooks/use-chats";
 import { homeFeedKeys } from "../../hooks/use-home-feed";
@@ -3049,6 +3056,160 @@ function ProfessorMariMemoriesMenu({
   );
 }
 
+function ProfessorMariCustomPromptMenu({ onClose, className }: { onClose: () => void; className?: string }) {
+  const { t: localizeUi } = useUiTranslation();
+  const settingsQuery = useProfessorMariCustomPromptSettings();
+  const updateSettings = useUpdateProfessorMariCustomPromptSettings();
+  const [draft, setDraft] = useState<ProfessorMariCustomPromptSettings>(
+    () => ({ ...DEFAULT_PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS }),
+  );
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    if (!settingsQuery.data || hydratedRef.current) return;
+    setDraft({ ...settingsQuery.data });
+    hydratedRef.current = true;
+  }, [settingsQuery.data]);
+
+  const handleSave = async () => {
+    if (draft.content.length > PROFESSOR_MARI_CUSTOM_PROMPT_MAX_LENGTH) return;
+    try {
+      await updateSettings.mutateAsync(draft);
+      toast.success(localizeUi("ui.chat.professormaricustompromptmenu.saveSuccess"));
+    } catch {
+      toast.error(localizeUi("ui.chat.professormaricustompromptmenu.saveError"));
+    }
+  };
+
+  const loading = settingsQuery.isLoading && !settingsQuery.data;
+  const saving = updateSettings.isPending;
+  const contentTooLong = draft.content.length > PROFESSOR_MARI_CUSTOM_PROMPT_MAX_LENGTH;
+
+  return (
+    <section
+      className={cn(
+        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70",
+        className,
+      )}
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <Sparkles size="0.9rem" className="shrink-0 text-[var(--marinara-chat-chrome-button-text-active)]" />
+            <span className="truncate text-xs font-semibold text-[var(--foreground)]">
+              {localizeUi("ui.chat.professormaricustompromptmenu.title")}
+            </span>
+          </div>
+          <div className="mt-0.5 text-[0.6875rem] leading-snug text-[var(--muted-foreground)]">
+            {localizeUi("ui.chat.professormaricustompromptmenu.description")}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          aria-label={localizeUi("ui.chat.professormaricustompromptmenu.close")}
+          title={localizeUi("ui.chat.professormaricustompromptmenu.close")}
+        >
+          <X size="0.95rem" />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {loading ? (
+          <div className="space-y-2">
+            <div className="h-10 animate-pulse rounded-lg bg-[var(--muted)]/30" />
+            <div className="h-32 animate-pulse rounded-lg bg-[var(--muted)]/20" />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--card)]/70 px-2.5 py-2">
+              <div className="min-w-0">
+                <div className="text-[0.6875rem] font-semibold text-[var(--foreground)]">
+                  {localizeUi("ui.chat.professormaricustompromptmenu.enabled")}
+                </div>
+                <div className="mt-0.5 text-[0.6rem] leading-snug text-[var(--muted-foreground)]">
+                  {localizeUi("ui.chat.professormaricustompromptmenu.enabledHint")}
+                </div>
+              </div>
+              <SettingsSwitch
+                ariaLabel={localizeUi("ui.chat.professormaricustompromptmenu.enabled")}
+                checked={draft.enabled}
+                onChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+                disabled={saving}
+                className="shrink-0 p-0 hover:bg-transparent"
+              />
+            </div>
+
+            <label className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+              {localizeUi("ui.chat.professormaricustompromptmenu.role")}
+              <select
+                value={draft.role}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    role: event.target.value as ProfessorMariCustomPromptSettings["role"],
+                  }))
+                }
+                disabled={saving}
+                className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/55 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <option value="system">{localizeUi("ui.chat.professormaricustompromptmenu.system")}</option>
+                <option value="user">{localizeUi("ui.chat.professormaricustompromptmenu.user")}</option>
+                <option value="assistant">{localizeUi("ui.chat.professormaricustompromptmenu.assistant")}</option>
+              </select>
+            </label>
+
+            <label className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+              {localizeUi("ui.chat.professormaricustompromptmenu.content")}
+              <textarea
+                value={draft.content}
+                onChange={(event) => setDraft((current) => ({ ...current, content: event.target.value }))}
+                disabled={saving}
+                maxLength={PROFESSOR_MARI_CUSTOM_PROMPT_MAX_LENGTH}
+                rows={12}
+                className="mt-1 min-h-48 w-full resize-y rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-2 font-mono text-[0.6875rem] leading-relaxed text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/55 disabled:cursor-not-allowed disabled:opacity-70"
+                placeholder={localizeUi("ui.chat.professormaricustompromptmenu.placeholder")}
+              />
+              <span className={cn("mt-1 block text-right text-[0.6rem]", contentTooLong ? "text-red-300" : "text-[var(--muted-foreground)]")}>
+                {localizeUi("ui.chat.professormaricustompromptmenu.characterCount", {
+                  count: draft.content.length,
+                  maximum: PROFESSOR_MARI_CUSTOM_PROMPT_MAX_LENGTH,
+                })}
+              </span>
+            </label>
+
+            {settingsQuery.isError && (
+              <div className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2.5 py-1.5 text-[0.65rem] text-amber-200">
+                {localizeUi("ui.chat.professormaricustompromptmenu.loadError")}
+              </div>
+            )}
+            {updateSettings.isError && (
+              <div className="rounded-md border border-red-400/30 bg-red-400/10 px-2.5 py-1.5 text-[0.65rem] text-red-200">
+                {localizeUi("ui.chat.professormaricustompromptmenu.saveError")}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <span className="min-w-0 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                {localizeUi("ui.chat.professormaricustompromptmenu.emptyHint")}
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={saving || contentTooLong}
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-[var(--primary)] px-2.5 text-[0.6875rem] font-semibold text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {saving ? <Loader2 size="0.75rem" className="animate-spin" /> : <Save size="0.75rem" />}
+                {localizeUi("ui.noodle.noodlehome.save")}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 type HomeProfessorMariChatProps = {
   pageActive?: boolean;
   attachedFooter?: boolean;
@@ -3121,6 +3282,7 @@ export function HomeProfessorMariChat({
   const [memoriesSaving, setMemoriesSaving] = useState(false);
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
   const [memoryDraft, setMemoryDraft] = useState<MemoryDraftState>({ name: "", description: "", content: "" });
+  const [customPromptMenuOpen, setCustomPromptMenuOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadedMessagesChatId, setLoadedMessagesChatId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -3746,6 +3908,7 @@ export function HomeProfessorMariChat({
     setConnectionMenuOpen(false);
     setSkillsMenuOpen(false);
     setMemoriesMenuOpen(false);
+    setCustomPromptMenuOpen(false);
     setChatHistoryOpen(false);
     setMobileFocusMode(false);
     setChatWindowOpen(false);
@@ -3759,6 +3922,7 @@ export function HomeProfessorMariChat({
     }
     setSkillsMenuOpen(false);
     setMemoriesMenuOpen(false);
+    setCustomPromptMenuOpen(false);
     setChatHistoryOpen(false);
     setConnectionMenuOpen(false);
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -3775,6 +3939,7 @@ export function HomeProfessorMariChat({
       setConnectionMenuOpen(false);
       setChatHistoryOpen(false);
       setMemoriesMenuOpen(false);
+      setCustomPromptMenuOpen(false);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     }
     setSkillsMenuOpen(next);
@@ -3786,6 +3951,7 @@ export function HomeProfessorMariChat({
       setConnectionMenuOpen(false);
       setChatHistoryOpen(false);
       setSkillsMenuOpen(false);
+      setCustomPromptMenuOpen(false);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     }
     setMemoriesMenuOpen(next);
@@ -3801,10 +3967,23 @@ export function HomeProfessorMariChat({
       setConnectionMenuOpen(false);
       setSkillsMenuOpen(false);
       setMemoriesMenuOpen(false);
+      setCustomPromptMenuOpen(false);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     }
     setChatHistoryOpen(next);
   }, [chatHistoryOpen, isBusy, localizeUi]);
+
+  const toggleCustomPromptMenu = useCallback(() => {
+    const next = !customPromptMenuOpen;
+    if (next) {
+      setConnectionMenuOpen(false);
+      setChatHistoryOpen(false);
+      setSkillsMenuOpen(false);
+      setMemoriesMenuOpen(false);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    }
+    setCustomPromptMenuOpen(next);
+  }, [customPromptMenuOpen]);
 
   useEffect(() => {
     window.addEventListener("marinara:home-professor-mari-close", closeChatWindow);
@@ -5573,6 +5752,20 @@ export function HomeProfessorMariChat({
                         )}
                       </section>
                     </motion.div>
+                  ) : customPromptMenuOpen ? (
+                    <motion.div
+                      key="professor-mari-custom-prompt"
+                      initial={{ opacity: 0, y: -14, rotateX: -10, transformOrigin: "top center" }}
+                      animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "top center" }}
+                      exit={{ opacity: 0, y: 12, rotateX: 8, transformOrigin: "bottom center" }}
+                      transition={PROFESSOR_MARI_PANE_TRANSITION}
+                      className="h-full min-w-0"
+                    >
+                      <ProfessorMariCustomPromptMenu
+                        onClose={() => setCustomPromptMenuOpen(false)}
+                        className="h-full rounded-none border-0 bg-[var(--background)] sm:rounded-xl sm:border sm:bg-[var(--background)] sm:shadow-2xl"
+                      />
+                    </motion.div>
                   ) : memoriesMenuOpen ? (
                     <motion.div
                       key="professor-mari-memories"
@@ -5718,6 +5911,21 @@ export function HomeProfessorMariChat({
                                   {activeMemoryCount}
                                 </span>
                               )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={toggleCustomPromptMenu}
+                              className={cn(
+                                "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
+                                "mari-chrome-accent-text-muted mari-accent-animated hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
+                              )}
+                              title={localizeUi("ui.chat.homeprofessormarichat.openCustomPrompt")}
+                              aria-expanded={customPromptMenuOpen}
+                            >
+                              <Sparkles size="0.75rem" />
+                              <span className="max-[360px]:hidden">
+                                {localizeUi("ui.chat.homeprofessormarichat.customPrompt")}
+                              </span>
                             </button>
                             {(workspaceActive || hasActiveGeneration) && (
                               <button

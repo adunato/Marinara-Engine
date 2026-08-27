@@ -96,6 +96,7 @@
     "regression:regeneration-context": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/regeneration-context.regression.ts",
     "regression:extensions-security": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/extension-security.regression.ts",
     "regression:professor-mari-shell-sandbox": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/professor-mari-shell-sandbox.regression.ts",
+    "regression:professor-mari-custom-prompt": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/professor-mari-custom-prompt.regression.ts",
     "regression:professor-mari-wiki": "pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/professor-mari-wiki.regression.ts",
     "regression:roleplay": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/roleplay-streaming.regression.ts && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/illustrator-visual-retry.regression.ts && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/spatial-only-message-visibility.regression.ts",
     "regression:agent-runtime": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/agent-runtime.regression.ts",

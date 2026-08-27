@@ -79,6 +79,7 @@ import type {
 } from "@marinara-engine/shared";
 import { getMariDbService } from "../mari-db/mari-db.service.js";
 import { getProfessorMariWorkspaceSkillsService } from "./workspace-skills.service.js";
+import { readProfessorMariCustomPromptSettings } from "./custom-prompt-settings.js";
 import { sidecarModelService } from "../sidecar/sidecar-model.service.js";
 import { getWorkspaceShellSandboxStatus, spawnWorkspaceSandboxedShell } from "./workspace-shell-sandbox.js";
 import { personalServerExtensionRuntime } from "../extensions/personal-server-extension-runtime.js";
@@ -618,6 +619,16 @@ Raw DB row contracts:
 Workspace files:
 For user-facing questions about Marinara features, configuration, installation, or troubleshooting, use \`docs_search\` and then \`docs_read\` before broad workspace searches. Cite the documentation path and heading in the answer. Use built-in or CLI help when exact command syntax matters. Inspect source only when canonical documentation is missing or ambiguous, or when the user explicitly asks about internals; if source inspection was required, say that the answer used an implementation-level source.
 Use other workspace files to understand Marinara internals, answer source-code questions, or find content that is not available through documentation, CLI, or app-data commands. Do not inspect source files instead of live app data when the user asks about saved characters, chats, agents, tools, presets, lorebooks, or other app content.`;
+
+export function insertProfessorMariCustomPrompt(
+  messages: ChatMessage[],
+  settings: import("@marinara-engine/shared").ProfessorMariCustomPromptSettings,
+): ChatMessage[] {
+  if (!settings.enabled || !settings.content.trim()) return messages;
+  const first = messages[0];
+  if (!first) return [{ role: settings.role, content: settings.content, contextKind: "prompt" }];
+  return [first, { role: settings.role, content: settings.content, contextKind: "prompt" }, ...messages.slice(1)];
+}
 
 function workspaceCommandProtocolPrompt() {
   const toolDocs = WORKSPACE_TOOL_DEFINITIONS.map(
@@ -2261,6 +2272,7 @@ export class ProfessorMariWorkspaceService {
 
   private async buildPromptMessages(chatId: string, connection: WorkspaceConnection): Promise<ChatMessage[]> {
     const chatStorage = createChatsStorage(this.app.db);
+    const customPrompt = await readProfessorMariCustomPromptSettings(this.app.db);
     const history = (await chatStorage.listMessages(chatId)).slice(-MAX_HISTORY_MESSAGES);
     const continuityPrompt = buildRecentWorkspaceContinuityPrompt(history);
     const skillsPrompt = await this.buildSkillsPrompt();
@@ -2282,11 +2294,16 @@ export class ProfessorMariWorkspaceService {
       `embeddingModelConfigured: ${embeddingModelConfigured}`,
       `</workspace_context>`,
     ].join("\n");
-    const messages: ChatMessage[] = [
-      { role: "system", content: MARI_SYSTEM_PROMPT, contextKind: "prompt" },
+    const messages = insertProfessorMariCustomPrompt(
+      [
+        { role: "system", content: MARI_SYSTEM_PROMPT, contextKind: "prompt" },
+      ],
+      customPrompt,
+    );
+    messages.push(
       { role: "system", content: workspaceCommandProtocolPrompt(), contextKind: "prompt" },
       { role: "system", content: workspaceInfo, contextKind: "prompt" },
-    ];
+    );
     if (skillsPrompt) messages.push({ role: "system", content: skillsPrompt, contextKind: "prompt" });
     if (instructionsPrompt) messages.push({ role: "system", content: instructionsPrompt, contextKind: "prompt" });
 

@@ -109,6 +109,12 @@ Click the **Skills** button in her chat header to open the **Professor Mari Skil
 
 When you have no Skills yet, the panel reads **No custom skills yet**.
 
+## Custom Prompt
+
+The **Custom Prompt** button beside **Memories** opens a global prompt for Professor Mari. Enable it, choose the message role (**System**, **User**, or **Assistant**), enter your instruction, and click **Save**. The saved prompt is injected once, immediately after Mari's built-in prompt, on every new Professor Mari turn and across all of her chats. Disabling it keeps the text and role saved for later.
+
+The built-in Professor Mari prompt is not edited by this setting. Providers may normalize message roles or ordering to match their own APIs, so the logical role and placement in Marinara do not promise an identical wire-level payload. Long prompts use context and tokens on every turn.
+
 ## Saved memories
 
 Professor Mari can remember your standing preferences so you do not have to repeat them every conversation: how you like your lorebooks or character cards formatted, your naming conventions, or how you want her to behave.
