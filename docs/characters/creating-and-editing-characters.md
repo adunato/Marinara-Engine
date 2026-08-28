@@ -160,6 +160,16 @@ If the underlying text changed since the proposal was made, the app warns you be
 
 **Professor Mari** is a built-in assistant character that ships with Marinara. You cannot delete her. If you try, the app blocks it and tells you she is a built-in character. To learn what she does, see [Professor Mari, Your In-App Assistant](../home/professor-mari.md).
 
+### Layered personality model
+
+When the **character-personality-model** Professor Mari skill is enabled, Mari can choose an Enneagram core type and an attachment style while creating a character. Marinara then generates the canonical **Personality** text and the matching 12-state **Emotional States** profile automatically.
+
+Mari does not choose the active Pearson state during character creation. That later belongs to the Expression Engine's state classification. Until a classified state is persisted, the generated profile uses **Wary / Grounded** as its initial fallback.
+
+Mari can also apply the model to an existing character. Reapplying it replaces the full **Personality** field and the complete Emotional States profile while leaving unrelated card fields alone. The change uses Professor Mari's normal **Keep/Restore** review, so you can revert it.
+
+Manual Personality writing and normal Emotional States editing remain available when you do not want to use the layered model.
+
 ## Related guides
 
 - [User Personas: Creating and Editing](personas.md)
