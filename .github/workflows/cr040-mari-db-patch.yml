@@ -1,0 +1,74 @@
+name: CR040 temporary MariDB patch
+
+on:
+  push:
+    branches:
+      - "change/CR040-professor-mari-personality-model"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[cr040-patch]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply asserted CR040 MariDB edits
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/server/src/services/mari-db/mari-db.service.ts")
+          text = path.read_text(encoding="utf-8")
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one anchor, found {count}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '''  normalizeLorebookCategory,\n  normalizePersonalExtensionCapabilities,\n  type MariDbCommandResult,''',
+              '''  normalizeLorebookCategory,\n  normalizePersonalExtensionCapabilities,\n  compileCharacterPersonalityModel,\n  type CharacterPersonalityModelSelection,\n  type MariDbCommandResult,''',
+              "shared compiler import",
+          )
+
+          replace_once(
+              '''  if (Object.keys(extensions).length > 0) out.extensions = extensions;\n  return out;\n}\n\nconst SELECTIVE_LOGIC_VALUES''',
+              '''  if (Object.keys(extensions).length > 0) out.extensions = extensions;\n  return out;\n}\n\nfunction compileCharacterPersonalitySelection(value: unknown) {\n  if (!isRecord(value)) {\n    throw new Error("personalityModel must be an object with enneagramType and attachmentStyle.");\n  }\n  const rawModelId = value.modelId;\n  if (rawModelId !== undefined && (typeof rawModelId !== "string" || !rawModelId.trim())) {\n    throw new Error("personalityModel.modelId must be a non-empty string when provided.");\n  }\n  const selection: CharacterPersonalityModelSelection = {\n    enneagramType: requiredString(\n      value,\n      ["enneagramType"],\n      "personalityModel.enneagramType",\n    ) as CharacterPersonalityModelSelection["enneagramType"],\n    attachmentStyle: requiredString(\n      value,\n      ["attachmentStyle"],\n      "personalityModel.attachmentStyle",\n    ) as CharacterPersonalityModelSelection["attachmentStyle"],\n  };\n  if (typeof rawModelId === "string") {\n    selection.modelId = rawModelId.trim() as CharacterPersonalityModelSelection["modelId"];\n  }\n  return compileCharacterPersonalityModel(selection);\n}\n\nfunction applyCompiledCharacterPersonalityModel(\n  data: Record<string, unknown>,\n  compiled: ReturnType<typeof compileCharacterPersonalityModel>,\n): Record<string, unknown> {\n  const extensions = isRecord(data.extensions) ? { ...(data.extensions as Row) } : {};\n  extensions.emotionProfile = compiled.emotionProfile;\n  return {\n    ...data,\n    personality: compiled.personality,\n    extensions,\n  };\n}\n\nconst SELECTIVE_LOGIC_VALUES''',
+              "personality model helper insertion",
+          )
+
+          replace_once(
+              '''        const comment = firstString(data, ["comment"]) ?? "";\n        delete data.comment;\n        const timestamp = now();\n        const id = firstString(args, ["id", "characterId"]) ?? newId();\n        const row: Row = {\n          id,\n          data: buildMinimalCharacterData(name, data, new Map()),\n          comment,''',
+              '''        const comment = firstString(data, ["comment"]) ?? "";\n        delete data.comment;\n        const compiledPersonality =\n          args.personalityModel === undefined ? null : compileCharacterPersonalitySelection(args.personalityModel);\n        let characterData = buildMinimalCharacterData(name, data, new Map());\n        if (compiledPersonality) {\n          characterData = applyCompiledCharacterPersonalityModel(characterData, compiledPersonality);\n        }\n        const timestamp = now();\n        const id = firstString(args, ["id", "characterId"]) ?? newId();\n        const row: Row = {\n          id,\n          data: characterData,\n          comment,''',
+              "character.create integration",
+          )
+
+          replace_once(
+              '''      case "movetofolder": {\n        return this.withCharacterFolderMutationLock(async () => {''',
+              '''      case "applypersonalitymodel": {\n        const id = requiredString(args, ["id", "characterId"], "character id");\n        const existing = await this.getRawById(getMeta("characters"), id);\n        if (!existing) throw new Error(`Character ${id} not found`);\n        const existingDataRaw = tryParseJsonColumn(existing, "data");\n        if (!isRecord(existingDataRaw)) throw new Error(`Character ${id} has invalid CharacterData`);\n        const compiledPersonality = compileCharacterPersonalitySelection(args.personalityModel);\n        const row: Row = {\n          id,\n          data: applyCompiledCharacterPersonalityModel(existingDataRaw, compiledPersonality),\n          comment: existing.comment,\n          avatarPath: existing.avatarPath ?? null,\n          spriteFolderPath: existing.spriteFolderPath ?? null,\n          createdAt: existing.createdAt,\n          updatedAt: now(),\n        };\n        return this.executeMutation(\n          {\n            kind: "replace",\n            table: "characters",\n            id,\n            row,\n            apply: firstBoolean(args, ["apply"]) === true,\n            cascade: false,\n            reason: firstString(args, ["reason"]) ?? null,\n            cwd: context.cwd,\n          },\n          context.command,\n          context.sessionId,\n        );\n      }\n      case "movetofolder": {\n        return this.withCharacterFolderMutationLock(async () => {''',
+              "character.applyPersonalityModel integration",
+          )
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          git diff --check
+          git diff --exit-code --quiet && { echo "Expected MariDB patch produced no diff"; exit 1; }
+
+      - name: Commit MariDB integration
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/server/src/services/mari-db/mari-db.service.ts
+          git commit -m "feat: integrate CR040 personality model with MariDB [cr040-patch]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
