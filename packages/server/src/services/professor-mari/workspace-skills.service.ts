@@ -1,4 +1,4 @@
-import { rm, mkdir, readFile, writeFile } from "node:fs/promises";
+import { rm, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import type {
@@ -9,6 +9,7 @@ import type {
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { now } from "../../utils/id-generator.js";
 import { logger } from "../../lib/logger.js";
+import { PROFESSOR_MARI_BUNDLED_SKILLS } from "./bundled-skills.js";
 
 type SkillRecord = {
   id: string;
@@ -34,6 +35,8 @@ type SkillUpdate = {
   enabled?: boolean;
 };
 
+type BundledSeedState = Record<string, number>;
+
 const MAX_SKILL_CONTENT_LENGTH = 200_000;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
 const SAFE_SKILL_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -44,6 +47,10 @@ function rootDir() {
 
 function indexPath() {
   return join(rootDir(), "skills.json");
+}
+
+function bundledSeedPath() {
+  return join(rootDir(), "bundled-seeds.json");
 }
 
 function skillDir(id: string) {
@@ -137,9 +144,7 @@ function normalizeDescription(value: string | null | undefined, content: string)
 
 function buildSkillContent(input: { name: string; description: string; content: string }) {
   const body = skillInstructions(input.content);
-  const fallbackBody = `# ${input.name}
-
-Add focused instructions for when Professor Mari should use this skill.`;
+  const fallbackBody = `# ${input.name}\n\nAdd focused instructions for when Professor Mari should use this skill.`;
   return [
     "---",
     `name: ${JSON.stringify(input.name)}`,
@@ -165,6 +170,8 @@ function summarizeRecord(record: SkillRecord, content: string): MariWorkspaceSki
 }
 
 export class ProfessorMariWorkspaceSkillsService {
+  private storageReady: Promise<void> | null = null;
+
   async list(): Promise<MariWorkspaceSkillsResponse> {
     await this.ensureStorage();
     const records = await this.readRecords();
@@ -251,7 +258,82 @@ export class ProfessorMariWorkspaceSkillsService {
   }
 
   private async ensureStorage() {
+    if (!this.storageReady) {
+      this.storageReady = this.ensureStorageOnce().catch((err) => {
+        this.storageReady = null;
+        throw err;
+      });
+    }
+    await this.storageReady;
+  }
+
+  private async ensureStorageOnce() {
     await mkdir(rootDir(), { recursive: true });
+    await this.seedBundledSkills();
+  }
+
+  private async seedBundledSkills() {
+    const seedState = await this.readBundledSeedState();
+    let records = await this.readRecords();
+    let recordsChanged = false;
+    let seedStateChanged = false;
+
+    for (const bundled of PROFESSOR_MARI_BUNDLED_SKILLS) {
+      if ((seedState[bundled.key] ?? 0) >= bundled.version) continue;
+
+      const existing = records.find((record) => record.id === bundled.id);
+      if (!existing) {
+        this.assertContent(bundled.content);
+        const timestamp = now();
+        const record: SkillRecord = {
+          id: assertSafeSkillId(bundled.id),
+          name: normalizeSkillName(bundled.name, bundled.id),
+          description: normalizeDescription(bundled.description, bundled.content),
+          enabled: bundled.enabled,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const content = buildSkillContent({
+          name: record.name,
+          description: record.description,
+          content: bundled.content,
+        });
+        await mkdir(skillDir(record.id), { recursive: true });
+        await writeFile(skillFilePath(record.id), content, "utf8");
+        records = [...records, record];
+        recordsChanged = true;
+      }
+
+      seedState[bundled.key] = bundled.version;
+      seedStateChanged = true;
+    }
+
+    if (recordsChanged) await this.writeRecords(records);
+    if (seedStateChanged) await this.writeBundledSeedState(seedState);
+  }
+
+  private async readBundledSeedState(): Promise<BundledSeedState> {
+    if (!existsSync(bundledSeedPath())) return {};
+    try {
+      const parsed = JSON.parse(await readFile(bundledSeedPath(), "utf8")) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      const state: BundledSeedState = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (Number.isSafeInteger(value) && Number(value) >= 0) state[key] = Number(value);
+      }
+      return state;
+    } catch (err) {
+      logger.warn(err, "[Professor Mari] failed to read bundled skill seed state");
+      return {};
+    }
+  }
+
+  private async writeBundledSeedState(state: BundledSeedState) {
+    await mkdir(rootDir(), { recursive: true });
+    const target = bundledSeedPath();
+    const temporary = `${target}.tmp-${process.pid}-${Date.now()}`;
+    await writeFile(temporary, JSON.stringify(state, null, 2), "utf8");
+    await rename(temporary, target);
   }
 
   private async readRecords(): Promise<SkillRecord[]> {
