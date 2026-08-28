@@ -25,6 +25,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { api } from "../../lib/api-client";
+import { useUserProfileStore } from "../../stores/user-profile.store";
 import { useTranslation as useUiTranslation } from "react-i18next";
 
 interface Props {
@@ -160,6 +161,7 @@ export function STBulkImportModal({ open, onClose }: Props) {
   const [error, setError] = useState("");
   const [characterTagImportMode, setCharacterTagImportMode] = useState<TagImportMode>("all");
   const [regexScriptScope, setRegexScriptScope] = useState<"character" | "global">("character");
+  const activeProfileId = useUserProfileStore((state) => state.activeProfileId);
   const qc = useQueryClient();
 
   const reset = useCallback(() => {
@@ -297,6 +299,11 @@ export function STBulkImportModal({ open, onClose }: Props) {
 
   const handleImport = useCallback(async () => {
     if (!folderPath.trim()) return;
+    const importsHistory = selection.chats.length > 0 || selection.groupChats.length > 0;
+    if (importsHistory && !activeProfileId) {
+      setError("A User Profile must be active before importing chat history.");
+      return;
+    }
     setPhase("importing");
     setProgress(null);
     setError("");
@@ -307,7 +314,7 @@ export function STBulkImportModal({ open, onClose }: Props) {
         body: JSON.stringify({
           folderPath: folderPath.trim(),
           folderToken,
-          options: { ...selection, characterTagImportMode, regexScriptScope },
+          options: { ...selection, characterTagImportMode, regexScriptScope, profileId: activeProfileId },
         }),
       });
 
@@ -363,7 +370,7 @@ export function STBulkImportModal({ open, onClose }: Props) {
       setError(err instanceof Error ? `Import failed: ${err.message}` : "Import failed — server error");
       setPhase("preview");
     }
-  }, [characterTagImportMode, regexScriptScope, folderPath, folderToken, qc, selection]);
+  }, [activeProfileId, characterTagImportMode, regexScriptScope, folderPath, folderToken, qc, selection]);
 
   const hasAnySelected = Object.values(selection).some((ids) => ids.length > 0);
   const builtinPresetCount = scanResult?.presets.filter((item) => item.isBuiltin).length ?? 0;

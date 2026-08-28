@@ -87,10 +87,15 @@ process.env.FILE_STORAGE_DIR = storageDir;
 try {
   const db = await createFileNativeDB();
   const storage = createChatsStorage(db);
-  const createChat = (name: string, mode: "conversation" | "roleplay" | "game") =>
+  const createChat = (
+    name: string,
+    mode: "conversation" | "roleplay" | "game",
+    profileId = "profile-a",
+  ) =>
     storage.create({
       name,
       mode,
+      profileId,
       characterIds: [],
       groupId: null,
       personaId: null,
@@ -102,7 +107,8 @@ try {
   const conversation = await createChat("Conversation Source", "conversation");
   const roleplay = await createChat("Roleplay Source", "roleplay");
   const game = await createChat("Game Source", "game");
-  assert.ok(target && conversation && roleplay && game);
+  const otherProfile = await createChat("Other Profile Source", "conversation", "profile-b");
+  assert.ok(target && conversation && roleplay && game && otherProfile);
 
   await storage.replaceContextSources(target.id, [conversation.id, game.id]);
   assert.deepEqual(
@@ -114,6 +120,17 @@ try {
   assert.deepEqual(
     (await storage.listContextSources(target.id)).map((source) => source.sourceChatId),
     [roleplay.id],
+  );
+
+  await assert.rejects(
+    () => storage.replaceContextSources(target.id, [otherProfile.id]),
+    /across User Profiles/u,
+    "Cross-profile Source Chats must fail closed at the storage boundary",
+  );
+  assert.deepEqual(
+    (await storage.listContextSources(target.id)).map((source) => source.sourceChatId),
+    [roleplay.id],
+    "Rejected cross-profile updates must preserve the previous Source Chats",
   );
 
   await storage.remove(roleplay.id);

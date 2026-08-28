@@ -474,6 +474,21 @@ export function createChatsStorage(db: DB) {
     return sharedSchedules;
   }
 
+  async function assertSameProfile(chatIds: string[], relation: string): Promise<string> {
+    const uniqueIds = Array.from(new Set(chatIds.filter(Boolean)));
+    if (uniqueIds.length === 0) throw new Error(`Cannot ${relation}: no chats supplied`);
+    const rows = await db
+      .select({ id: chats.id, profileId: chats.profileId })
+      .from(chats)
+      .where(inArray(chats.id, uniqueIds));
+    if (rows.length !== uniqueIds.length) throw new Error(`Cannot ${relation}: chat not found`);
+    const profileId = rows[0]?.profileId;
+    if (!profileId || rows.some((row) => row.profileId !== profileId)) {
+      throw new Error(`Cannot ${relation} across User Profiles`);
+    }
+    return profileId;
+  }
+
   async function cleanupChatGallery(chatId: string): Promise<void> {
     const chatGalleryFiles = await db
       .select({ filePath: chatImages.filePath })
@@ -1726,6 +1741,7 @@ export function createChatsStorage(db: DB) {
 
     /** Bidirectionally link two chats. */
     async connectChats(chatIdA: string, chatIdB: string) {
+      await assertSameProfile([chatIdA, chatIdB], "connect chats");
       const timestamp = now();
       await db.update(chats).set({ connectedChatId: chatIdB, updatedAt: timestamp }).where(eq(chats.id, chatIdA));
       await db.update(chats).set({ connectedChatId: chatIdA, updatedAt: timestamp }).where(eq(chats.id, chatIdB));
@@ -1754,6 +1770,9 @@ export function createChatsStorage(db: DB) {
     },
 
     async replaceContextSources(targetChatId: string, sourceChatIds: string[]) {
+      if (sourceChatIds.length > 0) {
+        await assertSameProfile([targetChatId, ...sourceChatIds], "link context sources");
+      }
       await db.transaction(async (tx) => {
         await tx.delete(chatContextSources).where(eq(chatContextSources.targetChatId, targetChatId));
         if (sourceChatIds.length === 0) return;
@@ -1774,6 +1793,7 @@ export function createChatsStorage(db: DB) {
 
     /** Create a queued influence from a conversation → its connected roleplay. */
     async createInfluence(sourceChatId: string, targetChatId: string, content: string, anchorMessageId?: string) {
+      await assertSameProfile([sourceChatId, targetChatId], "create influence");
       const id = newId();
       await db.insert(oocInfluences).values({
         id,
@@ -1811,6 +1831,7 @@ export function createChatsStorage(db: DB) {
 
     /** Create a durable note from a conversation → its connected roleplay, then prune oldest past the char budget. */
     async createNote(sourceChatId: string, targetChatId: string, content: string, anchorMessageId?: string) {
+      await assertSameProfile([sourceChatId, targetChatId], "create conversation note");
       const id = newId();
       await db.insert(conversationNotes).values({
         id,

@@ -25,8 +25,10 @@ try {
   // Never-written table reads generation 0.
   assert.equal(db._fileStore.getTableWriteGeneration("chats"), 0, "fresh table starts at generation 0");
 
-  // Every write bumps the counter monotonically.
-  await db.insert(chats).values({ id: "gen-chat-1", name: "Gen", mode: "conversation" });
+  // Every write bumps the counter monotonically. Chat fixtures now carry the
+  // explicit ownership required by CR038 even though this test only observes
+  // the table generation counter.
+  await db.insert(chats).values({ id: "gen-chat-1", name: "Gen", mode: "conversation", profileId: "default" });
   const afterInsert = db._fileStore.getTableWriteGeneration("chats");
   assert.ok(afterInsert > 0, "insert bumps the generation");
 

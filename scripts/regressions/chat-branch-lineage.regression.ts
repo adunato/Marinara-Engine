@@ -8,6 +8,7 @@ process.env.DATA_DIR = dataDir;
 process.env.NODE_ENV = "test";
 process.env.MARINARA_LITE = "true";
 
+const PROFILE_ID = "default";
 let app: { close(): Promise<void>; inject(options: Record<string, unknown>): Promise<any> } | null = null;
 
 try {
@@ -24,10 +25,12 @@ try {
     const response = await app!.inject({
       method: "POST",
       url: "/api/chats",
-      payload: { name, mode, characterIds: [] },
+      payload: { name, mode, profileId: PROFILE_ID, characterIds: [] },
     });
     assert.equal(response.statusCode, 200);
-    return response.json();
+    const chat = response.json();
+    assert.equal(chat.profileId, PROFILE_ID);
+    return chat;
   };
   const addMessage = async (chatId: string, content: string) => {
     const response = await app!.inject({
@@ -51,6 +54,7 @@ try {
   });
   assert.equal(branchResponse.statusCode, 200);
   const branch = branchResponse.json();
+  assert.equal(branch.profileId, PROFILE_ID, "branches inherit the source User Profile");
   assert.equal(branch.metadata.branchName, "New Branch");
   assert.equal(branch.metadata.branchParentChatId, root.id);
   assert.equal(branch.metadata.branchParentMessageId, middle.id);
@@ -69,6 +73,7 @@ try {
   const childResponse = await app.inject({ method: "POST", url: `/api/chats/${branch.id}/branch`, payload: {} });
   assert.equal(childResponse.statusCode, 200);
   const child = childResponse.json();
+  assert.equal(child.profileId, PROFILE_ID, "nested branches inherit User Profile ownership");
   assert.equal(child.metadata.branchParentChatId, branch.id);
   assert.equal(child.metadata.branchParentMessageId, branchMessages.at(-1).id);
 
@@ -80,6 +85,7 @@ try {
   });
   assert.equal(emptyBranchResponse.statusCode, 200);
   const emptyBranch = emptyBranchResponse.json();
+  assert.equal(emptyBranch.profileId, PROFILE_ID);
   assert.equal(emptyBranch.metadata.branchParentChatId, empty.id);
   assert.equal(emptyBranch.metadata.branchParentMessageId, null);
   assert.equal(emptyBranch.metadata.branchMessageId, null);
@@ -104,6 +110,7 @@ try {
     payload: {},
   });
   assert.equal(conversationBranchResponse.statusCode, 200);
+  assert.equal(conversationBranchResponse.json().profileId, PROFILE_ID);
   const groupedConversation = (await app.inject({ method: "GET", url: `/api/chats/${conversation.id}` })).json();
   assert.equal(typeof groupedConversation.groupId, "string");
 
@@ -130,6 +137,7 @@ try {
   assert.equal(sceneCreateResponse.statusCode, 200);
   const sceneChatId = sceneCreateResponse.json().chatId;
   const sceneChat = (await app.inject({ method: "GET", url: `/api/chats/${sceneChatId}` })).json();
+  assert.equal(sceneChat.profileId, PROFILE_ID, "scene conversion inherits origin User Profile ownership");
   assert.equal(sceneChat.mode, "roleplay");
   assert.equal(sceneChat.groupId, null, "A converted scene must not join the conversation branch group");
 
@@ -149,6 +157,7 @@ try {
   const distinctGroupFork = (
     await app.inject({ method: "GET", url: `/api/chats/${distinctGroupForkResponse.json().chatId}` })
   ).json();
+  assert.equal(distinctGroupFork.profileId, PROFILE_ID);
   assert.equal(
     distinctGroupFork.groupId,
     distinctSceneGroupId,
@@ -170,6 +179,7 @@ try {
   const forkedSceneChat = (
     await app.inject({ method: "GET", url: `/api/chats/${sceneForkResponse.json().chatId}` })
   ).json();
+  assert.equal(forkedSceneChat.profileId, PROFILE_ID);
   assert.equal(
     forkedSceneChat.groupId,
     null,

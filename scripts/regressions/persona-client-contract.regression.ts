@@ -82,19 +82,18 @@ function persona(id: string, name: string, isActive: boolean): Persona {
 async function assertAuthoritativePersonaCacheOrdering() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const stale = persona("a", "stale GET", true);
-  const authoritative = persona("a", "authoritative write", true);
+  const authoritative = persona("a", "authoritative write", false);
   const other = persona("b", "other", false);
+  const legacyActive = persona("legacy-active", "legacy active cache", true);
   qc.setQueryData(personaCacheKeys.list, [stale, other, stale]);
   qc.setQueryData(personaCacheKeys.detail(stale.id), stale);
-  qc.setQueryData(personaCacheKeys.active(), stale);
+  qc.setQueryData(personaCacheKeys.active(), legacyActive);
 
   const oldList = deferred<Persona[]>();
   const oldDetail = deferred<Persona>();
-  const oldActive = deferred<Persona | null>();
   const pendingReads = [
     qc.fetchQuery({ queryKey: personaCacheKeys.list, queryFn: () => oldList.promise }).catch(() => undefined),
     qc.fetchQuery({ queryKey: personaCacheKeys.detail(stale.id), queryFn: () => oldDetail.promise }).catch(() => undefined),
-    qc.fetchQuery({ queryKey: personaCacheKeys.active(), queryFn: () => oldActive.promise }).catch(() => undefined),
   ];
   const cancellationGate = deferred<void>();
   const cancelQueries = qc.cancelQueries.bind(qc);
@@ -106,91 +105,53 @@ async function assertAuthoritativePersonaCacheOrdering() {
   const reconciliation = syncCachedPersona(qc, authoritative);
   oldList.resolve([stale, other]);
   oldDetail.resolve(stale);
-  oldActive.resolve(stale);
   await Promise.all(pendingReads);
   cancellationGate.resolve();
   await reconciliation;
 
   assert.deepEqual(qc.getQueryData(personaCacheKeys.list), [authoritative, other]);
   assert.deepEqual(qc.getQueryData(personaCacheKeys.detail(stale.id)), authoritative);
-  assert.deepEqual(qc.getQueryData(personaCacheKeys.active()), authoritative);
+  assert.deepEqual(
+    qc.getQueryData(personaCacheKeys.active()),
+    legacyActive,
+    "global Persona writes must not override User Profile active-persona identity",
+  );
 
   const concurrentC = persona("c", "concurrent C", false);
   const concurrentD = persona("d", "concurrent D", false);
   await Promise.all([syncCachedPersona(qc, concurrentC), syncCachedPersona(qc, concurrentD)]);
   assert.deepEqual((qc.getQueryData(personaCacheKeys.list) as Persona[]).map((row) => row.id).sort(), ["a", "b", "c", "d"]);
+  assert.deepEqual(qc.getQueryData(personaCacheKeys.active()), legacyActive);
   qc.clear();
 }
 
-async function assertUnknownPersonaQueriesSettle() {
+async function assertUnknownPersonaListSettles() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const writtenA = persona("a", "authoritative write", false);
   const listedA = persona("a", "server list after write", false);
-  const activeB = persona("b", "server active", true);
+  const listedB = persona("b", "server list B", true);
+  const legacyActive = persona("legacy-active", "legacy active cache", true);
   const oldList = deferred<Persona[]>();
-  const oldActive = deferred<Persona | null>();
   let listCalls = 0;
-  let activeCalls = 0;
+  qc.setQueryData(personaCacheKeys.active(), legacyActive);
   const listObserver = new QueryObserver(qc, {
     queryKey: personaCacheKeys.list,
-    queryFn: () => (++listCalls === 1 ? oldList.promise : Promise.resolve([listedA, activeB])),
-    retry: false,
-  });
-  const activeObserver = new QueryObserver(qc, {
-    queryKey: personaCacheKeys.active(),
-    queryFn: () => (++activeCalls === 1 ? oldActive.promise : Promise.resolve(activeB)),
+    queryFn: () => (++listCalls === 1 ? oldList.promise : Promise.resolve([listedA, listedB])),
     retry: false,
   });
   const unsubscribeList = listObserver.subscribe(() => undefined);
-  const unsubscribeActive = activeObserver.subscribe(() => undefined);
 
   await syncCachedPersona(qc, writtenA);
   oldList.resolve([persona("a", "stale list", false)]);
-  oldActive.resolve(null);
   await Promise.resolve();
 
   assert.equal(listCalls, 2, "a cancelled first-load complete list must refetch");
-  assert.equal(activeCalls, 2, "a cancelled unknown active query must refetch");
-  assert.deepEqual(qc.getQueryData(personaCacheKeys.list), [listedA, activeB]);
+  assert.deepEqual(qc.getQueryData(personaCacheKeys.list), [listedA, listedB]);
   assert.deepEqual(qc.getQueryData(personaCacheKeys.detail(writtenA.id)), writtenA, "detail remains seeded");
-  assert.deepEqual(qc.getQueryData(personaCacheKeys.active()), activeB);
+  assert.deepEqual(qc.getQueryData(personaCacheKeys.active()), legacyActive);
   assert.equal(qc.getQueryState(personaCacheKeys.list)?.status, "success");
   assert.equal(qc.getQueryState(personaCacheKeys.list)?.fetchStatus, "idle");
-  assert.equal(qc.getQueryState(personaCacheKeys.active())?.status, "success");
-  assert.equal(qc.getQueryState(personaCacheKeys.active())?.fetchStatus, "idle");
   unsubscribeList();
-  unsubscribeActive();
-  qc.clear();
-}
-
-async function assertInactiveCachedPersonaRefetchesActiveIdentity() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const cachedA = persona("a", "cached active", true);
-  const writtenA = persona("a", "authoritative inactive write", false);
-  const activeB = persona("b", "server active", true);
-  qc.setQueryData(personaCacheKeys.list, [cachedA, activeB]);
-  qc.setQueryData(personaCacheKeys.active(), cachedA);
-
-  const observedActiveValues: Array<Persona | null | undefined> = [];
-  const oldActive = deferred<Persona | null>();
-  let activeCalls = 0;
-  const activeObserver = new QueryObserver(qc, {
-    queryKey: personaCacheKeys.active(),
-    queryFn: () => (++activeCalls === 1 ? oldActive.promise : Promise.resolve(activeB)),
-    retry: false,
-  });
-  const unsubscribeObserver = activeObserver.subscribe((result: { data: Persona | null | undefined }) => {
-    observedActiveValues.push(result.data);
-  });
-
-  await syncCachedPersona(qc, writtenA);
-  oldActive.resolve(cachedA);
-  await Promise.resolve();
-  unsubscribeObserver();
-
-  assert.equal(activeCalls, 2, "inactive cached A must refetch the server-owned active identity");
-  assert.deepEqual(qc.getQueryData(personaCacheKeys.active()), activeB);
-  assert.ok(!observedActiveValues.includes(null), "inactive A must never publish a fresh null active state");
   qc.clear();
 }
 
@@ -229,6 +190,14 @@ const botBrowser = source("components/bot-browser/BotBrowserView.tsx");
 const trackerSettings = source("components/panels/settings/TrackerCardColorSettings.tsx");
 const portraitSave = source("features/tracker-panel/hooks/use-persona-portrait-save.ts");
 const hooks = source("hooks/use-characters.ts");
+const personaCache = source("lib/persona-cache.ts");
+const activePersonaScope = balanced(hooks, "export function useActivePersona(", "profile active Persona");
+const personaCacheSyncScope = balanced(personaCache, "export async function syncCachedPersona", "persona cache sync");
+assert.match(activePersonaScope, /useUserProfileStore/u);
+assert.match(activePersonaScope, /activeProfile\?\.activePersonaId/u);
+assert.match(activePersonaScope, /usePersona\(enabled \? personaId : null\)/u);
+assert.doesNotMatch(activePersonaScope, /\/characters\/personas\/active/u);
+assert.doesNotMatch(personaCacheSyncScope, /personaCacheKeys\.active|persona\.isActive/u);
 const saveScope = balanced(editor, "const handleSave = useCallback(", "Persona save", "=> {");
 const conversion = between(characterEditor, "const rpgStats = formData.extensions.rpgStats", "})) as { id?: string };", "character conversion");
 assert.match(conversion, /tags: formData\.tags \?\? \[\]/u);
@@ -262,8 +231,7 @@ assert.match(hooks, /api\.post<Persona>\(`\/characters\/personas\/\$\{id\}\/avat
 assert.match(hooks, /api\.post<Persona>\(`\/characters\/personas\/\$\{personaId\}\/gallery\/\$\{imageId\}\/avatar`\)/u);
 assertMutationTypesCompile();
 await assertAuthoritativePersonaCacheOrdering();
-await assertUnknownPersonaQueriesSettle();
-await assertInactiveCachedPersonaRefetchesActiveIdentity();
+await assertUnknownPersonaListSettles();
 
 // Sparse save and response precedence execute the production transition helpers.
 type Form = { name: string; comment: string; structured: { alpha: number; beta: number } };

@@ -73,8 +73,9 @@ export function resolveActivePersonaCandidate<T extends { id: string; isActive?:
   personas: readonly T[],
   chatPersonaId: string | null | undefined,
   chatMode: string | null | undefined,
+  profileActivePersonaId?: string | null,
 ): T | null {
-  return resolveChatPersonaCandidate(personas, chatPersonaId, chatMode);
+  return resolveChatPersonaCandidate(personas, chatPersonaId, chatMode, profileActivePersonaId);
 }
 
 const PROMPT_WRAP_FORMATS = new Set<WrapFormat>(["xml", "markdown", "none"]);

@@ -67,6 +67,7 @@ import type {
   ThinkingTagPair,
 } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createUserProfilesStorage } from "../services/storage/user-profiles.storage.js";
 import {
   commitSpatialOwnerTurn,
   findAppliedSpatialOwnerTurn,
@@ -1581,6 +1582,8 @@ export async function generateRoutes(app: FastifyInstance) {
         appearance?: string;
       } = {};
       const allPersonas = await chars.listPersonas();
+      const owningProfile = await createUserProfilesStorage(app.db).getById(chat.profileId);
+      const profileActivePersonaId = owningProfile?.activePersonaId ?? null;
       // ── Game mode: apply segment edit overlays to message content ──
       // Users can edit individual narration/dialogue segments in the VN UI.
       // Edits are stored as chat-metadata overlays; apply them so the model
@@ -1598,7 +1601,7 @@ export async function generateRoutes(app: FastifyInstance) {
       const currentUserInputContent = (): string | undefined =>
         [...currentInputMessages()].reverse().find((message) => message.role === "user")?.content;
 
-      const persona = resolveActivePersonaCandidate(allPersonas, chat.personaId, chatMode);
+      const persona = resolveActivePersonaCandidate(allPersonas, chat.personaId, chatMode, profileActivePersonaId);
       if (persona) {
         personaId = persona.id as string;
         personaName = persona.name;

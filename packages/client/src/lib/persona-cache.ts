@@ -8,23 +8,16 @@ export const personaCacheKeys = {
 };
 
 /**
- * Reconcile an authoritative Persona mutation response with caches that can
- * represent it directly. Paginated lists are intentionally left to targeted
- * invalidation because a response cannot safely place an item across their
- * search, sort, and offset boundaries.
+ * Reconcile shared Persona records without allowing the legacy global
+ * `isActive` flag to override the active User Profile's persona selection.
  */
 export async function syncCachedPersona(qc: QueryClient, persona: Persona) {
   const listState = qc.getQueryState<Persona[]>(personaCacheKeys.list);
   const completeList = listState?.data;
-  const activeState = qc.getQueryState<Persona | null>(personaCacheKeys.active());
-  const cachedActive = activeState?.data;
-  const activeNeedsRefetch =
-    !persona.isActive && activeState !== undefined && (cachedActive === undefined || cachedActive?.id === persona.id);
 
   await Promise.all([
     qc.cancelQueries({ queryKey: personaCacheKeys.list, exact: true }),
     qc.cancelQueries({ queryKey: personaCacheKeys.detail(persona.id), exact: true }),
-    ...(persona.isActive || activeNeedsRefetch ? [qc.cancelQueries({ queryKey: personaCacheKeys.active(), exact: true })] : []),
   ]);
 
   qc.setQueryData<Persona>(personaCacheKeys.detail(persona.id), persona);
@@ -35,16 +28,7 @@ export async function syncCachedPersona(qc: QueryClient, persona: Persona) {
     ]);
   }
 
-  if (persona.isActive) {
-    qc.setQueryData<Persona>(personaCacheKeys.active(), persona);
+  if (listState !== undefined && listState.data === undefined) {
+    await qc.invalidateQueries({ queryKey: personaCacheKeys.list, exact: true, refetchType: "all" });
   }
-
-  await Promise.all([
-    ...(listState !== undefined && listState.data === undefined
-      ? [qc.invalidateQueries({ queryKey: personaCacheKeys.list, exact: true, refetchType: "all" })]
-      : []),
-    ...(activeNeedsRefetch
-      ? [qc.invalidateQueries({ queryKey: personaCacheKeys.active(), exact: true, refetchType: "all" })]
-      : []),
-  ]);
 }

@@ -16,6 +16,17 @@ export const userProfileKeys = {
 
 type UserProfileContinuityPatch = Partial<PatchUserProfileContinuityInput>;
 
+async function restoreProfileResume(profile: UserProfile, queryClient: ReturnType<typeof useQueryClient>) {
+  const restoredMode = profile.lastActiveMode ?? "conversation";
+  useUIStore.getState().requestChatModeShortcut(restoredMode);
+  const resumeChatId = profile.lastActiveChatByMode[restoredMode];
+  if (!resumeChatId) return;
+  const resumeChat = await api.get<Chat>(`/chats/${resumeChatId}`).catch(() => null);
+  if (resumeChat?.profileId !== profile.id || resumeChat.mode !== restoredMode) return;
+  queryClient.setQueryData(chatKeys.detail(resumeChat.id), resumeChat);
+  useChatStore.getState().setActiveChatId(resumeChat.id);
+}
+
 const queuedContinuityPatches = new Map<string, UserProfileContinuityPatch>();
 const continuityTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -82,6 +93,7 @@ export function useUserProfileBootstrap() {
         );
       }
       hydrate(profile);
+      await restoreProfileResume(profile, queryClient);
     };
     void bootstrap().catch(() => hydrate(selected));
   }, [activeProfileId, hydrate, profiles.data, queryClient]);
@@ -145,16 +157,7 @@ export function useSwitchUserProfile() {
       }
       setActiveProfileId(target.id);
       hydrate(target);
-      const restoredMode = target.lastActiveMode ?? "conversation";
-      useUIStore.getState().requestChatModeShortcut(restoredMode);
-      const resumeChatId = target.lastActiveChatByMode[restoredMode];
-      if (resumeChatId) {
-        const resumeChat = await api.get<Chat>(`/chats/${resumeChatId}`).catch(() => null);
-        if (resumeChat?.profileId === target.id && resumeChat.mode === restoredMode) {
-          queryClient.setQueryData(chatKeys.detail(resumeChat.id), resumeChat);
-          useChatStore.getState().setActiveChatId(resumeChat.id);
-        }
-      }
+      await restoreProfileResume(target, queryClient);
       setSwitching(false);
     },
     [activeProfile, hydrate, profiles.data, queryClient, setActiveProfileId, setSwitching],

@@ -33,6 +33,7 @@ import { getDataDir } from "../utils/data-dir.js";
 import { getFileStorageDir } from "../config/runtime-config.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import { flushDB, type DB } from "../db/connection.js";
+import { ensureUserProfilesInitialized } from "../db/user-profile-migration.js";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 import { assertInsideDir } from "../utils/security.js";
 import { logger } from "../lib/logger.js";
@@ -1276,6 +1277,9 @@ async function importProfileStorageSnapshot(
         }
         await flushDB();
       });
+      if (await ensureUserProfilesInitialized(app.db)) {
+        await flushDB();
+      }
       committed = true;
       if ((tableCounts.installed_extensions ?? 0) > 0) {
         await personalServerExtensionRuntime.reloadAll();

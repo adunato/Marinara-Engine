@@ -3918,7 +3918,7 @@ export function HomeProfessorMariChat({
     if (chatHistoryOpen) await loadChatHistory();
     await qc.invalidateQueries({ queryKey: chatKeys.messages(chat.id) });
     toast.success(localizeUi("ui.chat.homeprofessormarichat.professorMariSPreviousChatWasSaved"));
-  }, [chatHistoryOpen, clearMariChips, effectiveConnectionId, loadChatHistory, qc, setActiveChatId, setDraft, localizeUi]);
+  }, [activeProfileId, chatHistoryOpen, clearMariChips, effectiveConnectionId, loadChatHistory, qc, setActiveChatId, setDraft, localizeUi]);
 
   const guidedPlan = professorMariSuggestionsEnabled && mariPlanChatId === chatId ? mariPlan : null;
   const guidedPlanStep = guidedPlan ? (guidedPlan[mariPlanCursor] ?? null) : null;
@@ -4406,7 +4406,7 @@ export function HomeProfessorMariChat({
         });
       }
     },
-    [isBusy, loadChatHistory, loadMessages, qc, setActiveChatId, localizeUi],
+    [activeProfileId, isBusy, loadChatHistory, loadMessages, qc, setActiveChatId, localizeUi],
   );
 
   const handleRenameProfessorChat = useCallback(
@@ -4432,7 +4432,7 @@ export function HomeProfessorMariChat({
         });
       }
     },
-    [loadChatHistory, qc, renameDraft, localizeUi],
+    [activeProfileId, loadChatHistory, qc, renameDraft, localizeUi],
   );
 
   const handleTitleCommand = useCallback(
@@ -4468,7 +4468,7 @@ export function HomeProfessorMariChat({
       }
       return true;
     },
-    [chatId, loadChatHistory, qc, setDraft, localizeUi],
+    [activeProfileId, chatId, loadChatHistory, qc, setDraft, localizeUi],
   );
 
   const handleDeleteProfessorChat = useCallback(
@@ -4502,6 +4502,7 @@ export function HomeProfessorMariChat({
       }
     },
     [
+      activeProfileId,
       chatHistory,
       chatId,
       effectiveConnectionId,
@@ -4559,6 +4560,7 @@ export function HomeProfessorMariChat({
       });
     }
   }, [
+    activeProfileId,
     chatId,
     effectiveConnectionId,
     ensureProfessorMariChat,
