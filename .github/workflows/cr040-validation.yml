@@ -30,6 +30,9 @@ jobs:
       - name: Run CR040 compiler regression
         run: pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/character-personality-model.regression.ts
 
+      - name: Build shared package for server integration
+        run: pnpm --filter @marinara-engine/shared build
+
       - name: Run CR040 Professor Mari regression
         run: pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/professor-mari-personality-model.regression.ts
 
