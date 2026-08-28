@@ -26,6 +26,7 @@ import { encodePersonaCreate, encodePersonaUpdate, projectPersona } from "../ser
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createUserProfilesStorage } from "../services/storage/user-profiles.storage.js";
 import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
@@ -1192,9 +1193,13 @@ export async function charactersRoutes(app: FastifyInstance) {
     }));
   });
 
-  app.get<{ Params: { id: string } }>("/:id/gallery/clips", async (req, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { profileId?: string } }>("/:id/gallery/clips", async (req, reply) => {
     const char = await storage.getById(req.params.id);
     if (!char) return reply.status(404).send({ error: "Character not found" });
+    const profileId = typeof req.query.profileId === "string" ? req.query.profileId.trim() : "";
+    if (!profileId || !(await createUserProfilesStorage(app.db).getById(profileId))) {
+      return reply.status(400).send({ error: "A valid profileId is required" });
+    }
 
     const characterName = readCharacterDisplayName(char.data, "Character");
     const callManifest = await getConversationCallCharacterVideoManifest({
@@ -1245,7 +1250,7 @@ export async function charactersRoutes(app: FastifyInstance) {
 
     const chatsStorage = createChatsStorage(app.db);
     const sceneVideos = createGameSceneVideosStorage(app.db);
-    const allChats = await chatsStorage.list();
+    const allChats = await chatsStorage.list(profileId);
     const relatedChats = allChats.filter((chat) => parseCharacterIdList(chat.characterIds).includes(req.params.id));
     const sceneVideoGroups = await Promise.all(
       relatedChats.map(async (chat) => ({
@@ -2309,9 +2314,13 @@ export async function charactersRoutes(app: FastifyInstance) {
     }));
   });
 
-  app.get<{ Params: { id: string } }>("/personas/:id/gallery/clips", async (req, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { profileId?: string } }>("/personas/:id/gallery/clips", async (req, reply) => {
     const persona = await storage.getPersona(req.params.id);
     if (!persona) return reply.status(404).send({ error: "Persona not found" });
+    const profileId = typeof req.query.profileId === "string" ? req.query.profileId.trim() : "";
+    if (!profileId || !(await createUserProfilesStorage(app.db).getById(profileId))) {
+      return reply.status(400).send({ error: "A valid profileId is required" });
+    }
 
     const personaName = typeof persona.name === "string" && persona.name.trim() ? persona.name.trim() : "Persona";
     const callManifest = await getConversationCallCharacterVideoManifest({
@@ -2362,7 +2371,7 @@ export async function charactersRoutes(app: FastifyInstance) {
 
     const chatsStorage = createChatsStorage(app.db);
     const sceneVideos = createGameSceneVideosStorage(app.db);
-    const allChats = await chatsStorage.list();
+    const allChats = await chatsStorage.list(profileId);
     const relatedChats = allChats.filter((chat) => chat.personaId === req.params.id);
     const sceneVideoGroups = await Promise.all(
       relatedChats.map(async (chat) => ({

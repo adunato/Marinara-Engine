@@ -8,6 +8,7 @@ import { cardPromptText } from "../services/prompt/card-text.js";
 import {
   PROFESSOR_MARI_ID,
   createChatSchema,
+  updateChatSchema,
   createMessageSchema,
   appendChatSummaryEntryToMetadata,
   CHAT_SUMMARY_PROMPT_SETTINGS_KEY,
@@ -60,6 +61,7 @@ import {
 import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
+import { createUserProfilesStorage } from "../services/storage/user-profiles.storage.js";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { createGameStateStorage, type GameStateVisibleAnchor } from "../services/storage/game-state.storage.js";
 import {
@@ -597,9 +599,19 @@ function resolveEntryStateOverrides(value: unknown): EntryStateOverrides | undef
 export async function chatsRoutes(app: FastifyInstance) {
   const storage = createChatsStorage(app.db);
   const appSettings = createAppSettingsStorage(app.db);
+  const profilesStorage = createUserProfilesStorage(app.db);
+
+  const requireProfileId = async (value: unknown, reply: { status(code: number): { send(body: unknown): unknown } }) => {
+    const profileId = typeof value === "string" ? value.trim() : "";
+    if (!profileId || !(await profilesStorage.getById(profileId))) {
+      reply.status(400).send({ error: "A valid profileId is required" });
+      return null;
+    }
+    return profileId;
+  };
 
   const cleanupEmptyRoleplayDmChats = async () => {
-    const allChats = await storage.list();
+    const allChats = await storage.listAll();
     let removed = 0;
     for (const chat of allChats) {
       const metadata = parseChatMetadata(chat.metadata);
@@ -642,22 +654,26 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
   };
 
-  // List all chats
-  app.get("/", async () => {
+  // History collections are profile-scoped; direct stable-ID reads remain below.
+  app.get<{ Querystring: { profileId?: string } }>("/", async (req, reply) => {
+    const profileId = await requireProfileId(req.query.profileId, reply);
+    if (!profileId) return;
     await cleanupEmptyRoleplayDmChats();
-    const chats = await storage.list();
+    const chats = await storage.list(profileId);
     return chats.filter((chat) => !shouldHideProfessorMariChat(chat)).map(normalizeChatForResponse);
   });
 
   // Bounded Home data. This deliberately returns one short visible-message
   // glimpse per chat instead of making the browser load recent transcripts.
-  app.get("/home-feed", async (): Promise<HomeFeedSnapshot> => {
+  app.get<{ Querystring: { profileId?: string } }>("/home-feed", async (req, reply): Promise<HomeFeedSnapshot | unknown> => {
+    const profileId = await requireProfileId(req.query.profileId, reply);
+    if (!profileId) return;
     const recentChats = [];
     const seenRecentChatIds = new Set<string>();
     const pageSize = 24;
     let offset = 0;
     while (recentChats.length < 6) {
-      const page = await storage.listRecent(pageSize, offset);
+      const page = await storage.listRecent(profileId, pageSize, offset);
       if (page.length === 0) break;
       for (const chat of page) {
         if (!shouldHideProfessorMariChat(chat) && !seenRecentChatIds.has(chat.id)) {
@@ -754,7 +770,7 @@ export async function chatsRoutes(app: FastifyInstance) {
   // metadata serialization, and DM-cleanup scans the / route performs.
   // Static path — Fastify prefers it over GET /:id.
   app.get("/autonomous-candidates", async () => {
-    const chats = await storage.list();
+    const chats = await storage.listAll();
     const candidates = chats.filter(isBackgroundAutonomousCandidate);
     // Exclude EMPTIED Roleplay DM threads: the legacy poll's GET /chats ran
     // cleanupEmptyRoleplayDmChats as a side effect, and an emptied thread with
@@ -766,13 +782,15 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (hasRoleplayDmThreadMarkers(parseChatMetadata(chat.metadata))) {
         if ((await storage.countMessages(chat.id)) === 0) continue;
       }
-      eligible.push({ id: chat.id });
+      eligible.push({ id: chat.id, profileId: chat.profileId });
     }
     return eligible;
   });
 
-  app.get("/internal/professor-mari/chats", async () => {
-    const allChats = sortProfessorMariChats((await storage.list()).filter(isHomeProfessorMariChat));
+  app.get<{ Querystring: { profileId?: string } }>("/internal/professor-mari/chats", async (req, reply) => {
+    const profileId = await requireProfileId(req.query.profileId, reply);
+    if (!profileId) return;
+    const allChats = sortProfessorMariChats((await storage.list(profileId)).filter(isHomeProfessorMariChat));
     return Promise.all(
       allChats.map(async (chat) => {
         const metadata = parseChatMetadata(chat.metadata);
@@ -785,8 +803,10 @@ export async function chatsRoutes(app: FastifyInstance) {
     );
   });
 
-  app.get<{ Querystring: { connectionId?: string; personaId?: string } }>("/internal/professor-mari", async (req) => {
-    const professorChats = sortProfessorMariChats((await storage.list()).filter(isHomeProfessorMariChat));
+  app.get<{ Querystring: { connectionId?: string; personaId?: string; profileId?: string } }>("/internal/professor-mari", async (req, reply) => {
+    const profileId = await requireProfileId(req.query.profileId, reply);
+    if (!profileId) return;
+    const professorChats = sortProfessorMariChats((await storage.list(profileId)).filter(isHomeProfessorMariChat));
     const existing = professorChats.find(isActiveHomeProfessorMariChat) ?? professorChats[0] ?? null;
     const hasConnectionOverride = "connectionId" in req.query;
     const hasPersonaOverride = "personaId" in req.query;
@@ -823,6 +843,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       personaId,
       promptPresetId: null,
       connectionId,
+      profileId,
     });
     if (!created) return created;
     const updated = await storage.patchMetadata(created.id, {
@@ -837,10 +858,12 @@ export async function chatsRoutes(app: FastifyInstance) {
     return normalizeChatForResponse(updated ?? created);
   });
 
-  app.post<{ Querystring: { connectionId?: string; personaId?: string } }>(
+  app.post<{ Querystring: { connectionId?: string; personaId?: string; profileId?: string } }>(
     "/internal/professor-mari/restart",
-    async (req) => {
-      const professorChats = sortProfessorMariChats((await storage.list()).filter(isHomeProfessorMariChat));
+    async (req, reply) => {
+      const profileId = await requireProfileId(req.query.profileId, reply);
+      if (!profileId) return;
+      const professorChats = sortProfessorMariChats((await storage.list(profileId)).filter(isHomeProfessorMariChat));
       const active = professorChats.find(isActiveHomeProfessorMariChat) ?? professorChats[0] ?? null;
       const connectionId =
         typeof req.query.connectionId === "string" && req.query.connectionId
@@ -888,6 +911,7 @@ export async function chatsRoutes(app: FastifyInstance) {
         personaId,
         promptPresetId: null,
         connectionId,
+        profileId,
       });
       if (!created) return created;
       const updated = await storage.patchMetadata(created.id, {
@@ -903,8 +927,10 @@ export async function chatsRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Params: { id: string } }>("/internal/professor-mari/chats/:id/activate", async (req, reply) => {
-    const professorChats = (await storage.list()).filter(isHomeProfessorMariChat);
+  app.post<{ Params: { id: string }; Querystring: { profileId?: string } }>("/internal/professor-mari/chats/:id/activate", async (req, reply) => {
+    const profileId = await requireProfileId(req.query.profileId, reply);
+    if (!profileId) return;
+    const professorChats = (await storage.list(profileId)).filter(isHomeProfessorMariChat);
     const target = professorChats.find((chat) => chat.id === req.params.id);
     if (!target) return reply.status(404).send({ error: "Professor Mari chat not found" });
 
@@ -926,10 +952,12 @@ export async function chatsRoutes(app: FastifyInstance) {
     return normalizeChatForResponse(updated ?? target);
   });
 
-  app.patch<{ Params: { id: string }; Body: { name?: unknown } }>(
+  app.patch<{ Params: { id: string }; Body: { name?: unknown }; Querystring: { profileId?: string } }>(
     "/internal/professor-mari/chats/:id",
     async (req, reply) => {
-      const target = (await storage.list()).find((chat) => chat.id === req.params.id && isHomeProfessorMariChat(chat));
+      const profileId = await requireProfileId(req.query.profileId, reply);
+      if (!profileId) return;
+      const target = (await storage.list(profileId)).find((chat) => chat.id === req.params.id && isHomeProfessorMariChat(chat));
       if (!target) return reply.status(404).send({ error: "Professor Mari chat not found" });
       const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
       if (!name) return reply.status(400).send({ error: "Name is required" });
@@ -938,14 +966,16 @@ export async function chatsRoutes(app: FastifyInstance) {
     },
   );
 
-  app.delete<{ Params: { id: string } }>("/internal/professor-mari/chats/:id", async (req, reply) => {
-    const professorChats = (await storage.list()).filter(isHomeProfessorMariChat);
+  app.delete<{ Params: { id: string }; Querystring: { profileId?: string } }>("/internal/professor-mari/chats/:id", async (req, reply) => {
+    const profileId = await requireProfileId(req.query.profileId, reply);
+    if (!profileId) return;
+    const professorChats = (await storage.list(profileId)).filter(isHomeProfessorMariChat);
     const target = professorChats.find((chat) => chat.id === req.params.id);
     if (!target) return reply.status(404).send({ error: "Professor Mari chat not found" });
     const wasActive = isActiveHomeProfessorMariChat(target);
     await storage.remove(target.id);
     if (wasActive) {
-      const remaining = sortProfessorMariChats((await storage.list()).filter(isHomeProfessorMariChat));
+      const remaining = sortProfessorMariChats((await storage.list(profileId)).filter(isHomeProfessorMariChat));
       const next = remaining[0];
       if (next) {
         await storage.patchMetadata(next.id, {
@@ -976,6 +1006,9 @@ export async function chatsRoutes(app: FastifyInstance) {
   // Create chat
   app.post("/", async (req, reply) => {
     const input = createChatSchema.parse(req.body);
+    if (!(await createUserProfilesStorage(app.db).getById(input.profileId))) {
+      return reply.status(400).send({ error: "User profile not found" });
+    }
     if (input.characterIds.includes(PROFESSOR_MARI_ID)) {
       return reply.status(400).send({ error: "Professor Mari is only available from the Home screen." });
     }
@@ -1006,7 +1039,7 @@ export async function chatsRoutes(app: FastifyInstance) {
 
   // Update chat
   app.patch<{ Params: { id: string } }>("/:id", async (req, reply) => {
-    const data = createChatSchema.partial().parse(req.body);
+    const data = updateChatSchema.parse(req.body);
     const existing = await storage.getById(req.params.id);
     if (!existing || isHomeProfessorMariChat(existing)) {
       return reply.status(404).send({ error: "Chat not found" });
@@ -3698,8 +3731,16 @@ export async function chatsRoutes(app: FastifyInstance) {
   };
 
   app.post<{
-    Body: { chatIds?: string[]; format?: string; scope?: "selected" | "all"; includeReasoning?: boolean | string };
+    Body: {
+      chatIds?: string[];
+      format?: string;
+      scope?: "selected" | "all";
+      includeReasoning?: boolean | string;
+      profileId?: string;
+    };
   }>("/export/bulk", async (req, reply) => {
+    const profileId = await requireProfileId(req.body?.profileId, reply);
+    if (!profileId) return;
     const format = normalizeExportFormat(req.body?.format);
     const includeReasoning = normalizeExportBoolean(req.body?.includeReasoning);
     const scope = req.body?.scope === "all" ? "all" : "selected";
@@ -3707,11 +3748,13 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     let chatsToExport: ChatRow[];
     if (scope === "all") {
-      chatsToExport = ((await storage.list()) as ChatRow[]).filter((chat) => !shouldHideProfessorMariChat(chat));
+      chatsToExport = ((await storage.list(profileId)) as ChatRow[]).filter((chat) => !shouldHideProfessorMariChat(chat));
     } else {
       if (uniqueIds.length === 0) return reply.status(400).send({ error: "No chats selected for export" });
       const rows = await Promise.all(uniqueIds.map((id) => storage.getById(id)));
-      chatsToExport = rows.filter((chat): chat is ChatRow => chat !== null && !shouldHideProfessorMariChat(chat));
+      chatsToExport = rows.filter(
+        (chat): chat is ChatRow => chat !== null && chat.profileId === profileId && !shouldHideProfessorMariChat(chat),
+      );
     }
 
     if (chatsToExport.length === 0) return reply.status(404).send({ error: "No chats found to export" });
@@ -3838,6 +3881,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       personaId: sourceChat.personaId,
       promptPresetId: sourceChat.promptPresetId,
       connectionId: sourceChat.connectionId,
+      profileId: sourceChat.profileId,
     });
 
     if (!newChat) return reply.status(500).send({ error: "Failed to create branch" });

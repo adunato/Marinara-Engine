@@ -42,6 +42,8 @@ import { handleFolderRenameKeyDown, useFolderRenameGesture } from "../../hooks/u
 import { useChatStore } from "../../stores/chat.store";
 import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { useUIStore, type UserStatus } from "../../stores/ui.store";
+import { queueActiveUserProfileContinuity } from "../../hooks/use-user-profiles";
+import { useUserProfileStore } from "../../stores/user-profile.store";
 import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { chatBackgroundMetadataToUrl } from "../../lib/backgrounds";
 import { formatRelativeContact } from "../../lib/relative-time";
@@ -253,6 +255,7 @@ export function ChatSidebar() {
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const chatModeShortcutRequest = useUIStore((s) => s.chatModeShortcutRequest);
   const setPendingNewChatMode = useChatStore((s) => s.setPendingNewChatMode);
+  const activeProfileId = useUserProfileStore((s) => s.activeProfileId);
 
   // Folder hooks
   const { data: folders } = useChatFolders();
@@ -706,6 +709,8 @@ export function ChatSidebar() {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("mode", activeTab);
+        if (!activeProfileId) throw new Error("No active User Profile");
+        formData.append("profileId", activeProfileId);
         const data = await api.upload<{
           success?: boolean;
           chatId?: string;
@@ -726,7 +731,7 @@ export function ChatSidebar() {
         setIsImportingChat(false);
       }
     },
-    [activeTab, refetchChats, setActiveChatId, localizeUi],
+    [activeProfileId, activeTab, refetchChats, setActiveChatId, localizeUi],
   );
 
   const activeModeConfig = MODE_CONFIG[activeTab] ?? MODE_CONFIG.conversation;
@@ -1908,12 +1913,23 @@ const STATUS_OPTIONS: Array<{
 
 function UserStatusFooter() {
   const { t: localizeUi } = useUiTranslation();
-  const userStatus = useUIStore((s) => s.userStatus);
-  const userActivity = useUIStore((s) => s.userActivity);
-  const recentUserActivities = useUIStore((s) => s.recentUserActivities);
-  const setUserStatusManual = useUIStore((s) => s.setUserStatusManual);
-  const setUserActivity = useUIStore((s) => s.setUserActivity);
-  const rememberUserActivity = useUIStore((s) => s.rememberUserActivity);
+  const activeProfile = useUserProfileStore((s) => s.activeProfile);
+  const userStatus = activeProfile?.userStatus ?? "active";
+  const userActivity = activeProfile?.userActivity ?? "";
+  const recentUserActivities = activeProfile?.recentUserActivities ?? [];
+  const setUserStatusManual = (status: UserStatus) =>
+    queueActiveUserProfileContinuity({ userStatusManual: status, userStatus: status });
+  const setUserActivity = (activity: string) => queueActiveUserProfileContinuity({ userActivity: activity.slice(0, 120) });
+  const rememberUserActivity = (activity: string) => {
+    const normalized = activity.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (!normalized) return;
+    queueActiveUserProfileContinuity({
+      recentUserActivities: [
+        normalized,
+        ...recentUserActivities.filter((item) => item.toLowerCase() !== normalized.toLowerCase()),
+      ].slice(0, 8),
+    });
+  };
   const [open, setOpen] = useState(false);
   const [activityFocused, setActivityFocused] = useState(false);
   const ref = useRef<HTMLDivElement>(null);

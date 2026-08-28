@@ -123,6 +123,8 @@ export interface Chat {
   sortOrder: number;
   /** Timestamp of the newest saved message; null until the chat has messages. */
   lastMessageAt?: string | null;
+  /** Authoritative owning User Profile. */
+  profileId: string;
   createdAt: string;
   updatedAt: string;
   metadata: ChatMetadata;
@@ -144,6 +146,8 @@ export interface ChatFolder {
   color: string;
   sortOrder: number;
   collapsed: boolean;
+  /** Authoritative owning User Profile. */
+  profileId: string;
   createdAt: string;
   updatedAt: string;
 }

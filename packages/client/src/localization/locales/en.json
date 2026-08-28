@@ -8853,5 +8853,12 @@
   "ui.ui.trackercardcolorcontrols.stage": "Stage",
   "ui.ui.trackercardcolorcontrols.stageFinishMGC": "stage, finish M/G/C",
   "ui.ui.trackercardcolorcontrols.strength": "strength",
-  "ui.ui.trackercardcolorcontrols.value1ChannelIsOff": "{{value1}} channel is off."
+  "ui.ui.trackercardcolorcontrols.value1ChannelIsOff": "{{value1}} channel is off.",
+  "ui.userProfile.create": "Create User Profile",
+  "ui.userProfile.createError": "Could not create User Profile",
+  "ui.userProfile.createPrompt": "New User Profile name",
+  "ui.userProfile.label": "User Profile",
+  "ui.userProfile.rename": "Rename User Profile",
+  "ui.userProfile.renameError": "Could not rename User Profile",
+  "ui.userProfile.renamePrompt": "Rename User Profile"
 }

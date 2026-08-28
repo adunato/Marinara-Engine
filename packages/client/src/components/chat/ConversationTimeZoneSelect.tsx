@@ -10,6 +10,7 @@ import {
 } from "../../lib/conversation-time-zone";
 import { cn } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
+import { useUserProfileStore } from "../../stores/user-profile.store";
 import { useTranslation as useUiTranslation } from "react-i18next";
 
 type ConversationTimeZoneSelectProps = {
@@ -23,6 +24,7 @@ export function ConversationTimeZoneSelect({ className, compact = false }: Conve
   const queryClient = useQueryClient();
   const conversationTimeZone = useUIStore((state) => state.conversationTimeZone);
   const setConversationTimeZone = useUIStore((state) => state.setConversationTimeZone);
+  const activeProfileId = useUserProfileStore((state) => state.activeProfileId);
   const [isSaving, setIsSaving] = useState(false);
   const requestIdRef = useRef(0);
   const detectedTimeZone = useMemo(() => detectConversationTimeZone(), []);
@@ -36,7 +38,11 @@ export function ConversationTimeZoneSelect({ className, compact = false }: Conve
       const requestId = ++requestIdRef.current;
       setIsSaving(true);
       try {
-        await api.put("/conversation/schedule/timezone", { timeZone: nextTimeZone });
+        if (!activeProfileId) {
+          setConversationTimeZone(previousTimeZone);
+          return;
+        }
+        await api.put("/conversation/schedule/timezone", { timeZone: nextTimeZone, profileId: activeProfileId });
         await Promise.all([
           queryClient.invalidateQueries({
             predicate: (query) =>
@@ -53,7 +59,7 @@ export function ConversationTimeZoneSelect({ className, compact = false }: Conve
         if (requestId === requestIdRef.current) setIsSaving(false);
       }
     },
-    [queryClient, setConversationTimeZone, localizeUi],
+    [activeProfileId, queryClient, setConversationTimeZone, localizeUi],
   );
 
   const selectTimeZone = (nextTimeZone: string) => {
@@ -83,7 +89,7 @@ export function ConversationTimeZoneSelect({ className, compact = false }: Conve
         <select
           id={selectId}
           value={conversationTimeZone}
-          disabled={isSaving}
+          disabled={isSaving || !activeProfileId}
           onChange={(event) => selectTimeZone(event.target.value)}
           className={cn(
             "min-h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 text-[0.6875rem] text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/60 focus:ring-2 focus:ring-[var(--primary)]/20 disabled:cursor-wait disabled:opacity-60",
@@ -100,7 +106,7 @@ export function ConversationTimeZoneSelect({ className, compact = false }: Conve
         {conversationTimeZone !== detectedTimeZone && (
           <button
             type="button"
-            disabled={isSaving}
+            disabled={isSaving || !activeProfileId}
             onClick={() => selectTimeZone(detectedTimeZone)}
             className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 text-[0.6875rem] font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:cursor-wait disabled:opacity-60"
           >

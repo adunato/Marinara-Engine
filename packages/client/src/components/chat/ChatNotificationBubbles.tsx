@@ -18,6 +18,8 @@ import type { AvatarCrop } from "@marinara-engine/shared";
 import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation as useUiTranslation } from "react-i18next";
+import { useProfileAwareChatNavigation } from "../../hooks/use-user-profiles";
+import { chatKeys } from "../../hooks/use-chats";
 
 type ChatNotification = {
   chatId: string;
@@ -34,7 +36,7 @@ export function ChatNotificationBubbles() {
   const { t: localizeUi } = useUiTranslation();
   const queryClient = useQueryClient();
   const chatNotifications = useChatStore((s) => s.chatNotifications);
-  const setActiveChatId = useChatStore((s) => s.setActiveChatId);
+  const navigateToOwnedChat = useProfileAwareChatNavigation();
   const autoDismissNotification = useChatStore((s) => s.autoDismissNotification);
   const dismissNotification = useChatStore((s) => s.dismissNotification);
   const setShouldOpenSettings = useChatStore((s) => s.setShouldOpenSettings);
@@ -54,13 +56,13 @@ export function ChatNotificationBubbles() {
     setShouldOpenWizard(false);
     setShouldOpenWizardInShortcutMode(false);
     setSetupActive(false);
-    setActiveChatId(chatId);
+    void navigateToOwnedChat(chatId);
   };
 
   const refreshCallState = (chatId: string) => {
     queryClient.invalidateQueries({ queryKey: ["conversation-calls", "status", chatId] });
-    queryClient.invalidateQueries({ queryKey: ["chats", "messages", chatId] });
-    queryClient.invalidateQueries({ queryKey: ["chats", "list"] });
+    queryClient.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
+    queryClient.invalidateQueries({ queryKey: chatKeys.all });
   };
 
   const acceptCall = async (notif: ChatNotification) => {

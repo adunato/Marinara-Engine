@@ -83,6 +83,14 @@ export interface EchoChamberSize {
   height: number;
 }
 export type UserStatus = "active" | "idle" | "dnd" | "invisible";
+export interface LegacyUserProfileContinuity {
+  userStatusManual: UserStatus;
+  userStatus: UserStatus;
+  userActivity: string;
+  recentUserActivities: string[];
+  learnedGameSetupOptions: GameSetupLearnedOptions;
+  rememberedGameSetupText: GameSetupRememberedText;
+}
 export type RoleplayAvatarStyle = "none" | "circles" | "rectangles" | "panel";
 export type GameDialogueDisplayMode = "classic" | "stacked";
 /** How much of the chat list shows each chat's background as a row banner. */
@@ -893,6 +901,8 @@ interface UIState {
   userActivity: string;
   /** Recent user activity strings shown under the chat sidebar status editor. */
   recentUserActivities: string[];
+  /** One-time CR038 bridge; normal profile continuity lives on the server. */
+  legacyUserProfileContinuity: LegacyUserProfileContinuity | null;
 
   // ── Impersonate Settings ──
   /** Custom prompt template for /impersonate (empty = use server default). Persisted. */
@@ -1148,6 +1158,7 @@ interface UIState {
   setUserStatusManual: (status: UserStatus) => void;
   setUserActivity: (activity: string) => void;
   rememberUserActivity: (activity: string) => void;
+  clearLegacyUserProfileContinuity: () => void;
 }
 
 function getMobileDetailReturnState(state: UIState) {
@@ -1322,9 +1333,6 @@ export function pickSyncedSettings(state: UIState) {
     linkApiBannerDismissed: state.linkApiBannerDismissed,
     echoChamberOpen: state.echoChamberOpen,
     echoChamberSide: state.echoChamberSide,
-    userStatusManual: state.userStatusManual,
-    userActivity: state.userActivity,
-    recentUserActivities: state.recentUserActivities,
     convoNotificationSound: state.convoNotificationSound,
     rpNotificationSound: state.rpNotificationSound,
     gameNotificationSound: state.gameNotificationSound,
@@ -1340,8 +1348,7 @@ export function pickSyncedSettings(state: UIState) {
     impersonatePresetId: state.impersonatePresetId,
     impersonateConnectionId: state.impersonateConnectionId,
     impersonateBlockAgents: state.impersonateBlockAgents,
-    learnedGameSetupOptions: state.learnedGameSetupOptions,
-    rememberedGameSetupText: state.rememberedGameSetupText,
+    legacyUserProfileContinuity: state.legacyUserProfileContinuity,
   };
 }
 
@@ -1553,6 +1560,7 @@ export const useUIStore = create<UIState>()(
       userStatus: "active" as UserStatus,
       userActivity: "",
       recentUserActivities: [],
+      legacyUserProfileContinuity: null,
       centerCompact: false,
       chatModeShortcutRequest: null,
 
@@ -2498,10 +2506,11 @@ export const useUIStore = create<UIState>()(
             ].slice(0, RECENT_USER_ACTIVITY_LIMIT),
           };
         }),
+      clearLegacyUserProfileContinuity: () => set({ legacyUserProfileContinuity: null }),
     }),
     {
       name: "marinara-engine-ui",
-      version: 93,
+      version: 94,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2546,6 +2555,24 @@ export const useUIStore = create<UIState>()(
         };
       }),
       migrate: (persisted: any, version: number) => {
+        if (version < 94 && !persisted.legacyUserProfileContinuity) {
+          persisted.legacyUserProfileContinuity = {
+            userStatusManual: persisted.userStatusManual ?? "active",
+            userStatus: persisted.userStatus ?? persisted.userStatusManual ?? "active",
+            userActivity: typeof persisted.userActivity === "string" ? persisted.userActivity : "",
+            recentUserActivities: Array.isArray(persisted.recentUserActivities) ? persisted.recentUserActivities : [],
+            learnedGameSetupOptions: persisted.learnedGameSetupOptions ?? DEFAULT_GAME_SETUP_LEARNED_OPTIONS,
+            rememberedGameSetupText: persisted.rememberedGameSetupText ?? DEFAULT_GAME_SETUP_REMEMBERED_TEXT,
+          };
+        }
+        if (version < 94) {
+          delete persisted.userStatusManual;
+          delete persisted.userStatus;
+          delete persisted.userActivity;
+          delete persisted.recentUserActivities;
+          delete persisted.learnedGameSetupOptions;
+          delete persisted.rememberedGameSetupText;
+        }
         if (version <= 91 && persisted.rightPanel === "bot-browser") {
           persisted.rightPanel = "characters";
           persisted.rightPanelOpen = false;
@@ -3253,10 +3280,6 @@ export const useUIStore = create<UIState>()(
         echoChamberSide: state.echoChamberSide,
         echoChamberSideByChatId: state.echoChamberSideByChatId,
         echoChamberSizeByChatId: state.echoChamberSizeByChatId,
-        userStatusManual: state.userStatusManual,
-        userStatus: state.userStatus,
-        userActivity: state.userActivity,
-        recentUserActivities: state.recentUserActivities,
         convoNotificationSound: state.convoNotificationSound,
         rpNotificationSound: state.rpNotificationSound,
         gameNotificationSound: state.gameNotificationSound,
@@ -3274,8 +3297,7 @@ export const useUIStore = create<UIState>()(
         impersonatePresetId: state.impersonatePresetId,
         impersonateConnectionId: state.impersonateConnectionId,
         impersonateBlockAgents: state.impersonateBlockAgents,
-        learnedGameSetupOptions: state.learnedGameSetupOptions,
-        rememberedGameSetupText: state.rememberedGameSetupText,
+        legacyUserProfileContinuity: state.legacyUserProfileContinuity,
       }),
     },
   ),

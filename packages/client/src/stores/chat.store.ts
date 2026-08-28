@@ -350,11 +350,13 @@ interface ChatState {
   setActiveConversationCall: (snapshot: ActiveConversationCallSnapshot | null) => void;
   updateActiveConversationCallSession: (session: ConversationCallSession) => void;
   setConversationCallExpanded: (expanded: boolean) => void;
+  resetForProfileSwitch: () => void;
   reset: () => void;
 }
 
 export const useChatStore = create<ChatState>()(
   subscribeWithSelector((set, get) => ({
+    // CR038 reads the legacy key only until the profile bootstrap migrates it.
     activeChatId: (() => {
       try {
         return localStorage.getItem(STORAGE_KEY) || null;
@@ -479,12 +481,7 @@ export const useChatStore = create<ChatState>()(
           });
         }
       }
-      try {
-        if (id) localStorage.setItem(STORAGE_KEY, id);
-        else localStorage.removeItem(STORAGE_KEY);
-      } catch {
-        /* ignore */
-      }
+      // Ongoing resume state is owned by the selected User Profile.
     },
     setMessages: (messages) => set({ messages }),
 
@@ -1029,6 +1026,33 @@ export const useChatStore = create<ChatState>()(
         m.set(messageId, index);
         return { swipeIndex: m };
       }),
+
+    resetForProfileSwitch: () => {
+      currentInputSnapshot = "";
+      clearCurrentInputPresenceTimer();
+      clearAllNotificationTimers();
+      set({
+        activeChatId: null,
+        activeChat: null,
+        messages: [],
+        isStreaming: false,
+        streamingChatId: null,
+        streamBuffer: "",
+        thinkingBuffer: "",
+        regenerateMessageId: null,
+        streamingCharacterId: null,
+        typingCharacterName: null,
+        generationPhase: null,
+        delayedCharacterInfo: null,
+        hasCurrentInput: false,
+        unreadCounts: new Map(),
+        chatNotifications: new Map(),
+        dismissedNotifications: new Set(),
+        gotoRequest: null,
+        activeConversationCall: null,
+        conversationCallExpanded: false,
+      });
+    },
 
     reset: () => {
       unreadCountSources.clear();

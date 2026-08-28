@@ -16,7 +16,12 @@ export const createChatSchema = z.object({
   personaId: z.string().nullable().default(null),
   promptPresetId: z.string().nullable().default(null),
   connectionId: z.string().nullable().default(null),
+  /** Owning profile is selected by the caller for normal new chats. */
+  profileId: z.string().min(1),
 });
+
+/** Editable chat fields deliberately exclude immutable ownership. */
+export const updateChatSchema = createChatSchema.omit({ profileId: true }).partial();
 
 export const createMessageSchema = z.object({
   chatId: z.string(),
@@ -107,6 +112,7 @@ export const markAutonomousUnreadSchema = z.object({
 });
 
 export type CreateChatInput = z.infer<typeof createChatSchema>;
+export type UpdateChatInput = z.infer<typeof updateChatSchema>;
 export type CreateMessageInput = z.infer<typeof createMessageSchema>;
 export type GenerateRequestInput = z.infer<typeof generateRequestSchema>;
 export type SummariesPatchInput = z.infer<typeof summariesPatchSchema>;

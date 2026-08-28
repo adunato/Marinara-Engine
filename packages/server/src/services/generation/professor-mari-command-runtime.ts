@@ -75,6 +75,7 @@ export async function handleProfessorMariCommand(args: {
   command: CharacterCommand;
   characterId: string | null;
   chatId: string;
+  ownerProfileId: string;
   sourceChatMetadata: unknown;
   isHomeProfessorMariAssistantChat: boolean;
   db: DB;
@@ -771,7 +772,7 @@ async function fetchLorebookContent(command: ResolvedFetchCommand, args: Paramet
 }
 
 async function fetchChatContent(command: ResolvedFetchCommand, args: Parameters<typeof handleProfessorMariCommand>[0]) {
-  const allChats = await args.stores.chats.list();
+  const allChats = await args.stores.chats.list(args.ownerProfileId);
   const found = allChats.find((chat: any) =>
     command.resolvedId ? chat.id === command.resolvedId : normalizeTextForMatch(chat.name) === normalizeTextForMatch(command.name),
   );

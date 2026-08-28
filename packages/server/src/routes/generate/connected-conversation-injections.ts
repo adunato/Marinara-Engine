@@ -1,4 +1,4 @@
-import type { ChatMode } from "@marinara-engine/shared";
+import { isSameUserProfileOwnership, type ChatMode } from "@marinara-engine/shared";
 
 import { stripConversationPromptTimestamps } from "../../services/conversation/transcript-sanitize.js";
 
@@ -12,7 +12,7 @@ type ConnectedConversationStore = {
   listPendingInfluences(chatId: string): Promise<Array<{ id: string; content?: unknown }>>;
   markInfluenceConsumed(id: string): Promise<unknown>;
   listNotes(chatId: string): Promise<Array<{ content?: unknown }>>;
-  getById(chatId: string): Promise<{ mode?: string | null; name?: string | null } | null>;
+  getById(chatId: string): Promise<{ mode?: string | null; name?: string | null; profileId?: string | null } | null>;
 };
 
 function injectBeforeLastUser(messages: PromptMessage[], content: string): void {
@@ -27,12 +27,18 @@ function injectBeforeLastUser(messages: PromptMessage[], content: string): void 
 export async function injectConnectedConversationPromptBlocks(args: {
   chatMode: ChatMode;
   connectedChatId: unknown;
+  ownerProfileId?: string | null;
   isSceneChat: boolean;
   chatId: string;
   chats: ConnectedConversationStore;
   finalMessages: PromptMessage[];
 }): Promise<void> {
-  const { chatMode, connectedChatId, isSceneChat, chatId, chats, finalMessages } = args;
+  const { chatMode, connectedChatId, isSceneChat, chatId, chats, finalMessages, ownerProfileId } = args;
+  if ((chatMode === "roleplay" || chatMode === "game") && connectedChatId && !isSceneChat) {
+    const fetchedConnectedChat = await chats.getById(connectedChatId as string);
+    // Cross-profile connections must not leak into this session; unresolvable ownership fails closed in profile mode.
+    if (!isSameUserProfileOwnership(ownerProfileId, fetchedConnectedChat?.profileId)) return;
+  }
   if ((chatMode === "roleplay" || chatMode === "game") && connectedChatId && !isSceneChat) {
     const pendingInfluences = await chats.listPendingInfluences(chatId);
     if (pendingInfluences.length > 0) {

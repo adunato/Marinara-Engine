@@ -10,6 +10,8 @@ export const chatFolders = fileTable("chat_folders", {
   color: text("color").notNull().default(""),
   sortOrder: integer("sort_order").notNull().default(0),
   collapsed: text("collapsed").notNull().default("false"),
+  /** Owning user profile; legacy rows backfill to DEFAULT_USER_PROFILE_ID ("default"). */
+  profileId: text("profile_id").notNull().default("default"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
@@ -37,6 +39,8 @@ export const chats = fileTable("chats", {
   lastMessageAt: text("last_message_at"),
   /** Pre-computed semantic embedding of the chat's name/tags/summary (JSON float[]), null until vectorized (#4768) */
   embedding: text("embedding"),
+  /** Owning user profile; legacy rows backfill to DEFAULT_USER_PROFILE_ID ("default"). */
+  profileId: text("profile_id").notNull().default("default"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

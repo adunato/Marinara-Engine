@@ -54,12 +54,14 @@ import {
   type CharacterCardFieldUpdate,
   type EditableCharacterCardField,
   type MariGuidedPlanStep,
+  type Chat,
   type MariSuggestionChip,
   type PendingSpatialTransition,
   type Persona,
   type ResolvedSpatialTravel,
   type ThinkingTagPair,
 } from "@marinara-engine/shared";
+import { useUserProfileStore } from "../stores/user-profile.store";
 
 type RetryAgentsOptions = {
   lorebookKeeperBackfill?: boolean;
@@ -595,7 +597,7 @@ import { showLocalMessageNotification, showNativeMessageNotification } from "../
 import { dispatchCapabilityClientEvent } from "../lib/capability-client-events";
 import { messageHasPendingPostProcessing, parseMessageExtraRecord } from "../lib/chat-message-extra";
 import { stripGmTagsKeepReadables } from "../lib/game-tag-parser";
-import type { APIConnection, Chat, GameMap, Message } from "@marinara-engine/shared";
+import type { APIConnection, GameMap, Message } from "@marinara-engine/shared";
 
 function sortMessagesByCreatedAt(messages: Message[]): Message[] {
   return [...messages].sort((a, b) => {
@@ -869,7 +871,8 @@ function getCachedChatMode(qc: QueryClient, chatId: string): Chat["mode"] | unde
   if (activeChat?.id === chatId) return activeChat.mode;
   const detail = qc.getQueryData<Chat>(chatKeys.detail(chatId));
   if (detail?.mode) return detail.mode;
-  const list = qc.getQueryData<Chat[]>(chatKeys.list());
+  const profileId = useUserProfileStore.getState().activeProfileId;
+  const list = profileId ? qc.getQueryData<Chat[]>(chatKeys.listForProfile(profileId)) : undefined;
   return list?.find((chat) => chat.id === chatId)?.mode;
 }
 
@@ -878,7 +881,8 @@ function getCachedChatForGeneration(qc: QueryClient, chatId: string): Chat | und
   if (activeChat?.id === chatId) return activeChat;
   const detail = qc.getQueryData<Chat>(chatKeys.detail(chatId));
   if (detail) return detail;
-  const list = qc.getQueryData<Chat[]>(chatKeys.list());
+  const profileId = useUserProfileStore.getState().activeProfileId;
+  const list = profileId ? qc.getQueryData<Chat[]>(chatKeys.listForProfile(profileId)) : undefined;
   return list?.find((chat) => chat.id === chatId);
 }
 
@@ -1326,15 +1330,19 @@ export function useGenerate() {
       // Optimistically show the user message in the chat immediately
       if (hasVisibleUserMessagePayload(params.userMessage, pendingAttachments) && !params.impersonate) {
         // Build persona snapshot for per-message persona tracking
-        const cachedPersonas = qc.getQueryData<Persona[]>(characterKeys.personas);
+        const currentProfileId = useUserProfileStore.getState().activeProfileId;
         const activeChat =
-          qc.getQueryData<any>(chatKeys.detail(params.chatId)) ??
-          (qc.getQueryData<any[]>(chatKeys.list()) ?? []).find((c: any) => c.id === params.chatId);
-        const chatPersonaId = activeChat?.personaId as string | null | undefined;
+          qc.getQueryData<Chat>(chatKeys.detail(params.chatId)) ??
+          (currentProfileId ? qc.getQueryData<Chat[]>(chatKeys.listForProfile(currentProfileId)) : undefined)?.find(
+            (chat) => chat.id === params.chatId,
+          );
+        const chatPersonaId = activeChat?.personaId;
         // Roleplay may intentionally have no Persona. Keep optimistic snapshot
         // stamping identical to the server's Conversation-only fallback policy.
+        const activeProfilePersonaId = useUserProfileStore.getState().activeProfile?.activePersonaId;
+        const cachedPersonas = qc.getQueryData<Persona[]>(characterKeys.personas);
         const snapshotPersona = cachedPersonas
-          ? resolveChatPersonaCandidate(cachedPersonas, chatPersonaId, activeChat?.mode)
+          ? resolveChatPersonaCandidate(cachedPersonas, chatPersonaId, activeChat?.mode, activeProfilePersonaId)
           : null;
         const personaSnapshot = snapshotPersona
           ? {
@@ -1698,14 +1706,15 @@ export function useGenerate() {
 
       try {
         const {
-          userStatus,
-          userActivity,
           debugMode,
           trimIncompleteModelOutput,
           continueAddsNewline,
           musicPlayerEnabled,
           musicPlayerSource,
         } = useUIStore.getState();
+        const profileContinuity = useUserProfileStore.getState().activeProfile;
+        const userStatus = profileContinuity?.userStatus ?? "active";
+        const userActivity = profileContinuity?.userActivity ?? "";
         const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
 
         // Flush any pending game-state widget edits so the server sees them before committing
@@ -2142,7 +2151,10 @@ export function useGenerate() {
                       identity.avatarUrl,
                       identity.avatarCrop,
                     );
-                  const chatList = qc.getQueryData<Chat[]>(chatKeys.list());
+                  const activeProfileId = useUserProfileStore.getState().activeProfileId;
+                  const chatList = activeProfileId
+                    ? qc.getQueryData<Chat[]>(chatKeys.listForProfile(activeProfileId))
+                    : undefined;
                   const thisChat = chatList?.find((c) => c.id === params.chatId);
                   const isRpMode = thisChat?.mode === "roleplay";
                   const soundOn = isRpMode
@@ -2519,7 +2531,8 @@ export function useGenerate() {
               } else {
                 qc.invalidateQueries({ queryKey: chatKeys.messages(callChatId) });
               }
-              qc.invalidateQueries({ queryKey: chatKeys.list() });
+              const callProfileId = getCachedChatForGeneration(qc, callChatId)?.profileId;
+              if (callProfileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(callProfileId) });
 
               if (callId && !isChatSurfaceVisible(callChatId)) {
                 const identity = resolveCachedCharacterIdentity(qc, characterId);
@@ -3022,7 +3035,8 @@ export function useGenerate() {
           gameTurnLoadedSoundPlayed = true;
         }
         // Re-sort sidebar so this chat floats to the top
-        qc.invalidateQueries({ queryKey: chatKeys.list() });
+        const generatedChatProfileId = getCachedChatForGeneration(qc, params.chatId)?.profileId;
+        if (generatedChatProfileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(generatedChatProfileId) });
         // If the user navigated away from this chat during generation,
         // increment unread badge + play notification sound so they know.
         // Only notify if actual content was produced (skip offline/error cases).
@@ -3035,7 +3049,10 @@ export function useGenerate() {
         if (notificationEligibleContent && currentActive !== params.chatId) {
           useChatStore.getState().incrementUnread(params.chatId);
           // Show floating avatar notification bubble — look up character from cache
-          const chatList = qc.getQueryData<Chat[]>(chatKeys.list());
+          const activeProfileId = useUserProfileStore.getState().activeProfileId;
+          const chatList = activeProfileId
+            ? qc.getQueryData<Chat[]>(chatKeys.listForProfile(activeProfileId))
+            : undefined;
           const chat = chatList?.find((c) => c.id === params.chatId);
           const rawIds = chat?.characterIds;
           const parsedIds: string[] =

@@ -27,6 +27,7 @@ import {
   PersonalExtensionContributionsMenu,
   PersonalExtensionTopbarButtons,
 } from "./PersonalExtensionContributionsMenu";
+import { UserProfileSwitcher } from "./UserProfileSwitcher";
 
 type RightPanelButtonPanel = "lorebooks" | "presets" | "connections" | "agents" | "personas";
 
@@ -328,6 +329,7 @@ export function TopBar() {
             )}
           </button>
         </div>
+        <UserProfileSwitcher />
         {showMusicDjUnavailablePlayer ? (
           <MusicDjUnavailablePlayer floating={spotifyUseFloatingFallback} />
         ) : musicDjInstalled ? (

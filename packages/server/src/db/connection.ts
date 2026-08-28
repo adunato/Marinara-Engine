@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { logger } from "../lib/logger.js";
 import { createFileNativeDB, type FileNativeDB, type FileNativeStoreController } from "./file-backed-store.js";
+import { ensureDefaultUserProfile } from "./user-profile-migration.js";
 
 type DbCleanup = () => void | Promise<void>;
 
@@ -17,6 +18,7 @@ async function createStorage(): Promise<DB> {
     await fileStore?.close();
     fileStore = null;
   };
+  await ensureDefaultUserProfile(db);
   return db;
 }
 

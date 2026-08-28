@@ -6,7 +6,7 @@
 // The active chat's autonomous messaging is handled by ConversationView.
 
 import { useEffect, useRef } from "react";
-import { normalizeAvatarCrop, type AvatarCrop, type Chat, type Message } from "@marinara-engine/shared";
+import { normalizeAvatarCrop, type AvatarCrop, type Chat, type Message, type UserProfile } from "@marinara-engine/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "../lib/api-client";
@@ -18,6 +18,9 @@ import { playConfiguredNotificationPing } from "../lib/notification-sound";
 import { chatKeys } from "./use-chats";
 import { characterKeys } from "./use-characters";
 import { upsertPersistedMessages } from "./use-generate";
+import { homeFeedKeys } from "./use-home-feed";
+import { userProfileKeys } from "./use-user-profiles";
+import { useUserProfileStore } from "../stores/user-profile.store";
 
 interface AutonomousCheckResult {
   shouldTrigger: boolean;
@@ -34,26 +37,10 @@ interface BusyDelayResult {
   activity: string;
 }
 
-interface RawChat {
-  id: string;
-  name: string;
-  mode?: string;
-  metadata?: string | Record<string, unknown>;
-}
-
 interface RawCharacter {
   id: string;
   data?: string | { name?: string };
   avatarPath?: string | null;
-}
-
-/**
- * Parse chat metadata safely from either a JSON string or an object.
- */
-function parseMeta(chat: RawChat): Record<string, unknown> {
-  const raw = chat.metadata;
-  if (!raw) return {};
-  return typeof raw === "string" ? JSON.parse(raw) : raw;
 }
 
 /**
@@ -69,32 +56,22 @@ function parseMeta(chat: RawChat): Record<string, unknown> {
  */
 let candidatesEndpointUnavailable = false;
 
-async function fetchAutonomousCandidates(): Promise<Array<{ id: string }>> {
+async function fetchAutonomousCandidates(): Promise<Array<{ id: string; profileId: string }>> {
   if (!candidatesEndpointUnavailable) {
     try {
-      const candidates = await api.get<Array<{ id: string }>>("/chats/autonomous-candidates");
-      if (Array.isArray(candidates) && candidates.every((entry) => entry && typeof entry.id === "string")) {
+      const candidates = await api.get<Array<{ id: string; profileId: string }>>("/chats/autonomous-candidates");
+      if (Array.isArray(candidates) && candidates.every((entry) => entry && typeof entry.id === "string" && typeof entry.profileId === "string")) {
         return candidates;
       }
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
         candidatesEndpointUnavailable = true;
-        console.debug("[background-autonomous] Server predates /chats/autonomous-candidates; using legacy chat-list polling");
+        console.debug("[background-autonomous] Server predates profile-aware autonomous candidates; background polling is disabled");
       }
       // Fall through to the legacy path either way.
     }
   }
-  const allChats = await api.get<RawChat[]>("/chats");
-  return allChats.filter((chat) => {
-    if (chat.mode !== "conversation") return false;
-    try {
-      const meta = parseMeta(chat);
-      if (meta.internalAssistant === "professor-mari") return false;
-      return !!meta.autonomousMessages;
-    } catch {
-      return false;
-    }
-  });
+  return [];
 }
 
 /**
@@ -130,7 +107,7 @@ export function useBackgroundAutonomousPolling() {
       // (plus ran the DM-cleanup scans) every 30 seconds. Fetching directly
       // rather than via useChats() also keeps the effect free of data deps
       // that would restart the timer.
-      let candidateChats: Array<{ id: string }>;
+      let candidateChats: Array<{ id: string; profileId: string }>;
       try {
         candidateChats = await fetchAutonomousCandidates();
       } catch {
@@ -146,26 +123,22 @@ export function useBackgroundAutonomousPolling() {
         return true;
       });
 
-      const userStatus = useUIStore.getState().userStatus;
-      const autonomousPresenceStatus = toAutonomousPresenceStatus(userStatus);
-
-      // Don't trigger autonomous messages when user is DND
-      if (shouldSuppressAutonomousMessages(userStatus) || backgroundChats.length === 0) {
-        if (shouldSuppressAutonomousMessages(userStatus) && backgroundChats.length > 0) {
-          await Promise.allSettled(
-            backgroundChats.map((chat) =>
-              api
-                .post("/conversation/activity/presence", { chatId: chat.id, userStatus: autonomousPresenceStatus })
-                .catch(() => {}),
-            ),
-          );
-        }
+      if (backgroundChats.length === 0) {
         schedulePoll();
         return;
       }
+      const profiles = qc.getQueryData<UserProfile[]>(userProfileKeys.list()) ?? (await api.get<UserProfile[]>("/user-profiles"));
+      const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
 
       // Check each background chat (sequentially to avoid hammering the server)
       for (const chat of backgroundChats) {
+        const profile = profilesById.get(chat.profileId);
+        if (!profile) continue;
+        const autonomousPresenceStatus = toAutonomousPresenceStatus(profile.userStatus);
+        if (shouldSuppressAutonomousMessages(profile.userStatus)) {
+          await api.post("/conversation/activity/presence", { chatId: chat.id, userStatus: autonomousPresenceStatus }).catch(() => {});
+          continue;
+        }
         // Don't proceed if this chat already has an in-flight generation
         if (useChatStore.getState().abortControllers.has(chat.id)) continue;
 
@@ -189,7 +162,7 @@ export function useBackgroundAutonomousPolling() {
               const savedMessages = new Map<string, Message>();
               let shouldClearAutonomousFlag = true;
               try {
-                const currentUserStatus = useUIStore.getState().userStatus;
+                const currentUserStatus = profilesById.get(chat.profileId)?.userStatus ?? "active";
                 if (shouldSuppressAutonomousMessages(currentUserStatus)) {
                   await api
                     .post("/conversation/activity/presence", {
@@ -282,7 +255,8 @@ export function useBackgroundAutonomousPolling() {
                   .post<Chat>(`/chats/${chat.id}/autonomous-unread`, { characterId })
                   .then((updatedChat) => {
                     qc.setQueryData(chatKeys.detail(chat.id), updatedChat);
-                    qc.invalidateQueries({ queryKey: chatKeys.list() });
+                    qc.invalidateQueries({ queryKey: chatKeys.listForProfile(chat.profileId) });
+                    qc.invalidateQueries({ queryKey: homeFeedKeys.snapshotForProfile(chat.profileId) });
                   })
                   .catch(() => {
                     /* persistence is best-effort; keep the local notification */
@@ -305,7 +279,10 @@ export function useBackgroundAutonomousPolling() {
                   /* use fallback name */
                 }
 
-                // Play notification sound
+                const profileIsActive = useUserProfileStore.getState().activeProfileId === chat.profileId;
+                if (!profileIsActive) return;
+
+                // Play notification sound only for the active User Profile.
                 const uiState = useUIStore.getState();
                 playConfiguredNotificationPing(
                   uiState.convoNotificationSound,

@@ -83,6 +83,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { useUIStore, type MariEditViewMode, type MariPanelSortMode } from "../../stores/ui.store";
+import { useUserProfileStore } from "../../stores/user-profile.store";
 import { MariEditEasyViewer } from "./MariEditEasyViewer";
 import { MariPromptPreviewModal, type MariPromptRenderSide } from "./MariPromptPreviewModal";
 import { showLocalMessageNotification, showNativeMessageNotification } from "../../lib/local-notifications";
@@ -3075,6 +3076,7 @@ export function HomeProfessorMariChat({
   const { t: localizeUi } = useUiTranslation();
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const activeProfileId = useUserProfileStore((state) => state.activeProfileId);
   const { data: connectionsRaw, isLoading: connectionsLoading } = useConnections();
   const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
   const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
@@ -3381,9 +3383,10 @@ export function HomeProfessorMariChat({
   );
 
   const loadChatHistory = useCallback(async () => {
+    if (!activeProfileId) return;
     setChatHistoryLoading(true);
     try {
-      const items = await api.get<ProfessorMariChatSummary[]>("/chats/internal/professor-mari/chats");
+      const items = await api.get<ProfessorMariChatSummary[]>(`/chats/internal/professor-mari/chats?profileId=${encodeURIComponent(activeProfileId)}`);
       setChatHistory(items);
       setSelectedChatHistoryIds((current) => {
         const availableIds = new Set(items.map((item) => item.id));
@@ -3392,7 +3395,7 @@ export function HomeProfessorMariChat({
     } finally {
       setChatHistoryLoading(false);
     }
-  }, []);
+  }, [activeProfileId]);
 
   const loadSkills = useCallback(async () => {
     setSkillsLoading(true);
@@ -3438,15 +3441,17 @@ export function HomeProfessorMariChat({
 
   const ensureProfessorMariChat = useCallback(
     async (connectionId: string | null) => {
+      if (!activeProfileId) throw new Error("No active User Profile");
       const params = new URLSearchParams();
       if (connectionId) params.set("connectionId", connectionId);
+      params.set("profileId", activeProfileId);
       const query = params.toString();
       const chat = await api.get<Chat>(`/chats/internal/professor-mari${query ? `?${query}` : ""}`);
       setActiveChatId(chat.id);
       qc.setQueryData(chatKeys.detail(chat.id), chat);
       return chat;
     },
-    [qc, setActiveChatId],
+    [activeProfileId, qc, setActiveChatId],
   );
 
   const refreshWorkspaceStatus = useCallback(
@@ -3891,8 +3896,10 @@ export function HomeProfessorMariChat({
   );
 
   const handleRestart = useCallback(async () => {
+    if (!activeProfileId) return;
     const params = new URLSearchParams();
     if (effectiveConnectionId) params.set("connectionId", effectiveConnectionId);
+    params.set("profileId", activeProfileId);
     const query = params.toString();
     const chat = await api.post<Chat>(`/chats/internal/professor-mari/restart${query ? `?${query}` : ""}`);
     setActiveChatId(chat.id);
@@ -4379,7 +4386,8 @@ export function HomeProfessorMariChat({
         return;
       }
       try {
-        const chat = await api.post<Chat>(`/chats/internal/professor-mari/chats/${id}/activate`);
+        if (!activeProfileId) throw new Error("No active User Profile");
+        const chat = await api.post<Chat>(`/chats/internal/professor-mari/chats/${id}/activate?profileId=${encodeURIComponent(activeProfileId)}`);
         setActiveChatId(chat.id);
         qc.setQueryData(chatKeys.detail(chat.id), chat);
         setSkillsMenuOpen(false);
@@ -4406,7 +4414,8 @@ export function HomeProfessorMariChat({
       const name = renameDraft.trim();
       if (!name) return;
       try {
-        await api.patch(`/chats/internal/professor-mari/chats/${id}`, { name });
+        if (!activeProfileId) throw new Error("No active User Profile");
+        await api.patch(`/chats/internal/professor-mari/chats/${id}?profileId=${encodeURIComponent(activeProfileId)}`, { name });
         setRenamingChatId(null);
         setRenameDraft("");
         await Promise.all([
@@ -4440,7 +4449,8 @@ export function HomeProfessorMariChat({
         return true;
       }
       try {
-        await api.patch(`/chats/internal/professor-mari/chats/${chatId}`, { name });
+        if (!activeProfileId) throw new Error("No active User Profile");
+        await api.patch(`/chats/internal/professor-mari/chats/${chatId}?profileId=${encodeURIComponent(activeProfileId)}`, { name });
         setDraft("");
         await Promise.all([
           loadChatHistory(),
@@ -4475,7 +4485,8 @@ export function HomeProfessorMariChat({
       });
       if (!confirmed) return;
       try {
-        await api.delete(`/chats/internal/professor-mari/chats/${id}`);
+        if (!activeProfileId) throw new Error("No active User Profile");
+        await api.delete(`/chats/internal/professor-mari/chats/${id}?profileId=${encodeURIComponent(activeProfileId)}`);
         if (id === chatId) {
           const chat = await ensureProfessorMariChat(effectiveConnectionId);
           setActiveChatId(chat.id);
@@ -4526,7 +4537,7 @@ export function HomeProfessorMariChat({
     const selectedIds = [...selectedChatHistoryIds];
     try {
       const results = await Promise.allSettled(
-        selectedIds.map((id) => api.delete(`/chats/internal/professor-mari/chats/${id}`)),
+        selectedIds.map((id) => api.delete(`/chats/internal/professor-mari/chats/${id}?profileId=${encodeURIComponent(activeProfileId ?? "")}`)),
       );
       const deletedIds = new Set(selectedIds.filter((_, index) => results[index]?.status === "fulfilled"));
       const failedDeletion = results.find((result) => result.status === "rejected");

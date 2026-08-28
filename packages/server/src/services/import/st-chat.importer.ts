@@ -4,7 +4,7 @@
 import type { DB } from "../../db/connection.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { createSpatialContextStorage } from "../storage/spatial-context.storage.js";
-import { SPATIAL_CONTEXT_LIMITS, type ChatMode } from "@marinara-engine/shared";
+import { DEFAULT_USER_PROFILE_ID, SPATIAL_CONTEXT_LIMITS, type ChatMode } from "@marinara-engine/shared";
 import {
   latestTrustedTimestamp,
   normalizeTimestampOverrides,
@@ -414,6 +414,7 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
       personaId: opts?.personaId ?? null,
       promptPresetId: opts?.promptPresetId ?? null,
       connectionId: opts?.connectionId ?? null,
+      profileId: DEFAULT_USER_PROFILE_ID,
     },
     chatTimestamps,
   );

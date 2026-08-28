@@ -1,6 +1,8 @@
 import {
   compileChatSummaryEntries,
+  isSameUserProfileOwnership,
   normalizeChatSummaryEntries,
+  resolveChatPersonaCandidate,
   shouldIncludeConversationSummaryMemories,
   type WrapFormat,
 } from "@marinara-engine/shared";
@@ -11,6 +13,7 @@ import { chats, messages } from "../../db/schema/index.js";
 import { wrapContent } from "../prompt/format-engine.js";
 import { sanitizePromptLeaf } from "../prompt/prompt-escaping.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
+import { createUserProfilesStorage } from "../storage/user-profiles.storage.js";
 import { normalizeDaySummaries, normalizeWeekSummaries, parseConversationDateKey } from "./auto-summary.service.js";
 import {
   LAST_DAILY_MEMORY_RETRIEVAL_METADATA_KEY,
@@ -29,6 +32,7 @@ interface ChatRow {
   name: string;
   characterIds: string;
   mode: string;
+  profileId: string;
   personaId: string | null;
   metadata: string;
 }
@@ -237,6 +241,7 @@ export async function buildAwarenessBlock(
   fallbackPersonaName: string,
   timeZone?: string,
   wrapFormat: WrapFormat = "xml",
+  ownerProfileId?: string | null,
 ): Promise<string | null> {
   const conversationChats = (await db
     .select({
@@ -244,6 +249,7 @@ export async function buildAwarenessBlock(
       name: chats.name,
       characterIds: chats.characterIds,
       mode: chats.mode,
+      profileId: chats.profileId,
       personaId: chats.personaId,
       metadata: chats.metadata,
     })
@@ -252,6 +258,16 @@ export async function buildAwarenessBlock(
   const sourceChats = selectCrossChatSourceChats(conversationChats, currentChatId, currentCharacterIds);
   if (sourceChats.length === 0) return null;
 
+  // Awareness must not leak content between profiles; keep only source chats owned by the request's profile.
+  const ownedSourceChats = sourceChats.filter((chat) => isSameUserProfileOwnership(ownerProfileId, chat.profileId));
+  if (ownedSourceChats.length === 0) return null;
+
+  // Resolve the owning profile's active persona once so per-chat fallbacks never cross profiles.
+  const ownerProfile =
+    typeof ownerProfileId === "string" ? await createUserProfilesStorage(db).getById(ownerProfileId) : null;
+  const profileActivePersonaId: string | null | undefined =
+    ownerProfileId === undefined ? undefined : (ownerProfile?.activePersonaId ?? null);
+
   const characterStorage = createCharactersStorage(db);
   const [characterRows, personas] = await Promise.all([characterStorage.list(), characterStorage.listPersonas()]);
   const allCharacterNames = new Map<string, string>();
@@ -259,14 +275,13 @@ export async function buildAwarenessBlock(
     const name = asRecord(row.data).name;
     if (typeof name === "string" && name.trim()) allCharacterNames.set(row.id, name.trim());
   }
-  const activePersona = personas.find((persona) => persona.isActive === "true");
 
   const conversationBlocks: string[] = [];
-  for (const chat of sourceChats) {
+  for (const chat of ownedSourceChats) {
     const characterIds = parseCharacterIds(chat.characterIds);
     const sourceMetadata = asRecord(chat.metadata);
     const sourceTimeZone = resolveConversationTimeZone(sourceMetadata) ?? timeZone;
-    const persona = chat.personaId ? personas.find((entry) => entry.id === chat.personaId) : activePersona;
+    const persona = resolveChatPersonaCandidate(personas, chat.personaId, "conversation", profileActivePersonaId);
     const personaName = persona?.name?.trim() || fallbackPersonaName || "User";
     const memberNames = characterIds.map((id) => allCharacterNames.get(id) ?? `Unknown character (${id})`);
     memberNames.push(personaName);

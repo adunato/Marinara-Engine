@@ -58,7 +58,7 @@ export function buildHierarchicalMapsSelectionCorrectionPatch(
 export async function migrateLegacyChatCapabilitySelections(db: DB) {
   const chats = createChatsStorage(db);
   let updated = 0;
-  for (const chat of await chats.list()) {
+  for (const chat of await chats.listAll()) {
     const patch = buildLegacyChatCapabilityPatch(chat);
     if (!patch) continue;
     await chats.patchMetadata(chat.id, patch, { touchUpdatedAt: false });
@@ -73,7 +73,7 @@ export async function correctLegacyHierarchicalMapsSelections(db: DB) {
   const snapshotRows = await db.select({ chatId: spatialContextSnapshots.chatId }).from(spatialContextSnapshots);
   const chatsWithSnapshots = new Set(snapshotRows.map((row) => row.chatId));
   let updated = 0;
-  for (const chat of await chats.list()) {
+  for (const chat of await chats.listAll()) {
     const patch = buildHierarchicalMapsSelectionCorrectionPatch(chat, chatsWithSnapshots.has(chat.id));
     if (!patch) continue;
     await chats.patchMetadata(chat.id, patch, { touchUpdatedAt: false });

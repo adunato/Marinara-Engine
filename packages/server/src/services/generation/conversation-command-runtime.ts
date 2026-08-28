@@ -27,7 +27,7 @@ type CharacterRowForCommands = {
 };
 
 type ConversationCommandsChatsStore = {
-  list(): Promise<ChatRowForCommands[]>;
+  list(profileId: string): Promise<ChatRowForCommands[]>;
 };
 
 type ConversationCommandsCharactersStore = {
@@ -136,6 +136,7 @@ export async function buildConversationCommandsReminder(args: {
   characterIds: string[];
   personaName: string;
   chatId: string;
+  ownerProfileId: string;
   musicPlayerEnabled?: boolean;
   musicPlayerSource?: string | null;
   chats: ConversationCommandsChatsStore;
@@ -168,7 +169,7 @@ export async function buildConversationCommandsReminder(args: {
         : "spotify";
 
   // Discover other chats this character is in (for cross_post targets + memory targets)
-  const allChatsForCrossPost = await args.chats.list();
+  const allChatsForCrossPost = await args.chats.list(args.ownerProfileId);
   const crossPostTargets: string[] = [];
   const memoryTargetCharIds = new Set<string>();
   for (const c of allChatsForCrossPost) {

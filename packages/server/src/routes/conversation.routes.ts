@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
+import { createUserProfilesStorage } from "../services/storage/user-profiles.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import {
@@ -16,6 +17,7 @@ import {
   PROVIDERS,
   localAuthProviderBaseUrl,
   shouldIncludeConversationSummaryMemories,
+  userProfileIdSchema,
 } from "@marinara-engine/shared";
 import type { CharacterData, ConversationStatusOverride } from "@marinara-engine/shared";
 import {
@@ -381,9 +383,10 @@ export async function conversationRoutes(app: FastifyInstance) {
   const chats = createChatsStorage(app.db);
   const chars = createCharactersStorage(app.db);
   const connections = createConnectionsStorage(app.db);
+  const profiles = createUserProfilesStorage(app.db);
 
-  async function rememberConversationTimeZone(timeZone: string): Promise<number> {
-    const allChats = await chats.list();
+  async function rememberConversationTimeZone(timeZone: string, profileId: string): Promise<number> {
+    const allChats = await chats.list(profileId);
     let updatedChats = 0;
     for (const chat of allChats) {
       if (chat.mode !== "conversation") continue;
@@ -469,11 +472,14 @@ export async function conversationRoutes(app: FastifyInstance) {
   }
 
   app.put<{
-    Body: { timeZone?: unknown };
+    Body: { timeZone?: unknown; profileId?: unknown };
   }>("/schedule/timezone", async (req, reply) => {
     const timeZone = normalizePromptTimeZone(req.body.timeZone);
     if (!timeZone) return reply.status(400).send({ error: "timeZone must be a valid IANA timezone" });
-    const updatedChats = await rememberConversationTimeZone(timeZone);
+    const profileId = userProfileIdSchema.safeParse(req.body.profileId);
+    if (!profileId.success) return reply.status(400).send({ error: "profileId is required" });
+    if (!(await profiles.getById(profileId.data))) return reply.status(404).send({ error: "User profile not found" });
+    const updatedChats = await rememberConversationTimeZone(timeZone, profileId.data);
     return reply.send({ timeZone, updatedChats });
   });
 
@@ -499,7 +505,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     if (req.body.timeZone != null && !requestedTimeZone) {
       return reply.status(400).send({ error: "timeZone must be a valid IANA timezone" });
     }
-    if (requestedTimeZone) await rememberConversationTimeZone(requestedTimeZone);
+    if (requestedTimeZone) await rememberConversationTimeZone(requestedTimeZone, context.chat.profileId);
     const contextMeta =
       typeof context.chat.metadata === "string" ? JSON.parse(context.chat.metadata) : (context.chat.metadata ?? {});
     const scheduleTimeZone = requestedTimeZone ?? resolveConversationTimeZone(contextMeta);
@@ -603,7 +609,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     if (req.body.timeZone != null && !requestedTimeZone) {
       return reply.status(400).send({ error: "timeZone must be a valid IANA timezone" });
     }
-    if (requestedTimeZone) await rememberConversationTimeZone(requestedTimeZone);
+    if (requestedTimeZone) await rememberConversationTimeZone(requestedTimeZone, chat.profileId);
 
     // Resolve connection (need decrypted API key; "random" is a sentinel, not a persisted connection id)
     const { conn, error: connectionError } = await resolveConversationScheduleConnection(
@@ -658,7 +664,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     const getOtherChatSchedules = async (): Promise<Map<string, WeekSchedule>> => {
       if (otherChatSchedules) return otherChatSchedules;
       otherChatSchedules = new Map();
-      const allChats = await chats.list();
+      const allChats = await chats.list(chat.profileId);
       for (const c of allChats) {
         if (c.id === chatId || c.mode !== "conversation") continue;
         const m = typeof c.metadata === "string" ? JSON.parse(c.metadata as string) : (c.metadata ?? {});
@@ -798,7 +804,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         .filter(([, r]) => r.status === "generated")
         .map(([id]) => id);
       if (generatedCharIds.length > 0) {
-        const allChats = await chats.list();
+        const allChats = await chats.list(chat.profileId);
         for (const c of allChats) {
           if (c.id === chatId || c.mode !== "conversation") continue;
           const cCharIds: string[] =

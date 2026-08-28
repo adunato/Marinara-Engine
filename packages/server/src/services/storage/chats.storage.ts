@@ -18,6 +18,7 @@ import {
 import type { DB } from "../../db/connection.js";
 import {
   chats,
+  chatFolders,
   messages,
   messageSwipes,
   gameStateSnapshots,
@@ -447,13 +448,14 @@ export function createChatsStorage(db: DB) {
 
   async function collectFreshConversationSchedules(
     characterIds: string[],
+    profileId: string,
     excludeChatId?: string,
   ): Promise<CharacterSchedules> {
     const wanted = new Set(characterIds);
     const sharedSchedules: CharacterSchedules = {};
     if (wanted.size === 0) return sharedSchedules;
 
-    const allChats = await db.select().from(chats).orderBy(desc(chats.updatedAt));
+    const allChats = await db.select().from(chats).where(eq(chats.profileId, profileId)).orderBy(desc(chats.updatedAt));
     for (const chat of allChats) {
       if (chat.id === excludeChatId || chat.mode !== "conversation") continue;
       const meta = parseMetadata(chat.metadata);
@@ -563,30 +565,43 @@ export function createChatsStorage(db: DB) {
   }
 
   return {
-    async list() {
+    async list(profileId: string) {
+      await ensureChatLastMessageAtBackfilled();
+      return db.select().from(chats).where(eq(chats.profileId, profileId)).orderBy(desc(chats.updatedAt));
+    },
+
+    // Explicitly reserved for maintenance and background workflows that must
+    // inspect every profile. Conversational callers must use list(profileId).
+    async listAll() {
       await ensureChatLastMessageAtBackfilled();
       return db.select().from(chats).orderBy(desc(chats.updatedAt));
     },
 
-    async listRecent(limit: number, offset = 0) {
+    async listRecent(profileId: string, limit: number, offset = 0) {
       return db
         .select()
         .from(chats)
+        .where(eq(chats.profileId, profileId))
         .orderBy(desc(chats.updatedAt), desc(chats.id))
         .offset(Math.max(0, Math.floor(offset)))
         .limit(Math.max(1, Math.min(100, Math.floor(limit))));
     },
-
     async getById(id: string) {
       const rows = await db.select().from(chats).where(eq(chats.id, id));
       return rows[0] ?? null;
     },
 
     async create(input: CreateChatInput, timestampOverrides?: TimestampOverrides | null) {
+      if (input.groupId) {
+        const siblings = await db.select({ profileId: chats.profileId }).from(chats).where(eq(chats.groupId, input.groupId));
+        if (siblings.some((sibling) => sibling.profileId !== input.profileId)) {
+          throw new Error("Cannot create a branch in another profile's chat group");
+        }
+      }
       const id = newId();
       const timestamp = resolveTimestamps(timestampOverrides);
       const inheritedSchedules =
-        input.mode === "conversation" ? await collectFreshConversationSchedules(input.characterIds) : {};
+        input.mode === "conversation" ? await collectFreshConversationSchedules(input.characterIds, input.profileId) : {};
       const metadata: MetadataPatch = {
         summary: null,
         tags: [],
@@ -610,6 +625,7 @@ export function createChatsStorage(db: DB) {
         personaId: input.personaId,
         promptPresetId: input.promptPresetId,
         connectionId: input.connectionId,
+        profileId: input.profileId,
         metadata: JSON.stringify(metadata),
         lastMessageAt: null,
         createdAt: timestamp.createdAt,
@@ -634,7 +650,7 @@ export function createChatsStorage(db: DB) {
       });
       if (missingOrStaleIds.length === 0) return currentSchedules;
 
-      const sharedSchedules = await collectFreshConversationSchedules(missingOrStaleIds, id);
+      const sharedSchedules = await collectFreshConversationSchedules(missingOrStaleIds, chat.profileId, id);
       if (!hasConversationSchedules(sharedSchedules)) return currentSchedules;
 
       const nextSchedules: CharacterSchedules = { ...currentSchedules, ...sharedSchedules };
@@ -702,8 +718,14 @@ export function createChatsStorage(db: DB) {
       const rows = await conn.select().from(chats).where(eq(chats.id, chatId));
       const chat = rows[0];
       if (!chat) return null;
+      if (folderId) {
+        const folders = await conn.select().from(chatFolders).where(eq(chatFolders.id, folderId));
+        if (!folders[0] || folders[0].profileId !== chat.profileId) {
+          throw new Error("Cannot assign a chat to a folder in another profile");
+        }
+      }
       if (chat.groupId) {
-        await conn.update(chats).set({ folderId }).where(eq(chats.groupId, chat.groupId));
+        await conn.update(chats).set({ folderId }).where(and(eq(chats.groupId, chat.groupId), eq(chats.profileId, chat.profileId)));
         await conn.update(chats).set({ updatedAt: now() }).where(eq(chats.id, chatId));
       } else {
         await conn.update(chats).set({ folderId, updatedAt: now() }).where(eq(chats.id, chatId));
@@ -852,7 +874,7 @@ export function createChatsStorage(db: DB) {
     },
 
     async removeLorebookFromChatMetadata(lorebookId: string) {
-      const allChats = await this.list();
+      const allChats = await this.listAll();
       for (const chat of allChats) {
         const metadata = parseMetadata(chat.metadata);
         if (!Array.isArray(metadata.activeLorebookIds)) continue;

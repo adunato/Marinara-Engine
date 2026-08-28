@@ -13,6 +13,7 @@ import { useMemo } from "react";
 import { api } from "../lib/api-client";
 import type { ChatGalleryIndex } from "../lib/card-asset-links";
 import { useUIStore } from "../stores/ui.store";
+import { useUserProfileStore } from "../stores/user-profile.store";
 import {
   collectAllPaginatedItems,
   flattenPaginatedItems,
@@ -1097,13 +1098,8 @@ export function usePersona(id: string | null) {
 }
 
 export function useActivePersona(enabled = true) {
-  return useQuery({
-    queryKey: characterKeys.personaActive(),
-    queryFn: () => api.get<Persona | null>("/characters/personas/active"),
-    enabled,
-    retry: false,
-    staleTime: 5 * 60_000,
-  });
+  const personaId = useUserProfileStore((state) => state.activeProfile?.activePersonaId ?? null);
+  return usePersona(enabled ? personaId : null);
 }
 
 export function useCreatePersona() {
@@ -1233,11 +1229,15 @@ export function useDuplicatePersona() {
 
 export function useActivatePersona() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
+  const patchActiveProfile = useUserProfileStore((state) => state.patchActiveProfile);
   return useMutation({
-    mutationFn: (id: string) => api.put<{ success: true }>(`/characters/personas/${id}/activate`, {}),
+    mutationFn: (id: string) => {
+      if (!profileId) throw new Error("No active User Profile");
+      return api.patch(`/user-profiles/${profileId}`, { activePersonaId: id });
+    },
     onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: characterKeys.personas });
-      qc.invalidateQueries({ queryKey: characterKeys.personaActive() });
+      patchActiveProfile({ activePersonaId: id });
       qc.invalidateQueries({ queryKey: characterKeys.personaDetail(id) });
     },
   });

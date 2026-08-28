@@ -123,7 +123,7 @@ export async function capabilityPackagesRoutes(app: FastifyInstance) {
     const removed = await capabilityPackageManager.uninstall(id);
     if (!removed) return reply.status(404).send({ error: "Package not found" });
     const chats = createChatsStorage(app.db);
-    for (const chat of await chats.list()) {
+    for (const chat of await chats.listAll()) {
       let metadata: Record<string, unknown> = {};
       try {
         const parsed = typeof chat.metadata === "string" ? (JSON.parse(chat.metadata) as unknown) : chat.metadata;
