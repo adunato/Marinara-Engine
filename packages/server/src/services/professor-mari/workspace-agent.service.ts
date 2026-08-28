@@ -51,6 +51,9 @@ import {
   searchCanonicalDocumentation,
 } from "./documentation-tools.js";
 import {
+  ATTACHMENT_STYLE_IDS,
+  CHARACTER_PERSONALITY_MODEL_ID,
+  ENNEAGRAM_TYPE_IDS,
   GENERATION_PARAMETER_SEND_KEYS,
   findKnownModel,
   LOCAL_SIDECAR_CONNECTION_ID,
@@ -190,6 +193,7 @@ export const PROFESSOR_MARI_APP_DATA_ACTIONS = [
   "character.search",
   "character.create",
   "character.update",
+  "character.applyPersonalityModel",
   "character.folder.list",
   "character.moveToFolder",
   "persona.list",
@@ -423,7 +427,7 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
   {
     name: "app_data",
     description:
-      'Read or change live app data through structured actions, without shell commands. Use this for characters, character folders, personas, lorebooks, lorebook entries, themes, Personal Extension drafts, agents, prompt presets, and safe data-only Home widgets. lorebook.entries returns entry summaries; call lorebook.getEntry with entryId to read one complete entry body. Single-item reads (e.g. character.get) are size-bounded: oversized fields come back elided with a note naming each one — re-read any elided field in full by passing field="<path>" (e.g. field="data.alternate_greetings[0]"), optionally with offset to page through a long value.',
+      'Read or change live app data through structured actions, without shell commands. Use this for characters, character folders, personas, lorebooks, lorebook entries, themes, Personal Extension drafts, agents, prompt presets, and safe data-only Home widgets. For the canonical layered character personality model, character.create may include personalityModel and character.applyPersonalityModel reapplies the fixed personality + emotion profile to an existing character. lorebook.entries returns entry summaries; call lorebook.getEntry with entryId to read one complete entry body. Single-item reads (e.g. character.get) are size-bounded: oversized fields come back elided with a note naming each one — re-read any elided field in full by passing field="<path>" (e.g. field="data.alternate_greetings[0]"), optionally with offset to page through a long value.',
     parameters: {
       type: "object",
       properties: {
@@ -470,6 +474,17 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
         activate: { type: "boolean" },
         apply: { type: "boolean" },
         reason: { type: "string" },
+        personalityModel: {
+          type: "object",
+          description:
+            "Canonical layered character personality-model selection. Professor Mari chooses only the Enneagram core and attachment style; Marinara owns the fixed Pearson/emotion mapping and final card text.",
+          properties: {
+            modelId: { type: "string", enum: [CHARACTER_PERSONALITY_MODEL_ID] },
+            enneagramType: { type: "string", enum: [...ENNEAGRAM_TYPE_IDS] },
+            attachmentStyle: { type: "string", enum: [...ATTACHMENT_STYLE_IDS] },
+          },
+          required: ["enneagramType", "attachmentStyle"],
+        },
         data: {
           type: "object",
           description:
@@ -556,6 +571,7 @@ ${PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE}
 Workspace defaults:
 - Marinara's first-party agents and larger optional features are downloaded from **Agents → Download Agents**. Fresh installs start without them; maps, Conversation calls, and Conversation games are packages too. Tell users to install the desired package, enable it for the chat, and restart Marinara Engine when the catalog prompts them. Existing pre-package installs are migrated automatically without losing settings or history.
 - Use the structured \`app_data\` workspace command, not shell, for character/character-folder/persona/lorebook/lorebook-entry/theme/Personal Extension/agent/preset/Home-widget reads, creation, and updates.
+- For the canonical layered character personality model, select only the Enneagram type and attachment style, then pass them as \`personalityModel\` to \`character.create\` or \`character.applyPersonalityModel\`; never recreate the fixed Pearson conditional block or emotion-profile metadata yourself.
 - Use Mari CLI commands for images, wiki reads, code/workspace tasks, agents, tools, raw DB work, or anything \`app_data\` does not cover. Only write raw files when no CLI/helper path fits.
 - You may create and update Personal Extension drafts with \`personal_extension.create\` and \`personal_extension.update\`. These actions always disable changed code and clear its approval. Browser Extensions receive active chat and Character IDs through \`marinara.context\`; request \`read_active_characters\` or \`read_active_persona\` only when the extension truly needs bounded active-record fields. Never claim to approve, enable, or run an extension: only the user can review the exact code hash and requested permissions, then choose **Review and Run** in **Settings → Addons → Personal Extensions**.
 - For user-facing Browser Extension UI, use \`marinara.ui.registerContribution(...)\`. It can add a trusted Marinara-rendered top-bar button, Extensions menu item, right-side panel, or button in the Chats, Bots, Characters, Personas, Lorebooks, Presets, Connections, Agents, and Settings surfaces. For a side-panel \`button\`, set \`surface\` to the requested surface and choose \`position: "header"\`, \`"before-content"\`, or \`"after-content"\`; omit both fields for the top bar. The \`icon\` may be any kebab-case Lucide icon name supported by Marinara. Panels may contain headings, text, preformatted output, buttons, text inputs, selects, toggles, sliders, color controls, and spacers. Use \`onActivate\` and \`onEvent\` for behavior and update the returned handle when the view changes. Never write extension code that expects \`document\`, \`window\`, \`innerHTML\`, host CSS selectors, React internals, unrestricted \`fetch\`, or direct Marinara API access; those capabilities are deliberately absent.
@@ -642,11 +658,11 @@ ${MARI_GUIDED_SEQUENCES}
 
 \`app_data\` quick reference:
 - Reads: \`character.list|get|search|folder.list\`, \`persona.list|active|get|search\`, \`lorebook.list|get|entries|getEntry|search\`, \`theme.list|active|get\`, \`personal_extension.list|get|search\`, \`agent.list|get|search\`, \`preset.list|get|search|sections|getSection|groups|getGroup|choiceBlocks|getChoiceBlock\`, \`home_widget.list|get\`, \`instruction.list|get\`.
-- Writes: \`character.create|update|moveToFolder\`, \`persona.create|update\`, \`lorebook.create|update|addEntry|updateEntry|deleteEntry\`, \`theme.create|update|setActive\`, \`personal_extension.create|update\`, \`agent.create|update\`, \`preset.create|update|addSection|updateSection|deleteSection|addGroup|updateGroup|deleteGroup|addChoiceBlock|updateChoiceBlock|deleteChoiceBlock\`, \`home_widget.create|update|delete\`, \`instruction.remember|update|forget\`.
+- Writes: \`character.create|update|applyPersonalityModel|moveToFolder\`, \`persona.create|update\`, \`lorebook.create|update|addEntry|updateEntry|deleteEntry\`, \`theme.create|update|setActive\`, \`personal_extension.create|update\`, \`agent.create|update\`, \`preset.create|update|addSection|updateSection|deleteSection|addGroup|updateGroup|deleteGroup|addChoiceBlock|updateChoiceBlock|deleteChoiceBlock\`, \`home_widget.create|update|delete\`, \`instruction.remember|update|forget\`.
 - Character folders: call \`character.folder.list\` to resolve the destination, then \`character.moveToFolder\` with \`characterId\` and either \`folderId\` or \`folderName\`. A move removes the character from its previous folder. When the user explicitly asks for the move, set \`apply:true\`, then verify with \`character.folder.list\`.
 - Put write fields in \`data\` for creates and \`patch\` for updates. Use \`entryId\` for \`lorebook.updateEntry\`; use \`lorebookId\` only for a lorebook or for \`lorebook.addEntry\`.
 - New creates: use \`apply:true\` immediately for \`character.create\`, \`persona.create\`, \`lorebook.create\`, \`lorebook.addEntry\`, \`agent.create\`, \`preset.create\`, and non-activating \`theme.create\` when the user asked you to create it. Verify with a read before claiming success.
-- Character generation: put the full card in \`data\`; do not create a name-only placeholder. \`firstMes\` and \`firstMessage\` both map to the opening message.
+- Character generation: put the full card in \`data\`; do not create a name-only placeholder. \`firstMes\` and \`firstMessage\` both map to the opening message. When the bundled layered-personality skill is applicable, pass \`personalityModel\` alongside \`data\`; for an existing character use \`character.applyPersonalityModel\` with \`characterId\`, \`personalityModel\`, and \`apply:true\`.
 - About Me writing: read the target character or persona first, write the bio in their own voice, then put it in \`patch.aboutMe\` on the matching update action with \`apply:true\`.
 - Lorebook authoring: plan the entries first (premise, places, people, factions, rules), then create the whole book in one \`lorebook.create\` (Marinara saves the book and entries together, so never make an empty book to fill later). Set each entry deliberately:
   - Always-true world premise (the setting's ground rules) -> \`constant: true\`, no keys. Everything else is keyword-triggered.
@@ -823,9 +839,6 @@ function stringifyOutput(value: unknown): string {
   }
 }
 
-// Renders the structured read-bounding signal (#4767) into a short instruction
-// the model can act on, so a size-bounded read never looks like a silent cut.
-// The note itself is capped so it can never grow toward the output limit.
 const MARI_MAX_NOTE_FIELDS = 20;
 
 function formatMariReadTruncation(truncation: MariDbReadTruncation | undefined): string | null {
@@ -1305,8 +1318,6 @@ export function parseAssistantWorkspaceAction(content: string): AssistantWorkspa
   const { content: contentWithoutJson, matches } = removeJsonActionFrames(content);
   const jsonCommands = matches.flatMap((match) => parseJsonCommandCallsFromPayload(match.payload));
   const textualCommands = parseTextualWorkspaceCommandCalls(contentWithoutJson);
-  // If JSON frames are present, treat all prose outside them as protocol leakage.
-  // Textual calls have no visible-text field, so retain their surrounding prose.
   const inlineVisibleText = matches.length > 0 ? "" : stripWorkspaceCommands(contentWithoutJson);
   const frameVisibleText = matches
     .map((match) => jsonPayloadVisibleText(match.payload))
@@ -1813,9 +1824,6 @@ export class ProfessorMariWorkspaceService {
   private lastError: string | null = null;
   private active = false;
   private abortController: AbortController | null = null;
-  // Professor Mari is the only untrusted workspace writer. Serialize all of
-  // her mutations so path validation and the operation cannot overlap another
-  // agent mutation; user and host processes remain outside this sandbox boundary.
   private workspaceMutationTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly app: FastifyInstance) {}
@@ -1942,7 +1950,6 @@ export class ProfessorMariWorkspaceService {
     const persistAssistantMessage = async () => {
       const persistedText = assistantText.trim();
       if (!persistedText || assistantMessagePersisted) return null;
-
       const message = await chatStorage.createMessage({
         chatId: args.chatId,
         role: "assistant",
@@ -1951,7 +1958,6 @@ export class ProfessorMariWorkspaceService {
       });
       if (!message) return null;
       assistantMessagePersisted = true;
-
       const extraUpdate: Record<string, unknown> = {};
       const storedTrace = sanitizeTraceForStorage(workspaceTrace);
       if (thinkingText.trim()) extraUpdate.thinking = thinkingText;
@@ -2120,9 +2126,7 @@ export class ProfessorMariWorkspaceService {
           break;
         }
 
-        if (action.commands.length === 0) {
-          break;
-        }
+        if (action.commands.length === 0) break;
 
         const commandResults = await this.executeWorkspaceCommandBatch(
           action.commands,
@@ -2183,8 +2187,7 @@ export class ProfessorMariWorkspaceService {
             assistantText = appendVisibleText(assistantText, finalAction.visibleText);
             appendTraceText(workspaceTrace, finalAction.visibleText);
             for (const chunk of chunkText(finalAction.visibleText)) args.onEvent({ type: "token", data: chunk });
-            if (finalAction.suggestions.length > 0)
-              args.onEvent({ type: "suggestions", data: finalAction.suggestions });
+            if (finalAction.suggestions.length > 0) args.onEvent({ type: "suggestions", data: finalAction.suggestions });
             if (finalAction.plan.length > 0) args.onEvent({ type: "plan", data: finalAction.plan });
           } else if (finalAction.commands.length > 0) {
             const content =
@@ -2222,9 +2225,7 @@ export class ProfessorMariWorkspaceService {
           : "Professor Mari workspace run was cancelled.";
         appendTraceStatus(workspaceTrace, content);
         args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
-        if (!assistantText.trim() && hadPartialWorkspaceState) {
-          assistantText = appendVisibleText(assistantText, content);
-        }
+        if (!assistantText.trim() && hadPartialWorkspaceState) assistantText = appendVisibleText(assistantText, content);
         try {
           await persistAssistantMessage();
         } catch (saveErr) {
@@ -2321,11 +2322,6 @@ ${sections.join("\n\n")}
 </professor_mari_custom_skills>`;
   }
 
-  // #4851: the user's saved memories (persistent standing instructions). Injected
-  // index-and-fetch to stay token-cheap: ONLY a title+one-liner index is always in
-  // context; full bodies are pulled on relevance via instruction.get. Pinned rows
-  // inline their body (for the rare directive that must not risk a fetch-miss).
-  // The rendering lives in a pure, unit-tested helper.
   private async buildInstructionsPrompt(): Promise<string | null> {
     try {
       const rows = await createMariInstructionsStorage(this.app.db).list();
@@ -2534,21 +2530,14 @@ ${sections.join("\n\n")}
     const rawPath = inputPath.trim() || ".";
     const absolute = resolve(this.workspaceRoot, rawPath);
     const workspaceRoot = resolve(this.workspaceRoot);
-    if (!isWithin(workspaceRoot, absolute)) {
-      throw new Error(`Path escapes the workspace: ${inputPath}`);
-    }
+    if (!isWithin(workspaceRoot, absolute)) throw new Error(`Path escapes the workspace: ${inputPath}`);
     const canonicalRoot = existsSync(workspaceRoot) ? realpathSync(workspaceRoot) : workspaceRoot;
     let existingAncestor = absolute;
-    while (!existsSync(existingAncestor) && existingAncestor !== dirname(existingAncestor)) {
-      existingAncestor = dirname(existingAncestor);
-    }
+    while (!existsSync(existingAncestor) && existingAncestor !== dirname(existingAncestor)) existingAncestor = dirname(existingAncestor);
     const canonicalAncestor = existsSync(existingAncestor) ? realpathSync(existingAncestor) : existingAncestor;
     if (!isWithin(canonicalRoot, canonicalAncestor)) {
       throw new Error(`Path escapes the workspace through a symbolic link: ${inputPath}`);
     }
-    // Classify both the requested path and its canonical target: a symlink that
-    // stays inside the workspace can still point at an environment-secret file
-    // or Git internals, and reads would follow it.
     const canonicalTarget =
       existingAncestor === absolute ? canonicalAncestor : join(canonicalAncestor, relative(existingAncestor, absolute));
     const requestedPolicy = workspacePathAccessPolicy(workspaceRoot, absolute);
@@ -2589,13 +2578,7 @@ ${sections.join("\n\n")}
     const normalized = normalizeSlashPath(command);
     const tablesRoot = normalizeSlashPath(resolve(getFileStorageDir(), "tables"));
     const tablesRel = normalizeSlashPath(relative(this.workspaceRoot, resolve(getFileStorageDir(), "tables")));
-    if (
-      !normalized.includes("data/storage/tables/") &&
-      !normalized.includes(tablesRoot) &&
-      !normalized.includes(tablesRel)
-    ) {
-      return null;
-    }
+    if (!normalized.includes("data/storage/tables/") && !normalized.includes(tablesRoot) && !normalized.includes(tablesRel)) return null;
     return "Do not pass DATA_DIR/storage/tables/*.json to mari --json-file/--file. Those are full raw table exports; create a temp file containing one row/card payload instead.";
   }
 
@@ -2619,9 +2602,7 @@ ${sections.join("\n\n")}
       this.storageTableReadWarning(filePath),
       "",
       selected.map((line, index) => `${offset + index}: ${line}`).join("\n"),
-    ]
-      .filter((part): part is string => part !== null)
-      .join("\n");
+    ].filter((part): part is string => part !== null).join("\n");
   }
 
   private async commandLs(args: Record<string, unknown>): Promise<string> {
@@ -2639,9 +2620,7 @@ ${sections.join("\n\n")}
       `Directory: ${this.displayPath(dirPath)}`,
       ...names,
       truncated ? `… ${entries.length - names.length} more` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    ].filter(Boolean).join("\n");
   }
 
   private async walkFiles(root: string, limit = MAX_WALK_ENTRIES): Promise<string[]> {
@@ -2680,9 +2659,7 @@ ${sections.join("\n\n")}
     const limit = numberArg(args, "limit", 1000, 1, 2000);
     const files = stats.isFile() ? [root] : await this.walkFiles(root);
     const matched = files.filter((file) => this.matchesGlob(file, pattern)).slice(0, limit);
-    return matched.length
-      ? matched.map((file) => this.displayPath(file)).join("\n")
-      : `No files matched ${pattern} under ${this.displayPath(root)}.`;
+    return matched.length ? matched.map((file) => this.displayPath(file)).join("\n") : `No files matched ${pattern} under ${this.displayPath(root)}.`;
   }
 
   private async commandGrep(args: Record<string, unknown>): Promise<string> {
@@ -2757,8 +2734,7 @@ ${sections.join("\n\n")}
       forbidStorageMutation: true,
       requireOrdinaryMutationPath: true,
     });
-    if (resolve(filePath) === resolve(this.workspaceRoot))
-      throw new Error("The workspace root cannot be moved or removed.");
+    if (resolve(filePath) === resolve(this.workspaceRoot)) throw new Error("The workspace root cannot be moved or removed.");
     return filePath;
   }
 
@@ -2782,8 +2758,6 @@ ${sections.join("\n\n")}
     if (!(await stat(source)).isFile()) throw new Error("move source must be a file");
     await mkdir(dirname(destination), { recursive: true });
     try {
-      // A hard link is an atomic, no-replace claim on the destination and keeps
-      // it tied to the exact source inode until the source name is removed.
       await link(source, destination);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
@@ -2792,9 +2766,7 @@ ${sections.join("\n\n")}
       try {
         await copyFile(source, destination, constants.COPYFILE_EXCL);
       } catch (copyError) {
-        if ((copyError as NodeJS.ErrnoException).code === "EEXIST") {
-          throw new Error("move destination already exists");
-        }
+        if ((copyError as NodeJS.ErrnoException).code === "EEXIST") throw new Error("move destination already exists");
         throw copyError;
       }
     }
@@ -2913,9 +2885,7 @@ ${sections.join("\n\n")}
         signal.removeEventListener("abort", abortHandler);
         void sandboxed.cleanup().finally(callback);
       };
-      const killChild = () => {
-        child.kill();
-      };
+      const killChild = () => child.kill();
       const abortHandler = () => {
         killChild();
         finish(() => rejectRun(new Error("aborted")));
@@ -2979,8 +2949,7 @@ ${sections.join("\n\n")}
       cwd: this.workspaceRoot,
       sessionId: SESSION_ID,
     });
-    const printable =
-      isRecord(result) && "output" in result && !("summary" in result) ? result.output : compactMutationResult(result);
+    const printable = isRecord(result) && "output" in result && !("summary" in result) ? result.output : compactMutationResult(result);
     const output = compactOutput(
       [
         `Command: ${command}`,
@@ -3004,8 +2973,7 @@ ${sections.join("\n\n")}
     if (result.ok !== false && (action === "personal_extension.create" || action === "personal_extension.update")) {
       await personalServerExtensionRuntime.reloadAll();
     }
-    const printable =
-      isRecord(result) && "output" in result && !("summary" in result) ? result.output : compactMutationResult(result);
+    const printable = isRecord(result) && "output" in result && !("summary" in result) ? result.output : compactMutationResult(result);
     const truncationNote = formatMariReadTruncation(result.truncation);
     const output = compactOutput(
       [
@@ -3045,14 +3013,9 @@ ${sections.join("\n\n")}
   }
 
   private async resolveConnection(connectionId?: string | null): Promise<WorkspaceConnection | null> {
-    if (connectionId === LOCAL_SIDECAR_CONNECTION_ID) {
-      return this.buildLocalSidecarConnection();
-    }
-
+    if (connectionId === LOCAL_SIDECAR_CONNECTION_ID) return this.buildLocalSidecarConnection();
     const rows = (await this.app.db.select().from(apiConnections)) as Array<typeof apiConnections.$inferSelect>;
-    const languageRows = rows.filter(
-      (row) => row.provider !== "image_generation" && row.provider !== "video_generation",
-    );
+    const languageRows = rows.filter((row) => row.provider !== "image_generation" && row.provider !== "video_generation");
     const selected = connectionId ? languageRows.find((row) => row.id === connectionId) : null;
     const fallback =
       selected ??
@@ -3060,9 +3023,7 @@ ${sections.join("\n\n")}
       languageRows.find((row) => bool(row.isDefault)) ??
       languageRows[0] ??
       null;
-    if (!fallback) {
-      return sidecarModelService.getConfiguredModelRef() ? this.buildLocalSidecarConnection() : null;
-    }
+    if (!fallback) return sidecarModelService.getConfiguredModelRef() ? this.buildLocalSidecarConnection() : null;
     return { ...fallback, apiKey: decryptApiKey(fallback.apiKeyEncrypted) };
   }
 
@@ -3135,8 +3096,6 @@ function formatWorkspaceToolName(name: string): string {
   return name.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-// Extracts and streams a single named string field from a JSON object as tokens arrive,
-// forwarding each character to the provided sink as it is encountered.
 function createJsonFieldStreamExtractor(fieldName: string, onChunk: (chunk: string) => void): (chunk: string) => void {
   const pattern = new RegExp(`"${fieldName}"\\s*:\\s*"`);
   let buffer = "";
@@ -3145,7 +3104,6 @@ function createJsonFieldStreamExtractor(fieldName: string, onChunk: (chunk: stri
   return (chunk: string) => {
     if (state === "done") return;
     buffer += chunk;
-
     if (state === "seeking") {
       const match = buffer.match(pattern);
       if (!match) {
@@ -3155,7 +3113,6 @@ function createJsonFieldStreamExtractor(fieldName: string, onChunk: (chunk: stri
       buffer = buffer.slice(match.index! + match[0].length);
       state = "in_value";
     }
-
     if (state === "in_value") {
       let text = "";
       let index = 0;
@@ -3185,14 +3142,12 @@ function createJsonFieldStreamExtractor(fieldName: string, onChunk: (chunk: stri
   };
 }
 
-// Fans incoming token chunks out to multiple per-field extractors simultaneously.
 function createWorkspaceStreamExtractor(
   onToken: (chunk: string) => void,
   onThinking: (chunk: string) => void,
 ): (chunk: string) => void {
   const sayExtractor = createJsonFieldStreamExtractor("say", onToken);
   const reasoningExtractor = createJsonFieldStreamExtractor("reasoning_content", onThinking);
-
   return (chunk: string) => {
     sayExtractor(chunk);
     reasoningExtractor(chunk);
