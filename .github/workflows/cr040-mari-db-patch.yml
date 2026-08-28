@@ -62,7 +62,10 @@ jobs:
           PY
 
           git diff --check
-          git diff --exit-code --quiet && { echo "Expected MariDB patch produced no diff"; exit 1; }
+          if git diff --quiet; then
+            echo "Expected MariDB patch produced no diff"
+            exit 1
+          fi
 
       - name: Commit MariDB integration
         shell: bash
