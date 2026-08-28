@@ -51,6 +51,9 @@ import {
   searchCanonicalDocumentation,
 } from "./documentation-tools.js";
 import {
+  ATTACHMENT_STYLE_IDS,
+  CHARACTER_PERSONALITY_MODEL_ID,
+  ENNEAGRAM_TYPE_IDS,
   GENERATION_PARAMETER_SEND_KEYS,
   findKnownModel,
   LOCAL_SIDECAR_CONNECTION_ID,
@@ -190,6 +193,7 @@ export const PROFESSOR_MARI_APP_DATA_ACTIONS = [
   "character.search",
   "character.create",
   "character.update",
+  "character.applyPersonalityModel",
   "character.folder.list",
   "character.moveToFolder",
   "persona.list",
@@ -423,7 +427,7 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
   {
     name: "app_data",
     description:
-      'Read or change live app data through structured actions, without shell commands. Use this for characters, character folders, personas, lorebooks, lorebook entries, themes, Personal Extension drafts, agents, prompt presets, and safe data-only Home widgets. lorebook.entries returns entry summaries; call lorebook.getEntry with entryId to read one complete entry body. Single-item reads (e.g. character.get) are size-bounded: oversized fields come back elided with a note naming each one — re-read any elided field in full by passing field="<path>" (e.g. field="data.alternate_greetings[0]"), optionally with offset to page through a long value.',
+      'Read or change live app data through structured actions, without shell commands. Use this for characters, character folders, personas, lorebooks, lorebook entries, themes, Personal Extension drafts, agents, prompt presets, and safe data-only Home widgets. For the canonical layered character personality model, character.create may include personalityModel and character.applyPersonalityModel reapplies the fixed personality + emotion profile to an existing character. lorebook.entries returns entry summaries; call lorebook.getEntry with entryId to read one complete entry body. Single-item reads (e.g. character.get) are size-bounded: oversized fields come back elided with a note naming each one — re-read any elided field in full by passing field="<path>" (e.g. field="data.alternate_greetings[0]"), optionally with offset to page through a long value.',
     parameters: {
       type: "object",
       properties: {
@@ -470,6 +474,17 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
         activate: { type: "boolean" },
         apply: { type: "boolean" },
         reason: { type: "string" },
+        personalityModel: {
+          type: "object",
+          description:
+            "Canonical layered character personality-model selection. Professor Mari chooses only the Enneagram core and attachment style; Marinara owns the fixed Pearson/emotion mapping and final card text.",
+          properties: {
+            modelId: { type: "string", enum: [CHARACTER_PERSONALITY_MODEL_ID] },
+            enneagramType: { type: "string", enum: [...ENNEAGRAM_TYPE_IDS] },
+            attachmentStyle: { type: "string", enum: [...ATTACHMENT_STYLE_IDS] },
+          },
+          required: ["enneagramType", "attachmentStyle"],
+        },
         data: {
           type: "object",
           description:
@@ -556,6 +571,7 @@ ${PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE}
 Workspace defaults:
 - Marinara's first-party agents and larger optional features are downloaded from **Agents → Download Agents**. Fresh installs start without them; maps, Conversation calls, and Conversation games are packages too. Tell users to install the desired package, enable it for the chat, and restart Marinara Engine when the catalog prompts them. Existing pre-package installs are migrated automatically without losing settings or history.
 - Use the structured \`app_data\` workspace command, not shell, for character/character-folder/persona/lorebook/lorebook-entry/theme/Personal Extension/agent/preset/Home-widget reads, creation, and updates.
+- For the canonical layered character personality model, select only the Enneagram type and attachment style, then pass them as \`personalityModel\` to \`character.create\` or \`character.applyPersonalityModel\`; never recreate the fixed Pearson conditional block or emotion-profile metadata yourself.
 - Use Mari CLI commands for images, wiki reads, code/workspace tasks, agents, tools, raw DB work, or anything \`app_data\` does not cover. Only write raw files when no CLI/helper path fits.
 - You may create and update Personal Extension drafts with \`personal_extension.create\` and \`personal_extension.update\`. These actions always disable changed code and clear its approval. Browser Extensions receive active chat and Character IDs through \`marinara.context\`; request \`read_active_characters\` or \`read_active_persona\` only when the extension truly needs bounded active-record fields. Never claim to approve, enable, or run an extension: only the user can review the exact code hash and requested permissions, then choose **Review and Run** in **Settings → Addons → Personal Extensions**.
 - For user-facing Browser Extension UI, use \`marinara.ui.registerContribution(...)\`. It can add a trusted Marinara-rendered top-bar button, Extensions menu item, right-side panel, or button in the Chats, Bots, Characters, Personas, Lorebooks, Presets, Connections, Agents, and Settings surfaces. For a side-panel \`button\`, set \`surface\` to the requested surface and choose \`position: "header"\`, \`"before-content"\`, or \`"after-content"\`; omit both fields for the top bar. The \`icon\` may be any kebab-case Lucide icon name supported by Marinara. Panels may contain headings, text, preformatted output, buttons, text inputs, selects, toggles, sliders, color controls, and spacers. Use \`onActivate\` and \`onEvent\` for behavior and update the returned handle when the view changes. Never write extension code that expects \`document\`, \`window\`, \`innerHTML\`, host CSS selectors, React internals, unrestricted \`fetch\`, or direct Marinara API access; those capabilities are deliberately absent.
@@ -642,11 +658,11 @@ ${MARI_GUIDED_SEQUENCES}
 
 \`app_data\` quick reference:
 - Reads: \`character.list|get|search|folder.list\`, \`persona.list|active|get|search\`, \`lorebook.list|get|entries|getEntry|search\`, \`theme.list|active|get\`, \`personal_extension.list|get|search\`, \`agent.list|get|search\`, \`preset.list|get|search|sections|getSection|groups|getGroup|choiceBlocks|getChoiceBlock\`, \`home_widget.list|get\`, \`instruction.list|get\`.
-- Writes: \`character.create|update|moveToFolder\`, \`persona.create|update\`, \`lorebook.create|update|addEntry|updateEntry|deleteEntry\`, \`theme.create|update|setActive\`, \`personal_extension.create|update\`, \`agent.create|update\`, \`preset.create|update|addSection|updateSection|deleteSection|addGroup|updateGroup|deleteGroup|addChoiceBlock|updateChoiceBlock|deleteChoiceBlock\`, \`home_widget.create|update|delete\`, \`instruction.remember|update|forget\`.
+- Writes: \`character.create|update|applyPersonalityModel|moveToFolder\`, \`persona.create|update\`, \`lorebook.create|update|addEntry|updateEntry|deleteEntry\`, \`theme.create|update|setActive\`, \`personal_extension.create|update\`, \`agent.create|update\`, \`preset.create|update|addSection|updateSection|deleteSection|addGroup|updateGroup|deleteGroup|addChoiceBlock|updateChoiceBlock|deleteChoiceBlock\`, \`home_widget.create|update|delete\`, \`instruction.remember|update|forget\`.
 - Character folders: call \`character.folder.list\` to resolve the destination, then \`character.moveToFolder\` with \`characterId\` and either \`folderId\` or \`folderName\`. A move removes the character from its previous folder. When the user explicitly asks for the move, set \`apply:true\`, then verify with \`character.folder.list\`.
 - Put write fields in \`data\` for creates and \`patch\` for updates. Use \`entryId\` for \`lorebook.updateEntry\`; use \`lorebookId\` only for a lorebook or for \`lorebook.addEntry\`.
 - New creates: use \`apply:true\` immediately for \`character.create\`, \`persona.create\`, \`lorebook.create\`, \`lorebook.addEntry\`, \`agent.create\`, \`preset.create\`, and non-activating \`theme.create\` when the user asked you to create it. Verify with a read before claiming success.
-- Character generation: put the full card in \`data\`; do not create a name-only placeholder. \`firstMes\` and \`firstMessage\` both map to the opening message.
+- Character generation: put the full card in \`data\`; do not create a name-only placeholder. \`firstMes\` and \`firstMessage\` both map to the opening message. When the bundled layered-personality skill is applicable, pass \`personalityModel\` alongside \`data\`; for an existing character use \`character.applyPersonalityModel\` with \`characterId\`, \`personalityModel\`, and \`apply:true\`.
 - About Me writing: read the target character or persona first, write the bio in their own voice, then put it in \`patch.aboutMe\` on the matching update action with \`apply:true\`.
 - Lorebook authoring: plan the entries first (premise, places, people, factions, rules), then create the whole book in one \`lorebook.create\` (Marinara saves the book and entries together, so never make an empty book to fill later). Set each entry deliberately:
   - Always-true world premise (the setting's ground rules) -> \`constant: true\`, no keys. Everything else is keyword-triggered.
