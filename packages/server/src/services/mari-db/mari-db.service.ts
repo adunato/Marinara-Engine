@@ -42,6 +42,8 @@ import {
   homeCustomWidgetSchema,
   normalizeLorebookCategory,
   normalizePersonalExtensionCapabilities,
+  compileCharacterPersonalityModel,
+  type CharacterPersonalityModelSelection,
   type MariDbCommandResult,
   type MariDbReadTruncation,
   type MariDbDiffSummary,
@@ -1091,6 +1093,45 @@ export function normalizeCharacterActionData(input: Row): Row {
   delete out["about-me"];
   if (Object.keys(extensions).length > 0) out.extensions = extensions;
   return out;
+}
+
+function compileCharacterPersonalitySelection(value: unknown) {
+  if (!isRecord(value)) {
+    throw new Error("personalityModel must be an object with enneagramType and attachmentStyle.");
+  }
+  const rawModelId = value.modelId;
+  if (rawModelId !== undefined && (typeof rawModelId !== "string" || !rawModelId.trim())) {
+    throw new Error("personalityModel.modelId must be a non-empty string when provided.");
+  }
+  const selection: CharacterPersonalityModelSelection = {
+    enneagramType: requiredString(
+      value,
+      ["enneagramType"],
+      "personalityModel.enneagramType",
+    ) as CharacterPersonalityModelSelection["enneagramType"],
+    attachmentStyle: requiredString(
+      value,
+      ["attachmentStyle"],
+      "personalityModel.attachmentStyle",
+    ) as CharacterPersonalityModelSelection["attachmentStyle"],
+  };
+  if (typeof rawModelId === "string") {
+    selection.modelId = rawModelId.trim() as CharacterPersonalityModelSelection["modelId"];
+  }
+  return compileCharacterPersonalityModel(selection);
+}
+
+function applyCompiledCharacterPersonalityModel(
+  data: Record<string, unknown>,
+  compiled: ReturnType<typeof compileCharacterPersonalityModel>,
+): Record<string, unknown> {
+  const extensions = isRecord(data.extensions) ? { ...(data.extensions as Row) } : {};
+  extensions.emotionProfile = compiled.emotionProfile;
+  return {
+    ...data,
+    personality: compiled.personality,
+    extensions,
+  };
 }
 
 const SELECTIVE_LOGIC_VALUES = new Set(["and", "and_all", "or", "not", "not_all"]);
@@ -2609,11 +2650,17 @@ export class MariDbService {
         const name = requiredString(data, ["name"], "character name");
         const comment = firstString(data, ["comment"]) ?? "";
         delete data.comment;
+        const compiledPersonality =
+          args.personalityModel === undefined ? null : compileCharacterPersonalitySelection(args.personalityModel);
+        let characterData = buildMinimalCharacterData(name, data, new Map());
+        if (compiledPersonality) {
+          characterData = applyCompiledCharacterPersonalityModel(characterData, compiledPersonality);
+        }
         const timestamp = now();
         const id = firstString(args, ["id", "characterId"]) ?? newId();
         const row: Row = {
           id,
-          data: buildMinimalCharacterData(name, data, new Map()),
+          data: characterData,
           comment,
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -2680,6 +2727,37 @@ export class MariDbService {
           id,
           data: buildMinimalCharacterData(name, deepMerge(existingData, patchData) as Row, new Map()),
           comment,
+          avatarPath: existing.avatarPath ?? null,
+          spriteFolderPath: existing.spriteFolderPath ?? null,
+          createdAt: existing.createdAt,
+          updatedAt: now(),
+        };
+        return this.executeMutation(
+          {
+            kind: "replace",
+            table: "characters",
+            id,
+            row,
+            apply: firstBoolean(args, ["apply"]) === true,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      case "applypersonalitymodel": {
+        const id = requiredString(args, ["id", "characterId"], "character id");
+        const existing = await this.getRawById(getMeta("characters"), id);
+        if (!existing) throw new Error(`Character ${id} not found`);
+        const existingDataRaw = tryParseJsonColumn(existing, "data");
+        if (!isRecord(existingDataRaw)) throw new Error(`Character ${id} has invalid CharacterData`);
+        const compiledPersonality = compileCharacterPersonalitySelection(args.personalityModel);
+        const row: Row = {
+          id,
+          data: applyCompiledCharacterPersonalityModel(existingDataRaw, compiledPersonality),
+          comment: existing.comment,
           avatarPath: existing.avatarPath ?? null,
           spriteFolderPath: existing.spriteFolderPath ?? null,
           createdAt: existing.createdAt,
