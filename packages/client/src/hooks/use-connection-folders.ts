@@ -57,7 +57,7 @@ export function useReorderConnectionFolders() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (orderedIds: ReorderFoldersInput["orderedIds"]) =>
-      api.post("/connection-folders/reorder", { orderedIds } satisfies ReorderFoldersInput),
+      api.post("/connection-folders/reorder", { orderedIds }),
     onSuccess: () => qc.invalidateQueries({ queryKey: connectionFolderKeys.list() }),
   });
 }

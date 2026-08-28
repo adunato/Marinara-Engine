@@ -24,6 +24,7 @@ import { importMarinara } from "../services/import/marinara.importer.js";
 import { scanSTFolder, runSTBulkImport, type STBulkImportOptions } from "../services/import/st-bulk.importer.js";
 import { characters as charactersTable } from "../db/schema/index.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createUserProfilesStorage } from "../services/storage/user-profiles.storage.js";
 import { newId } from "../utils/id-generator.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import { getImportAllowedRoots } from "../config/runtime-config.js";
@@ -536,6 +537,11 @@ export async function importRoutes(app: FastifyInstance) {
     const rawMode = readMultipartFieldValue(data as any, "mode");
     const mode = readMultipartChatModeField(data as any);
     if (rawMode !== undefined && mode === undefined) return invalidChatModeResponse();
+    const profileId = readMultipartFieldValue(data as any, "profileId");
+    if (typeof profileId !== "string" || !profileId.trim()) return { success: false, error: "Missing profileId" };
+    if (!(await createUserProfilesStorage(app.db).getById(profileId))) {
+      return { success: false, error: "User profile not found" };
+    }
 
     // Use the uploaded filename (minus extension) as chat name if available
     const rawName = data.filename ?? "";
@@ -575,6 +581,7 @@ export async function importRoutes(app: FastifyInstance) {
       ...(chatName ? { chatName } : {}),
       ...(characterId ? { characterId } : {}),
       ...(mode ? { mode } : {}),
+      profileId,
       ...(timestampOverrides ? { timestampOverrides } : {}),
     });
   });
@@ -659,6 +666,7 @@ export async function importRoutes(app: FastifyInstance) {
       personaId: targetChat.personaId ?? null,
       connectionId: targetChat.connectionId ?? null,
       promptPresetId: targetChat.promptPresetId ?? null,
+      profileId: targetChat.profileId,
       ...(timestampOverrides ? { timestampOverrides } : {}),
     });
 
@@ -995,6 +1003,10 @@ export async function importRoutes(app: FastifyInstance) {
       return reply.send(invalidRegexScriptScopeResponse());
     }
     if (bulkRegexScriptScope) options.regexScriptScope = bulkRegexScriptScope;
+    const importsHistory = options.chats !== false || options.groupChats !== false;
+    if (importsHistory && (!options.profileId || !(await createUserProfilesStorage(app.db).getById(options.profileId)))) {
+      return reply.send({ success: false, error: "A valid User Profile is required for chat history import" });
+    }
 
     // Set up SSE headers
     reply.raw.writeHead(200, {

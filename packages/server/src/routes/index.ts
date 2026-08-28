@@ -61,6 +61,7 @@ import { characterMindsRoutes } from "./character-minds.routes.js";
 import { personalExtensionsRoutes } from "./personal-extensions.routes.js";
 import { notificationSoundRoutes } from "./notification-sound.routes.js";
 import { libraryFoldersRoutes } from "./library-folders.routes.js";
+import { userProfilesRoutes } from "./user-profiles.routes.js";
 import { androidLocalAuthRoutes } from "../middleware/android-local-auth.js";
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -71,6 +72,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(characterMindsRoutes, { prefix: "/api/chats" });
   await app.register(chatFoldersRoutes, { prefix: "/api/chat-folders" });
   await app.register(chatPresetsRoutes, { prefix: "/api/chat-presets" });
+  await app.register(userProfilesRoutes, { prefix: "/api/user-profiles" });
   await app.register(charactersRoutes, { prefix: "/api/characters" });
   await app.register(lorebooksRoutes, { prefix: "/api/lorebooks" });
   await app.register(promptsRoutes, { prefix: "/api/prompts" });

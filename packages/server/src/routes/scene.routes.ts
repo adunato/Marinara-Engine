@@ -30,7 +30,7 @@ import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-em
 import type { DB } from "../db/connection.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import type { ChatCompletionResult, ChatMessage } from "../services/llm/base-provider.js";
-import { localAuthProviderBaseUrl } from "@marinara-engine/shared";
+import { DEFAULT_USER_PROFILE_ID, localAuthProviderBaseUrl } from "@marinara-engine/shared";
 import type {
   SceneCreateRequest,
   SceneCreateResponse,
@@ -412,6 +412,7 @@ export async function sceneRoutes(app: FastifyInstance) {
       // Copying the origin conversation preset can make those instructions clash.
       promptPresetId: null,
       connectionId: connectionId ?? originChat.connectionId,
+      profileId: originChat.profileId ?? DEFAULT_USER_PROFILE_ID,
     });
 
     if (!sceneChat) return reply.status(500).send({ error: "Failed to create scene chat" });
@@ -737,6 +738,7 @@ export async function sceneRoutes(app: FastifyInstance) {
       personaId: sceneChat.personaId,
       promptPresetId: sceneChat.promptPresetId,
       connectionId: sceneChat.connectionId,
+      profileId: sceneChat.profileId ?? DEFAULT_USER_PROFILE_ID,
     });
     if (!newChat) return reply.status(500).send({ error: "Failed to create roleplay chat" });
 

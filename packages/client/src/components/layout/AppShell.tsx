@@ -26,6 +26,8 @@ import { useBackgroundAutonomousPolling } from "../../hooks/use-background-auton
 import { useClearAutonomousUnread, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { lorebookKeys } from "../../hooks/use-lorebooks";
 import { useIdleDetection } from "../../hooks/use-idle-detection";
+import { useUserProfileBootstrap } from "../../hooks/use-user-profiles";
+import { useUserProfileStore } from "../../stores/user-profile.store";
 import { dispatchChatVisualViewportChange } from "../../hooks/use-visual-viewport-chat-bottom";
 import { usePageActivity } from "../../hooks/use-page-activity";
 import { useCapabilityAgentRegistry, useCapabilityClientModules } from "../../hooks/use-capability-packages";
@@ -228,6 +230,8 @@ function SidePanelFallback() {
 export function AppShell() {
   const { t: localizeUi } = useUiTranslation();
   const queryClient = useQueryClient();
+  useUserProfileBootstrap();
+  const profileReady = useUserProfileStore((state) => state.isBootstrapped && !state.isSwitching);
   const capabilityAgents = useCapabilityAgentRegistry();
   const installedCapabilities = useCapabilityClientModules();
   const updateChatMetadata = useUpdateChatMetadata();
@@ -1222,6 +1226,9 @@ export function AppShell() {
       </motion.aside>
     ) : null;
 
+  if (!profileReady) {
+    return <MainPaneFallback />;
+  }
   return (
     <div
       data-component="AppShell"

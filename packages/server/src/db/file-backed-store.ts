@@ -329,6 +329,7 @@ export function encodeShardKey(rawKey: string): string {
 }
 
 export const FILE_BACKED_TABLES = [
+  "user_profiles",
   "chats",
   "messages",
   "message_swipes",

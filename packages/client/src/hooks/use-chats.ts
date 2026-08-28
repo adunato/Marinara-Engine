@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { api, ApiError } from "../lib/api-client";
 import { useChatStore } from "../stores/chat.store";
+import { useUserProfileStore } from "../stores/user-profile.store";
 import { useAgentStore } from "../stores/agent.store";
 import { useGameStateStore } from "../stores/game-state.store";
 import { useEncounterStore } from "../stores/encounter.store";
@@ -44,6 +45,7 @@ import { homeFeedKeys } from "./use-home-feed";
 export const chatKeys = {
   all: ["chats"] as const,
   list: () => [...chatKeys.all, "list"] as const,
+  listForProfile: (profileId: string) => [...chatKeys.list(), profileId] as const,
   detail: (id: string) => [...chatKeys.all, "detail", id] as const,
   messages: (chatId: string) => [...chatKeys.all, "messages", chatId] as const,
   messageCount: (chatId: string) => [...chatKeys.all, "messageCount", chatId] as const,
@@ -231,11 +233,12 @@ async function resetClientAfterExpunge(qc: ReturnType<typeof useQueryClient>) {
 }
 
 export function useChats(options: { enabled?: boolean; refetchOnMount?: boolean | "always" } = {}) {
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
+  const ready = useUserProfileStore((state) => state.isBootstrapped && !state.isSwitching);
   return useQuery({
-    queryKey: chatKeys.list(),
-    queryFn: () => api.get<Chat[]>("/chats"),
-    enabled: options.enabled ?? true,
-    placeholderData: (previousData) => previousData,
+    queryKey: chatKeys.listForProfile(profileId ?? ""),
+    queryFn: () => api.get<Chat[]>(`/chats?profileId=${encodeURIComponent(profileId!)}`),
+    enabled: !!profileId && ready && (options.enabled ?? true),
     staleTime: 10_000,
     refetchOnMount: options.refetchOnMount ?? "always",
     refetchOnReconnect: true,
@@ -524,7 +527,9 @@ function mergeMetadataForVersion(
 export function syncCachedChat(qc: QueryClient, chat: Chat) {
   const normalized = normalizeChatForCache(chat);
   qc.setQueryData<Chat>(chatKeys.detail(normalized.id), normalized);
-  qc.setQueryData<Chat[]>(chatKeys.list(), (existing) => upsertCachedChat(existing, normalized));
+  qc.setQueryData<Chat[]>(chatKeys.listForProfile(normalized.profileId), (existing) =>
+    upsertCachedChat(existing, normalized),
+  );
   if (normalized.groupId) {
     qc.setQueryData<Chat[]>(chatKeys.group(normalized.groupId), (existing) => upsertCachedChat(existing, normalized));
   }
@@ -546,6 +551,7 @@ function syncCachedBranch(rows: Chat[] | undefined, sourceChatId: string, newCha
 
 export function useCreateChat() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: (data: {
       name: string;
@@ -555,13 +561,16 @@ export function useCreateChat() {
       connectionId?: string | null;
       personaId?: string | null;
       promptPresetId?: string | null;
-    }) => api.post<Chat>("/chats", data),
+    }) => {
+      if (!profileId) throw new Error("No active User Profile");
+      return api.post<Chat>("/chats", { ...data, profileId });
+    },
     onSuccess: (chat) => {
       if (chat) {
         qc.setQueryData(chatKeys.detail(chat.id), chat);
-        qc.setQueryData<Chat[]>(chatKeys.list(), (existing) => upsertCachedChat(existing, chat));
+        qc.setQueryData<Chat[]>(chatKeys.listForProfile(chat.profileId), (existing) => upsertCachedChat(existing, chat));
       }
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(profileId) });
       qc.invalidateQueries({ queryKey: homeFeedKeys.all });
       void trackAchievementEvent("chat_created")
         .finally(() => qc.invalidateQueries({ queryKey: achievementKeys.all }))
@@ -575,15 +584,18 @@ export function useCreateChat() {
 
 export function useDeleteChat() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: (input: DeleteChatInput) => {
       const force = getDeleteChatForce(input) ? "?force=true" : "";
       return api.delete(`/chats/${getDeleteChatId(input)}${force}`);
     },
     onMutate: async (input) => {
+      if (!profileId) throw new Error("No active User Profile");
+      const listKey = chatKeys.listForProfile(profileId);
       const id = getDeleteChatId(input);
       const providedGroupId = getDeleteChatGroupId(input);
-      const cachedList = qc.getQueryData<Chat[]>(chatKeys.list());
+      const cachedList = qc.getQueryData<Chat[]>(listKey);
       const cachedProvidedGroup = providedGroupId
         ? qc.getQueryData<Chat[]>(chatKeys.group(providedGroupId))
         : undefined;
@@ -596,7 +608,7 @@ export function useDeleteChat() {
         cachedHomeFeed?.recentChats.find(({ chat }) => chat.id === id)?.chat ??
         null;
       const groupId = deletedChat?.groupId ?? providedGroupId;
-      await qc.cancelQueries({ queryKey: chatKeys.list() });
+      await qc.cancelQueries({ queryKey: listKey });
       await qc.cancelQueries({ queryKey: homeFeedKeys.all });
       await qc.cancelQueries({ queryKey: chatKeys.detail(id), exact: true });
       const affectedGroupIds = Array.from(
@@ -605,14 +617,14 @@ export function useDeleteChat() {
       for (const affectedGroupId of affectedGroupIds) {
         await qc.cancelQueries({ queryKey: chatKeys.group(affectedGroupId) });
       }
-      const previous = qc.getQueryData<Chat[]>(chatKeys.list());
+      const previous = qc.getQueryData<Chat[]>(listKey);
       const previousHomeFeed = qc.getQueryData<HomeFeedSnapshot>(homeFeedKeys.snapshot());
       const previousGroups = affectedGroupIds.map((affectedGroupId) => ({
         groupId: affectedGroupId,
         chats: qc.getQueryData<Chat[]>(chatKeys.group(affectedGroupId)),
       }));
 
-      qc.setQueryData<Chat[]>(chatKeys.list(), (old) => old?.filter((c) => c.id !== id));
+      qc.setQueryData<Chat[]>(listKey, (old) => old?.filter((c) => c.id !== id));
       qc.setQueryData<HomeFeedSnapshot>(homeFeedKeys.snapshot(), (old) => removeChatsFromHomeFeed(old, new Set([id])));
       qc.removeQueries({ queryKey: chatKeys.detail(id), exact: true });
 
@@ -620,14 +632,14 @@ export function useDeleteChat() {
         qc.setQueryData<Chat[]>(chatKeys.group(affectedGroupId), (old) => old?.filter((c) => c.id !== id));
       }
 
-      return { previous, previousDetail: cachedDetail, previousHomeFeed, previousGroups, affectedGroupIds };
+      return { previous, previousDetail: cachedDetail, previousHomeFeed, previousGroups, affectedGroupIds, profileId };
     },
     onError: (_err, input, context) => {
       const id = getDeleteChatId(input);
       if (context?.previous) {
-        qc.setQueryData(chatKeys.list(), context.previous);
-      } else {
-        qc.invalidateQueries({ queryKey: chatKeys.list() });
+        qc.setQueryData(chatKeys.listForProfile(context.profileId), context.previous);
+      } else if (context?.profileId) {
+        qc.invalidateQueries({ queryKey: chatKeys.listForProfile(context.profileId) });
       }
       if (context?.previousDetail !== undefined) {
         qc.setQueryData(chatKeys.detail(id), context.previousDetail);
@@ -646,7 +658,7 @@ export function useDeleteChat() {
       const id = getDeleteChatId(input);
       const affectedGroupIds =
         context?.affectedGroupIds ?? [getDeleteChatGroupId(input)].filter((value): value is string => Boolean(value));
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (context?.profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(context.profileId) });
       qc.invalidateQueries({ queryKey: homeFeedKeys.all });
       if (!error) {
         qc.removeQueries({ queryKey: chatKeys.detail(id), exact: true });
@@ -660,6 +672,7 @@ export function useDeleteChat() {
 
 export function useDeleteChatGroup() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: (input: string | { groupId: string; force?: boolean }) => {
       const groupId = typeof input === "string" ? input : input.groupId;
@@ -667,11 +680,13 @@ export function useDeleteChatGroup() {
       return api.delete(`/chats/group/${groupId}${force}`);
     },
     onMutate: async (input) => {
+      if (!profileId) throw new Error("No active User Profile");
+      const listKey = chatKeys.listForProfile(profileId);
       const groupId = typeof input === "string" ? input : input.groupId;
-      await qc.cancelQueries({ queryKey: chatKeys.list() });
+      await qc.cancelQueries({ queryKey: listKey });
       await qc.cancelQueries({ queryKey: homeFeedKeys.all });
       await qc.cancelQueries({ queryKey: chatKeys.group(groupId) });
-      const previous = qc.getQueryData<Chat[]>(chatKeys.list());
+      const previous = qc.getQueryData<Chat[]>(listKey);
       const previousGroup = qc.getQueryData<Chat[]>(chatKeys.group(groupId));
       const previousHomeFeed = qc.getQueryData<HomeFeedSnapshot>(homeFeedKeys.snapshot());
       const removedIds = new Set([
@@ -681,14 +696,14 @@ export function useDeleteChatGroup() {
           []),
       ]);
 
-      qc.setQueryData<Chat[]>(chatKeys.list(), (old) => old?.filter((c) => c.groupId !== groupId));
+      qc.setQueryData<Chat[]>(listKey, (old) => old?.filter((c) => c.groupId !== groupId));
       qc.setQueryData<Chat[]>(chatKeys.group(groupId), []);
       qc.setQueryData<HomeFeedSnapshot>(homeFeedKeys.snapshot(), (old) => removeChatsFromHomeFeed(old, removedIds));
 
-      return { previous, previousGroup, previousHomeFeed, groupId };
+      return { previous, previousGroup, previousHomeFeed, groupId, profileId };
     },
     onError: (_err, _input, context) => {
-      if (context?.previous) qc.setQueryData(chatKeys.list(), context.previous);
+      if (context?.previous) qc.setQueryData(chatKeys.listForProfile(context.profileId), context.previous);
       if (context?.previousHomeFeed) qc.setQueryData(homeFeedKeys.snapshot(), context.previousHomeFeed);
       if (context?.groupId && context.previousGroup) {
         qc.setQueryData(chatKeys.group(context.groupId), context.previousGroup);
@@ -697,7 +712,7 @@ export function useDeleteChatGroup() {
       }
     },
     onSettled: (_data, _err, _input, context) => {
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (context?.profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(context.profileId) });
       qc.invalidateQueries({ queryKey: homeFeedKeys.all });
       if (context?.groupId) {
         qc.invalidateQueries({ queryKey: chatKeys.group(context.groupId) });
@@ -708,6 +723,7 @@ export function useDeleteChatGroup() {
 
 export function useUpdateChat() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: ({
       id,
@@ -726,7 +742,8 @@ export function useUpdateChat() {
         syncCachedChat(qc, updatedChat);
       }
       qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      const ownerProfileId = updatedChat?.profileId ?? profileId;
+      if (ownerProfileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(ownerProfileId) });
       if (vars.characterIds !== undefined) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(vars.id) });
         qc.invalidateQueries({ queryKey: chatKeys.messageCount(vars.id) });
@@ -746,12 +763,14 @@ export function useUpdateChat() {
 
 export function useUpdateChatMetadata() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: ({ id, ...metadata }: { id: string; [key: string]: unknown }) =>
       api.patch<Chat>(`/chats/${id}/metadata`, metadata),
     onMutate: async ({ id, ...metadata }) => {
+      if (!profileId) throw new Error("No active User Profile");
       await qc.cancelQueries({ queryKey: chatKeys.detail(id) });
-      await qc.cancelQueries({ queryKey: chatKeys.list() });
+      await qc.cancelQueries({ queryKey: chatKeys.listForProfile(profileId) });
       const previous = qc.getQueryData<Chat>(chatKeys.detail(id));
       const fallback = useChatStore.getState().activeChat?.id === id ? useChatStore.getState().activeChat : null;
       const base = previous ?? fallback;
@@ -768,7 +787,7 @@ export function useUpdateChatMetadata() {
           updatedAt,
         });
       }
-      return { previous, version, changedKeys };
+      return { previous, version, changedKeys, profileId };
     },
     onError: (_error, variables, context) => {
       if (context?.previous) {
@@ -803,7 +822,8 @@ export function useUpdateChatMetadata() {
       } else {
         qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
       }
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      const ownerProfileId = data?.profileId ?? context?.profileId;
+      if (ownerProfileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(ownerProfileId) });
       qc.invalidateQueries({ queryKey: [...chatKeys.all, "group"] });
       qc.invalidateQueries({ queryKey: lorebookKeys.active(vars.id) });
     },
@@ -812,13 +832,15 @@ export function useUpdateChatMetadata() {
 
 export function useClearAutonomousUnread() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: (chatId: string) => api.delete<Chat>(`/chats/${chatId}/autonomous-unread`),
     onSuccess: (data, chatId) => {
       if (data) {
         qc.setQueryData(chatKeys.detail(chatId), data);
       }
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      const ownerProfileId = data?.profileId ?? profileId;
+      if (ownerProfileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(ownerProfileId) });
     },
   });
 }
@@ -849,6 +871,7 @@ export type SummaryEntryOperation =
 
 function useSummaryEntryMutation() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: ({ chatId, ...body }: { chatId: string } & SummaryEntryOperation) =>
       api.patch<Chat>(`/chats/${chatId}/summary-entries`, body),
@@ -858,7 +881,8 @@ function useSummaryEntryMutation() {
       } else {
         qc.invalidateQueries({ queryKey: chatKeys.detail(vars.chatId) });
       }
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      const ownerProfileId = data?.profileId ?? profileId;
+      if (ownerProfileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(ownerProfileId) });
       qc.invalidateQueries({ queryKey: lorebookKeys.active(vars.chatId) });
       // Only delete changes message visibility (it unhides server-side), so scope
       // the message-list refetch to that operation rather than every summary edit.
@@ -1106,6 +1130,7 @@ export function useRollingSummaryBackfill() {
 
 export function useCreateMessage(chatId: string | null) {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: (data: {
       role: string;
@@ -1120,7 +1145,7 @@ export function useCreateMessage(chatId: string | null) {
         // under their own limit-keyed queries — keep them live too (#4721).
         qc.invalidateQueries({ queryKey: chatKeys.messagePeek(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) });
-        qc.invalidateQueries({ queryKey: chatKeys.list() });
+        if (profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(profileId) });
         qc.invalidateQueries({ queryKey: lorebookKeys.active(chatId) });
       }
     },
@@ -1129,6 +1154,7 @@ export function useCreateMessage(chatId: string | null) {
 
 export function useDeleteMessage(chatId: string | null) {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: (messageId: string) => api.delete(`/chats/${chatId}/messages/${messageId}`),
     onSuccess: () => {
@@ -1136,7 +1162,7 @@ export function useDeleteMessage(chatId: string | null) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messagePeek(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) });
-        qc.invalidateQueries({ queryKey: chatKeys.list() });
+        if (profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(profileId) });
         qc.invalidateQueries({ queryKey: lorebookKeys.active(chatId) });
       }
     },
@@ -1145,6 +1171,7 @@ export function useDeleteMessage(chatId: string | null) {
 
 export function useDeleteMessages(chatId: string | null) {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: (messageIds: string[]) => api.post(`/chats/${chatId}/messages/bulk-delete`, { messageIds }),
     onSuccess: () => {
@@ -1152,7 +1179,7 @@ export function useDeleteMessages(chatId: string | null) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messagePeek(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) });
-        qc.invalidateQueries({ queryKey: chatKeys.list() });
+        if (profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(profileId) });
         qc.invalidateQueries({ queryKey: lorebookKeys.active(chatId) });
       }
     },
@@ -1398,7 +1425,9 @@ export function useBranchChat() {
     onSuccess: (newChat, { chatId }) => {
       if (newChat) {
         qc.setQueryData(chatKeys.detail(newChat.id), newChat);
-        qc.setQueryData<Chat[]>(chatKeys.list(), (existing) => syncCachedBranch(existing, chatId, newChat));
+        qc.setQueryData<Chat[]>(chatKeys.listForProfile(newChat.profileId), (existing) =>
+          syncCachedBranch(existing, chatId, newChat),
+        );
 
         if (newChat.groupId) {
           qc.setQueryData<Chat>(chatKeys.detail(chatId), (existing) =>
@@ -1410,7 +1439,7 @@ export function useBranchChat() {
         }
       }
 
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (newChat) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(newChat.profileId) });
       qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
 
       if (newChat?.groupId) {
@@ -1563,13 +1592,14 @@ export function useDeleteSwipe(chatId: string | null) {
 /** Connect two chats bidirectionally (conversation ↔ roleplay) */
 export function useConnectChat() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: ({ chatId, targetChatId }: { chatId: string; targetChatId: string }) =>
       api.post<{ connected: boolean }>(`/chats/${chatId}/connect`, { targetChatId }),
     onSuccess: (_data, { chatId, targetChatId }) => {
       qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
       qc.invalidateQueries({ queryKey: chatKeys.detail(targetChatId) });
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(profileId) });
     },
   });
 }
@@ -1577,11 +1607,12 @@ export function useConnectChat() {
 /** Disconnect a chat from its linked partner */
 export function useDisconnectChat() {
   const qc = useQueryClient();
+  const profileId = useUserProfileStore((state) => state.activeProfileId);
   return useMutation({
     mutationFn: (chatId: string) => api.post<{ disconnected: boolean }>(`/chats/${chatId}/disconnect`, {}),
     onSuccess: (_data, chatId) => {
       qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(profileId) });
     },
   });
 }

@@ -528,6 +528,8 @@ export interface STBulkImportOptions {
   personas: STBulkImportSelection;
   characterTagImportMode?: STCharacterTagImportMode;
   regexScriptScope?: "character" | "global";
+  /** Owning User Profile for imported chat history. */
+  profileId?: string;
 }
 
 export interface STBulkImportResult {
@@ -705,6 +707,7 @@ export async function runSTBulkImport(
           branchName: ct.chatName ?? basename(ct.path, ".jsonl"),
           groupId,
           timestampOverrides: getFileTimestampOverrides(fileInfo),
+          profileId: options.profileId,
         });
 
         imported.chats++;
@@ -741,6 +744,7 @@ export async function runSTBulkImport(
           mode: "roleplay",
           groupId: gcGroupIds.get(groupKey)!,
           timestampOverrides: getFileTimestampOverrides(fileInfo),
+          profileId: options.profileId,
         });
         imported.groupChats++;
       } catch (err) {

@@ -10,7 +10,7 @@ type ChatRow = {
 };
 
 type ChatsStore = {
-  list(): Promise<ChatRow[]>;
+  list(profileId: string): Promise<ChatRow[]>;
   getMessage(id: string): Promise<{ content?: unknown } | null>;
   createMessage(input: {
     chatId: string;
@@ -27,6 +27,7 @@ export async function handleConversationCrossPostCommand(args: {
   chatId: string;
   messageId?: string | null;
   fullResponse: string;
+  ownerProfileId: string;
   chats: ChatsStore;
   sendCrossPost: (data: Record<string, unknown>) => void;
 }): Promise<boolean> {
@@ -34,7 +35,8 @@ export async function handleConversationCrossPostCommand(args: {
   const command = args.command as CrossPostCommand;
   const targetName = normalizeTextForMatch(command.target);
 
-  const allChatsList = await args.chats.list();
+  const allChatsList = await args.chats.list(args.ownerProfileId);
+
   const targetChat = allChatsList.find(
     (chat) =>
       chat.mode === "conversation" &&

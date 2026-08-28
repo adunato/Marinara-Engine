@@ -4,6 +4,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+- **User Profile session segregation** — Added server-backed User Profiles that isolate Conversation, Roleplay, and Game history/context while keeping reusable libraries and application settings shared.
+
 ### Added
 
 - Added multi-select Source Chats during Roleplay setup and in Chat Settings, letting existing Conversation, Roleplay, and Game summaries plus recent messages provide live, read-only story context.

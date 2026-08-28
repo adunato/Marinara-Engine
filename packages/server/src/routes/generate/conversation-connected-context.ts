@@ -1,4 +1,4 @@
-import type { WrapFormat } from "@marinara-engine/shared";
+import { isSameUserProfileOwnership, type WrapFormat } from "@marinara-engine/shared";
 
 import { sanitizeConnectedGameTranscript } from "../../services/generation/generation-text-utils.js";
 import { isConversationCommandEnabled } from "../../services/generation/conversation-command-runtime.js";
@@ -10,6 +10,7 @@ type ConnectedChatRow = {
   id: string;
   name?: string | null;
   mode?: string | null;
+  profileId?: string | null;
   characterIds?: unknown;
   metadata?: unknown;
 };
@@ -40,6 +41,7 @@ type ConnectedGameStateStore = {
 
 export async function resolveConversationConnectedChatContext(args: {
   connectedChatId: unknown;
+  ownerProfileId?: string | null;
   conversationCommandsEnabled: boolean;
   chatMeta: Record<string, unknown>;
   personaName: string;
@@ -56,7 +58,9 @@ export async function resolveConversationConnectedChatContext(args: {
     args.conversationCommandsEnabled && isConversationCommandEnabled(args.chatMeta, "influence");
   const connectedNoteCommandEnabled =
     args.conversationCommandsEnabled && isConversationCommandEnabled(args.chatMeta, "note");
-  const connectedChat = await args.chats.getById(args.connectedChatId as string);
+  const fetchedConnectedChat = await args.chats.getById(args.connectedChatId as string);
+  // Cross-profile connections must not leak into this session; unresolvable ownership fails closed in profile mode.
+  const connectedChat = isSameUserProfileOwnership(args.ownerProfileId, fetchedConnectedChat?.profileId) ? fetchedConnectedChat : null;
   const safe = (value: unknown): string => sanitizePromptLeaf(String(value ?? ""), args.wrapFormat);
   const nestedSection = (content: string, name: string): string => wrapContent(content, name, args.wrapFormat, 1);
 

@@ -168,6 +168,7 @@ import {
   isTerminal as isTacticalTerminal,
   TERRAIN_DATA,
   extractLeadingThinkingBlocks,
+  DEFAULT_USER_PROFILE_ID,
   type RPGStatsConfig,
 } from "@marinara-engine/shared";
 import { mergeCustomParameters, parseGameStateRow, resolveBaseUrl } from "./generate/generate-route-utils.js";
@@ -1795,6 +1796,7 @@ const createGameSchema = z.object({
   connectionId: z.string().optional(),
   promptPresetId: z.string().optional(),
   chatId: z.string().optional(),
+  profileId: z.string().min(1).optional(),
 });
 
 const setupSchema = z.object({
@@ -6274,7 +6276,8 @@ export async function gameRoutes(app: FastifyInstance) {
   app.post("/create", async (req) => {
     logger.info("[game/create] Received request");
     const parsedCreateGameInput = createGameSchema.parse(req.body);
-    const { name, connectionId, promptPresetId, chatId, preferences, shareLabels } = parsedCreateGameInput;
+    const { name, connectionId, promptPresetId, chatId, profileId, preferences, shareLabels } = parsedCreateGameInput;
+    if (!chatId && !profileId) throw new Error("profileId is required when creating a new game");
     const selectedPromptPresetId = promptPresetId || parsedCreateGameInput.setupConfig.promptPresetId || null;
     const customHudWidgets = sanitizeGameHudWidgets(parsedCreateGameInput.setupConfig.customHudWidgets);
     const gameSystemPrompt = parsedCreateGameInput.setupConfig.gameSystemPrompt?.trim() || null;
@@ -6355,6 +6358,7 @@ export async function gameRoutes(app: FastifyInstance) {
         personaId: setupConfig.personaId || null,
         promptPresetId: selectedPromptPresetId,
         connectionId: connectionId || null,
+        profileId: profileId!,
       });
     }
     if (!sessionChat) throw new Error("Failed to create game session chat");
@@ -7114,6 +7118,7 @@ export async function gameRoutes(app: FastifyInstance) {
         personaId: latestSession.personaId,
         promptPresetId: latestSession.promptPresetId,
         connectionId: connectionId || latestSession.connectionId,
+        profileId: latestSession.profileId ?? DEFAULT_USER_PROFILE_ID,
       });
       if (!newChat) throw new Error("Failed to create new session chat");
 

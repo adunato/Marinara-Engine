@@ -31,3 +31,4 @@ export * from "./mari-instructions.js";
 export * from "./achievements.js";
 export * from "./noodle.js";
 export * from "./library-folders.js";
+export * from "./user-profiles.js";

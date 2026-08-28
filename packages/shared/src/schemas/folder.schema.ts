@@ -26,6 +26,8 @@ export const createConnectionFolderSchema = z.object({
 
 export const createChatFolderSchema = createConnectionFolderSchema.extend({
   mode: chatModeSchema,
+  /** Owning profile is selected by the caller for normal new chat folders. */
+  profileId: z.string().min(1),
 });
 
 export const updateFolderSchema = z.object({
@@ -37,6 +39,7 @@ export const updateFolderSchema = z.object({
 
 export const reorderFoldersSchema = z.object({
   orderedIds: uniqueIdsSchema,
+  profileId: nonEmptyIdSchema,
 });
 
 export const moveChatToFolderSchema = z.object({

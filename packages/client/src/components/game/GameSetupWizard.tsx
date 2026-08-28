@@ -79,6 +79,8 @@ import { useLorebooks } from "../../hooks/use-lorebooks";
 import { useCapabilityAgentRegistry } from "../../hooks/use-capability-packages";
 import { useGameAssetStore } from "../../stores/game-asset.store";
 import { useUIStore } from "../../stores/ui.store";
+import { useUserProfileStore } from "../../stores/user-profile.store";
+import { queueActiveUserProfileContinuity } from "../../hooks/use-user-profiles";
 import {
   buildGameSetupShareFile,
   parseGameSetupShareFileJson,
@@ -477,10 +479,10 @@ export function GameSetupWizard({
     Array.from(new Set(initialPartyCharacterIds.filter((id) => characters.some((character) => character.id === id)))),
   );
   const [playerGoals, setPlayerGoals] = useState(
-    () => useUIStore.getState().rememberedGameSetupText?.playerGoals ?? "",
+    () => useUserProfileStore.getState().activeProfile?.rememberedGameSetupText.playerGoals ?? "",
   );
   const [preferences, setPreferences] = useState(
-    () => useUIStore.getState().rememberedGameSetupText?.preferences ?? "",
+    () => useUserProfileStore.getState().activeProfile?.rememberedGameSetupText.preferences ?? "",
   );
   const [gmSearch, setGmSearch] = useState("");
   const [partySearch, setPartySearch] = useState("");
@@ -552,9 +554,38 @@ export function GameSetupWizard({
 
   const sidecarStatus = useSidecarStore((s) => s.status);
   const sidecarConfig = useSidecarStore((s) => s.config);
-  const learnedGameSetupOptions = useUIStore((s) => s.learnedGameSetupOptions);
-  const rememberGameSetupOptions = useUIStore((s) => s.rememberGameSetupOptions);
-  const forgetGameSetupOption = useUIStore((s) => s.forgetGameSetupOption);
+  const activeProfile = useUserProfileStore((s) => s.activeProfile);
+  const learnedGameSetupOptions = activeProfile?.learnedGameSetupOptions;
+  const rememberGameSetupOptions = useCallback(
+    (options: Partial<NonNullable<typeof activeProfile>["learnedGameSetupOptions"]>, text?: Partial<NonNullable<typeof activeProfile>["rememberedGameSetupText"]>) => {
+      const current = useUserProfileStore.getState().activeProfile;
+      if (!current) return;
+      const merge = (existing: string[], incoming: string[] | undefined) =>
+        [...new Map([...existing, ...(incoming ?? [])].filter(Boolean).map((value) => [value.trim().toLowerCase(), value.trim()])).values()]
+          .slice(-60);
+      queueActiveUserProfileContinuity({
+        learnedGameSetupOptions: {
+          genres: merge(current.learnedGameSetupOptions.genres, options.genres),
+          tones: merge(current.learnedGameSetupOptions.tones, options.tones),
+          settings: merge(current.learnedGameSetupOptions.settings, options.settings),
+          goals: merge(current.learnedGameSetupOptions.goals, options.goals),
+          preferences: merge(current.learnedGameSetupOptions.preferences, options.preferences),
+        },
+        rememberedGameSetupText: { ...current.rememberedGameSetupText, ...text },
+      });
+    },
+    [],
+  );
+  const forgetGameSetupOption = useCallback((group: keyof NonNullable<typeof activeProfile>["learnedGameSetupOptions"], value: string) => {
+    const current = useUserProfileStore.getState().activeProfile;
+    if (!current) return;
+    queueActiveUserProfileContinuity({
+      learnedGameSetupOptions: {
+        ...current.learnedGameSetupOptions,
+        [group]: current.learnedGameSetupOptions[group].filter((item) => item.trim().toLowerCase() !== value.trim().toLowerCase()),
+      },
+    });
+  }, []);
   const openRightPanel = useUIStore((s) => s.openRightPanel);
   const openAgentCatalog = useUIStore((s) => s.openAgentCatalog);
   const sidecarAvailable = !!sidecarConfig.modelPath && sidecarStatus !== "not_downloaded";

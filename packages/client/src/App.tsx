@@ -153,6 +153,7 @@ export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { er
   private resetLocalUiState = () => {
     try {
       window.localStorage.removeItem("marinara-engine-ui");
+      window.localStorage.removeItem("marinara-active-user-profile");
       window.localStorage.removeItem("marinara-active-chat-id");
       window.localStorage.removeItem("marinara-input-drafts");
       window.sessionStorage.removeItem("marinara-input-drafts");

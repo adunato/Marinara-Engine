@@ -12,6 +12,7 @@ import { recordUserMessageActivity } from "../lib/user-presence-activity";
 import { shouldSuppressAutonomousMessages, toAutonomousPresenceStatus } from "../lib/user-status";
 import { useChatStore } from "../stores/chat.store";
 import { useUIStore, type UserStatus } from "../stores/ui.store";
+import { useUserProfileStore } from "../stores/user-profile.store";
 import { useGenerate } from "./use-generate";
 import { chatKeys } from "./use-chats";
 
@@ -125,7 +126,7 @@ export function useAutonomousMessaging(
         return;
       }
 
-      const userStatus = useUIStore.getState().userStatus;
+      const userStatus = useUserProfileStore.getState().activeProfile?.userStatus ?? "active";
 
       // Don't trigger autonomous messages when user is DND
       if (shouldSuppressAutonomousMessages(userStatus)) {
@@ -163,7 +164,7 @@ export function useAutonomousMessaging(
               const generationStartedAt = busyGenerationStartedAtRef.current;
               busyTimerRef.current = null;
               busyGenerationStartedAtRef.current = undefined;
-              const currentUserStatus = useUIStore.getState().userStatus;
+              const currentUserStatus = useUserProfileStore.getState().activeProfile?.userStatus ?? "active";
               if (shouldSuppressAutonomousMessages(currentUserStatus)) {
                 void recordClientPresence(currentUserStatus);
                 if (typeof generationStartedAt === "number") {
@@ -205,7 +206,7 @@ export function useAutonomousMessaging(
       skipPresenceDelay = false,
       generationStartedAt?: number,
     ) => {
-      const currentUserStatus = useUIStore.getState().userStatus;
+      const currentUserStatus = useUserProfileStore.getState().activeProfile?.userStatus ?? "active";
       if (shouldSuppressAutonomousMessages(currentUserStatus)) {
         await recordClientPresence(currentUserStatus);
         if (typeof generationStartedAt === "number") {
@@ -231,7 +232,8 @@ export function useAutonomousMessaging(
         });
         if (produced) {
           // Re-sort sidebar so this chat floats to the top
-          qc.invalidateQueries({ queryKey: chatKeys.list() });
+          const profileId = useUserProfileStore.getState().activeProfileId;
+          if (profileId) qc.invalidateQueries({ queryKey: chatKeys.listForProfile(profileId) });
           // Fire notification callback
           onAutonomousMessageRef.current?.(characterId);
         }
@@ -260,7 +262,7 @@ export function useAutonomousMessaging(
             busyTimerRef.current = setTimeout(
               () => {
                 if (
-                  !shouldSuppressAutonomousMessages(useUIStore.getState().userStatus) &&
+                  !shouldSuppressAutonomousMessages(useUserProfileStore.getState().activeProfile?.userStatus ?? "active") &&
                   !useChatStore.getState().abortControllers.has(chatId)
                 ) {
                   triggerAutonomousGeneration(exchange.characterIds[0]!);

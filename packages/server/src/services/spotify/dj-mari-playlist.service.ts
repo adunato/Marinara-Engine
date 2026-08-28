@@ -537,11 +537,11 @@ function findMostUsedCharacter(chats: ChatRow[], characters: ReturnType<typeof p
   };
 }
 
-async function buildDjMariContext(db: DB, credentials: SpotifyCredentialsResult) {
+async function buildDjMariContext(db: DB, credentials: SpotifyCredentialsResult, profileId: string) {
   const chatsStorage = createChatsStorage(db);
   const charactersStorage = createCharactersStorage(db);
   const [chats, characterRows, likedSongs] = await Promise.all([
-    chatsStorage.list(),
+    chatsStorage.list(profileId),
     charactersStorage.list(),
     fetchLikedSongExamples(credentials),
   ]);
@@ -776,9 +776,10 @@ export async function composeDjMariPlaylist(args: {
   db: DB;
   credentials: SpotifyCredentialsResult;
   deviceId?: string | null;
+  profileId: string;
 }): Promise<DjMariPlaylistResult> {
   const playlistName = `DJ Mari ${todayLabel()}`;
-  const context = await buildDjMariContext(args.db, args.credentials);
+  const context = await buildDjMariContext(args.db, args.credentials, args.profileId);
   const generatedTracks = await generatePlaylistPlan({ db: args.db, context, playlistName });
   const matchedTracks = await matchGeneratedTracks(args.credentials, generatedTracks, context.likedSongs);
 

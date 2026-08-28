@@ -38,6 +38,7 @@ export * from "./types/capability-runtime.js";
 export * from "./types/localization.js";
 export * from "./types/personal-extension.js";
 export * from "./types/home-feed.js";
+export * from "./types/user-profile.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -65,6 +66,7 @@ export * from "./schemas/folder.schema.js";
 export * from "./schemas/scene-analysis.schema.js";
 export * from "./schemas/library-folder.schema.js";
 export * from "./schemas/home-widget.schema.js";
+export * from "./schemas/user-profile.schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -133,6 +135,7 @@ export * from "./utils/tracker-field-locks.js";
 export * from "./utils/chat-summary-entries.js";
 export * from "./utils/chat-summary-prompt-settings.js";
 export * from "./utils/chat-persona.js";
+export * from "./utils/user-profile-ownership.js";
 export * from "./utils/quest-state.js";
 export * from "./utils/quote-format.js";
 export * from "./utils/image-prompt-compiler.js";

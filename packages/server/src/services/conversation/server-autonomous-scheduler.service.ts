@@ -410,7 +410,7 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
       if (shouldSkipAutonomousSweep(idleSweepGeneration, generation)) {
         return;
       }
-      const allChats = (await chats.list()) as RawChat[];
+      const allChats = (await chats.listAll()) as RawChat[];
       let sawEligible = false;
       let inconclusive = false;
       for (const chat of allChats) {

@@ -67,6 +67,7 @@ import type {
   ThinkingTagPair,
 } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createUserProfilesStorage } from "../services/storage/user-profiles.storage.js";
 import {
   commitSpatialOwnerTurn,
   findAppliedSpatialOwnerTurn,
@@ -1581,6 +1582,8 @@ export async function generateRoutes(app: FastifyInstance) {
         appearance?: string;
       } = {};
       const allPersonas = await chars.listPersonas();
+      const owningProfile = await createUserProfilesStorage(app.db).getById(chat.profileId);
+      const profileActivePersonaId = owningProfile?.activePersonaId ?? null;
       // ── Game mode: apply segment edit overlays to message content ──
       // Users can edit individual narration/dialogue segments in the VN UI.
       // Edits are stored as chat-metadata overlays; apply them so the model
@@ -1598,7 +1601,7 @@ export async function generateRoutes(app: FastifyInstance) {
       const currentUserInputContent = (): string | undefined =>
         [...currentInputMessages()].reverse().find((message) => message.role === "user")?.content;
 
-      const persona = resolveActivePersonaCandidate(allPersonas, chat.personaId, chatMode);
+      const persona = resolveActivePersonaCandidate(allPersonas, chat.personaId, chatMode, profileActivePersonaId);
       if (persona) {
         personaId = persona.id as string;
         personaName = persona.name;
@@ -2673,6 +2676,7 @@ export async function generateRoutes(app: FastifyInstance) {
             characterIds,
             personaName,
             chatId: input.chatId,
+            ownerProfileId: chat.profileId,
             musicPlayerEnabled: input.musicPlayerEnabled,
             musicPlayerSource: input.musicPlayerSource,
             chats,
@@ -2695,6 +2699,7 @@ export async function generateRoutes(app: FastifyInstance) {
               chars,
               lorebooksStore,
               chats,
+              ownerProfileId: chat.profileId,
               presets,
               // Rank the name lists by relevance to the current message (#4768 ph3);
               // degrades to the alphabetical list when the embedder is unavailable.
@@ -2760,6 +2765,7 @@ export async function generateRoutes(app: FastifyInstance) {
               personaName,
               promptTimeZone,
               wrapFormat,
+              chat.profileId,
             );
           }
 
@@ -2772,6 +2778,7 @@ export async function generateRoutes(app: FastifyInstance) {
               chats,
               chars,
               gameStateStore,
+              ownerProfileId: chat.profileId,
               wrapFormat,
             });
           if (connectedChatSystemPrompt) {
@@ -2970,6 +2977,7 @@ export async function generateRoutes(app: FastifyInstance) {
           isSceneChat,
           chatId: input.chatId,
           chats,
+          ownerProfileId: chat.profileId,
           finalMessages,
         });
 
@@ -2979,6 +2987,7 @@ export async function generateRoutes(app: FastifyInstance) {
             chats,
             characters: chars,
             gameStateStore,
+            ownerProfileId: chat.profileId,
           });
           if (contextSourcesBlock) {
             const firstUserIdx = finalMessages.findIndex((message) => message.role === "user");
@@ -5728,6 +5737,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 personaName,
                 promptTimeZone,
                 wrapFormat,
+                chat.profileId,
               );
             }
             responderAwarenessBlock = await mergeConversationCharacterMemories({
@@ -10085,6 +10095,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   chatId: input.chatId,
                   messageId,
                   fullResponse,
+                  ownerProfileId: chat.profileId,
                   chats,
                   sendCrossPost: (data) => {
                     reply.raw.write(
@@ -10180,6 +10191,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   command,
                   chatId: input.chatId,
                   sourceChat: chat,
+                  ownerProfileId: chat.profileId,
                   messageId,
                   allChatMessages,
                   chats,
@@ -10257,6 +10269,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   command,
                   characterId,
                   chatId: input.chatId,
+                  ownerProfileId: chat.profileId,
                   sourceChatMetadata: chat.metadata,
                   isHomeProfessorMariAssistantChat,
                   db: app.db,

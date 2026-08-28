@@ -26,6 +26,7 @@ type ContextSourceChat = {
   id: string;
   name?: string | null;
   mode?: string | null;
+  profileId: string;
   characterIds?: unknown;
   metadata?: unknown;
 };
@@ -244,8 +245,10 @@ async function formatSourceChat(args: {
   chats: ContextSourceChatsStore;
   characters: ContextSourceCharactersStore;
   gameStateStore: ContextSourceGameStateStore;
+  ownerProfileId: string;
 }): Promise<string | null> {
   const mode = args.source.mode;
+  if (args.ownerProfileId !== args.source.profileId) return null;
   if (mode !== "conversation" && mode !== "roleplay" && mode !== "game") return null;
 
   const metadata = asRecord(args.source.metadata);
@@ -268,6 +271,7 @@ export async function buildRoleplayContextSourcesBlock(args: {
   chats: ContextSourceChatsStore;
   characters: ContextSourceCharactersStore;
   gameStateStore: ContextSourceGameStateStore;
+  ownerProfileId: string;
 }): Promise<string | null> {
   const links = await args.chats.listContextSources(args.chatId);
   const blocks = (
@@ -276,6 +280,8 @@ export async function buildRoleplayContextSourcesBlock(args: {
         if (!link.sourceChatId || link.sourceChatId === args.chatId) return null;
         const source = await args.chats.getById(link.sourceChatId);
         if (!source) return null;
+        // Cross-profile sources must not leak into this session.
+        if (args.ownerProfileId !== source.profileId) return null;
         return formatSourceChat({ source, ...args });
       }),
     )

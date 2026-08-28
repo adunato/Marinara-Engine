@@ -17,6 +17,7 @@ import {
   type SpotifyCredentialsResult,
 } from "../services/spotify/spotify.service.js";
 import { composeDjMariPlaylist, DjMariPlaylistError } from "../services/spotify/dj-mari-playlist.service.js";
+import { createUserProfilesStorage } from "../services/storage/user-profiles.storage.js";
 
 // In-flight PKCE verifiers keyed by state param (short-lived, cleaned up on callback)
 const pendingAuth = new Map<
@@ -575,7 +576,7 @@ export async function spotifyAuthRoutes(app: FastifyInstance) {
     return { playlists };
   });
 
-  app.post<{ Body: { agentId?: string; deviceId?: string | null } }>("/dj-mari-playlist", async (req, reply) => {
+  app.post<{ Body: { agentId?: string; deviceId?: string | null; profileId?: string } }>("/dj-mari-playlist", async (req, reply) => {
     const credentials = await getCredentialsOrReply(reply, req.body?.agentId ?? null);
     if (!credentials) return;
 
@@ -594,9 +595,13 @@ export async function spotifyAuthRoutes(app: FastifyInstance) {
         missingScopes,
       });
     }
+    const profileId = typeof req.body?.profileId === "string" ? req.body.profileId.trim() : "";
+    if (!profileId || !(await createUserProfilesStorage(app.db).getById(profileId))) {
+      return reply.status(400).send({ error: "A valid profileId is required" });
+    }
 
     try {
-      return await composeDjMariPlaylist({ db: app.db, credentials, deviceId: req.body?.deviceId ?? null });
+      return await composeDjMariPlaylist({ db: app.db, credentials, deviceId: req.body?.deviceId ?? null, profileId });
     } catch (err) {
       if (err instanceof DjMariPlaylistError) {
         return reply.status(err.status).send({ error: err.message });

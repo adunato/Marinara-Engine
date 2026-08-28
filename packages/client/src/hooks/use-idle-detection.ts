@@ -6,7 +6,8 @@
 // to "active" when the user returns.
 
 import { useEffect, useRef } from "react";
-import { useUIStore } from "../stores/ui.store";
+import { queueActiveUserProfileContinuity } from "./use-user-profiles";
+import { useUserProfileStore } from "../stores/user-profile.store";
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -16,21 +17,23 @@ export function useIdleDetection() {
 
   useEffect(() => {
     const resetTimer = () => {
-      const { userStatus, userStatusManual, setUserStatus } = useUIStore.getState();
+      const profile = useUserProfileStore.getState().activeProfile;
+      if (!profile) return;
+      const { userStatus, userStatusManual } = profile;
       // Only manage idle if the user's manual choice is "active"
       if (userStatusManual !== "active") return;
 
       if (isIdleRef.current || userStatus === "idle") {
         isIdleRef.current = false;
-        setUserStatus("active");
+        queueActiveUserProfileContinuity({ userStatus: "active" });
       }
 
       clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
-        const state = useUIStore.getState();
-        if (state.userStatusManual === "active") {
+        const activeProfile = useUserProfileStore.getState().activeProfile;
+        if (activeProfile?.userStatusManual === "active") {
           isIdleRef.current = true;
-          state.setUserStatus("idle");
+          queueActiveUserProfileContinuity({ userStatus: "idle" });
         }
       }, IDLE_TIMEOUT_MS);
     };

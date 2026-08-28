@@ -14,6 +14,7 @@ type ChatRow = {
   personaId?: unknown;
   connectionId?: unknown;
   connectedChatId?: unknown;
+  profileId: string;
 };
 
 type MessageRow = {
@@ -25,7 +26,7 @@ type MessageRow = {
 
 type ChatsStore = {
   getById(id: string): Promise<ChatRow | null>;
-  list(): Promise<ChatRow[]>;
+  list(profileId: string): Promise<ChatRow[]>;
   listMessages(chatId: string): Promise<MessageRow[]>;
   create(input: {
     name: string;
@@ -35,6 +36,7 @@ type ChatsStore = {
     personaId: string | null;
     promptPresetId: string | null;
     connectionId: string | null;
+    profileId: string;
   }): Promise<ChatRow | null>;
   createMessage(input: {
     chatId: string;
@@ -51,6 +53,7 @@ export async function handleRoleplayDmCommand(args: {
   command: CharacterCommand;
   chatId: string;
   sourceChat: ChatRow;
+  ownerProfileId: string;
   messageId?: string | null;
   allChatMessages: MessageRow[];
   chats: ChatsStore;
@@ -125,7 +128,8 @@ async function runRoleplayDmCommand(
   const freshChat = await args.chats.getById(args.chatId);
   const connectedId = typeof freshChat?.connectedChatId === "string" ? freshChat.connectedChatId : null;
   const connectedChat = connectedId ? await args.chats.getById(connectedId) : null;
-  const linkedConversationId = connectedChat?.mode === "conversation" ? connectedChat.id : null;
+  const linkedConversationId =
+    connectedChat?.mode === "conversation" && connectedChat.profileId === args.ownerProfileId ? connectedChat.id : null;
 
   if (linkedConversationId) {
     const sourceUserDmMessage = await ensureSourceUserMessage(linkedConversationId, false);
@@ -157,7 +161,7 @@ async function runRoleplayDmCommand(
     return;
   }
 
-  const allChatsList = await args.chats.list();
+  const allChatsList = await args.chats.list(args.ownerProfileId);
   const existingDmChat = allChatsList.find((candidate) => {
     if (candidate.mode !== "conversation" || candidate.id === args.chatId) return false;
     const meta = parseExtra(candidate.metadata) as Record<string, unknown>;
@@ -177,6 +181,7 @@ async function runRoleplayDmCommand(
       personaId: typeof args.sourceChat.personaId === "string" ? args.sourceChat.personaId : null,
       promptPresetId: null,
       connectionId: typeof args.sourceChat.connectionId === "string" ? args.sourceChat.connectionId : null,
+      profileId: args.ownerProfileId,
     }));
   if (!targetChat) throw new Error("Failed to create DM conversation");
 
