@@ -839,6 +839,9 @@ function stringifyOutput(value: unknown): string {
   }
 }
 
+// Renders the structured read-bounding signal (#4767) into a short instruction
+// the model can act on, so a size-bounded read never looks like a silent cut.
+// The note itself is capped so it can never grow toward the output limit.
 const MARI_MAX_NOTE_FIELDS = 20;
 
 function formatMariReadTruncation(truncation: MariDbReadTruncation | undefined): string | null {
@@ -1318,6 +1321,8 @@ export function parseAssistantWorkspaceAction(content: string): AssistantWorkspa
   const { content: contentWithoutJson, matches } = removeJsonActionFrames(content);
   const jsonCommands = matches.flatMap((match) => parseJsonCommandCallsFromPayload(match.payload));
   const textualCommands = parseTextualWorkspaceCommandCalls(contentWithoutJson);
+  // If JSON frames are present, treat all prose outside them as protocol leakage.
+  // Textual calls have no visible-text field, so retain their surrounding prose.
   const inlineVisibleText = matches.length > 0 ? "" : stripWorkspaceCommands(contentWithoutJson);
   const frameVisibleText = matches
     .map((match) => jsonPayloadVisibleText(match.payload))
@@ -1824,6 +1829,9 @@ export class ProfessorMariWorkspaceService {
   private lastError: string | null = null;
   private active = false;
   private abortController: AbortController | null = null;
+  // Professor Mari is the only untrusted workspace writer. Serialize all of
+  // her mutations so path validation and the operation cannot overlap another
+  // agent mutation; user and host processes remain outside this sandbox boundary.
   private workspaceMutationTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly app: FastifyInstance) {}
@@ -1950,6 +1958,7 @@ export class ProfessorMariWorkspaceService {
     const persistAssistantMessage = async () => {
       const persistedText = assistantText.trim();
       if (!persistedText || assistantMessagePersisted) return null;
+
       const message = await chatStorage.createMessage({
         chatId: args.chatId,
         role: "assistant",
@@ -1958,6 +1967,7 @@ export class ProfessorMariWorkspaceService {
       });
       if (!message) return null;
       assistantMessagePersisted = true;
+
       const extraUpdate: Record<string, unknown> = {};
       const storedTrace = sanitizeTraceForStorage(workspaceTrace);
       if (thinkingText.trim()) extraUpdate.thinking = thinkingText;
@@ -2126,7 +2136,9 @@ export class ProfessorMariWorkspaceService {
           break;
         }
 
-        if (action.commands.length === 0) break;
+        if (action.commands.length === 0) {
+          break;
+        }
 
         const commandResults = await this.executeWorkspaceCommandBatch(
           action.commands,
@@ -2187,7 +2199,8 @@ export class ProfessorMariWorkspaceService {
             assistantText = appendVisibleText(assistantText, finalAction.visibleText);
             appendTraceText(workspaceTrace, finalAction.visibleText);
             for (const chunk of chunkText(finalAction.visibleText)) args.onEvent({ type: "token", data: chunk });
-            if (finalAction.suggestions.length > 0) args.onEvent({ type: "suggestions", data: finalAction.suggestions });
+            if (finalAction.suggestions.length > 0)
+              args.onEvent({ type: "suggestions", data: finalAction.suggestions });
             if (finalAction.plan.length > 0) args.onEvent({ type: "plan", data: finalAction.plan });
           } else if (finalAction.commands.length > 0) {
             const content =
@@ -2225,7 +2238,9 @@ export class ProfessorMariWorkspaceService {
           : "Professor Mari workspace run was cancelled.";
         appendTraceStatus(workspaceTrace, content);
         args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
-        if (!assistantText.trim() && hadPartialWorkspaceState) assistantText = appendVisibleText(assistantText, content);
+        if (!assistantText.trim() && hadPartialWorkspaceState) {
+          assistantText = appendVisibleText(assistantText, content);
+        }
         try {
           await persistAssistantMessage();
         } catch (saveErr) {
@@ -2322,6 +2337,11 @@ ${sections.join("\n\n")}
 </professor_mari_custom_skills>`;
   }
 
+  // #4851: the user's saved memories (persistent standing instructions). Injected
+  // index-and-fetch to stay token-cheap: ONLY a title+one-liner index is always in
+  // context; full bodies are pulled on relevance via instruction.get. Pinned rows
+  // inline their body (for the rare directive that must not risk a fetch-miss).
+  // The rendering lives in a pure, unit-tested helper.
   private async buildInstructionsPrompt(): Promise<string | null> {
     try {
       const rows = await createMariInstructionsStorage(this.app.db).list();
@@ -2530,14 +2550,21 @@ ${sections.join("\n\n")}
     const rawPath = inputPath.trim() || ".";
     const absolute = resolve(this.workspaceRoot, rawPath);
     const workspaceRoot = resolve(this.workspaceRoot);
-    if (!isWithin(workspaceRoot, absolute)) throw new Error(`Path escapes the workspace: ${inputPath}`);
+    if (!isWithin(workspaceRoot, absolute)) {
+      throw new Error(`Path escapes the workspace: ${inputPath}`);
+    }
     const canonicalRoot = existsSync(workspaceRoot) ? realpathSync(workspaceRoot) : workspaceRoot;
     let existingAncestor = absolute;
-    while (!existsSync(existingAncestor) && existingAncestor !== dirname(existingAncestor)) existingAncestor = dirname(existingAncestor);
+    while (!existsSync(existingAncestor) && existingAncestor !== dirname(existingAncestor)) {
+      existingAncestor = dirname(existingAncestor);
+    }
     const canonicalAncestor = existsSync(existingAncestor) ? realpathSync(existingAncestor) : existingAncestor;
     if (!isWithin(canonicalRoot, canonicalAncestor)) {
       throw new Error(`Path escapes the workspace through a symbolic link: ${inputPath}`);
     }
+    // Classify both the requested path and its canonical target: a symlink that
+    // stays inside the workspace can still point at an environment-secret file
+    // or Git internals, and reads would follow it.
     const canonicalTarget =
       existingAncestor === absolute ? canonicalAncestor : join(canonicalAncestor, relative(existingAncestor, absolute));
     const requestedPolicy = workspacePathAccessPolicy(workspaceRoot, absolute);
@@ -2578,7 +2605,13 @@ ${sections.join("\n\n")}
     const normalized = normalizeSlashPath(command);
     const tablesRoot = normalizeSlashPath(resolve(getFileStorageDir(), "tables"));
     const tablesRel = normalizeSlashPath(relative(this.workspaceRoot, resolve(getFileStorageDir(), "tables")));
-    if (!normalized.includes("data/storage/tables/") && !normalized.includes(tablesRoot) && !normalized.includes(tablesRel)) return null;
+    if (
+      !normalized.includes("data/storage/tables/") &&
+      !normalized.includes(tablesRoot) &&
+      !normalized.includes(tablesRel)
+    ) {
+      return null;
+    }
     return "Do not pass DATA_DIR/storage/tables/*.json to mari --json-file/--file. Those are full raw table exports; create a temp file containing one row/card payload instead.";
   }
 
@@ -2602,7 +2635,9 @@ ${sections.join("\n\n")}
       this.storageTableReadWarning(filePath),
       "",
       selected.map((line, index) => `${offset + index}: ${line}`).join("\n"),
-    ].filter((part): part is string => part !== null).join("\n");
+    ]
+      .filter((part): part is string => part !== null)
+      .join("\n");
   }
 
   private async commandLs(args: Record<string, unknown>): Promise<string> {
@@ -2620,7 +2655,9 @@ ${sections.join("\n\n")}
       `Directory: ${this.displayPath(dirPath)}`,
       ...names,
       truncated ? `… ${entries.length - names.length} more` : "",
-    ].filter(Boolean).join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   private async walkFiles(root: string, limit = MAX_WALK_ENTRIES): Promise<string[]> {
@@ -2659,7 +2696,9 @@ ${sections.join("\n\n")}
     const limit = numberArg(args, "limit", 1000, 1, 2000);
     const files = stats.isFile() ? [root] : await this.walkFiles(root);
     const matched = files.filter((file) => this.matchesGlob(file, pattern)).slice(0, limit);
-    return matched.length ? matched.map((file) => this.displayPath(file)).join("\n") : `No files matched ${pattern} under ${this.displayPath(root)}.`;
+    return matched.length
+      ? matched.map((file) => this.displayPath(file)).join("\n")
+      : `No files matched ${pattern} under ${this.displayPath(root)}.`;
   }
 
   private async commandGrep(args: Record<string, unknown>): Promise<string> {
@@ -2734,7 +2773,8 @@ ${sections.join("\n\n")}
       forbidStorageMutation: true,
       requireOrdinaryMutationPath: true,
     });
-    if (resolve(filePath) === resolve(this.workspaceRoot)) throw new Error("The workspace root cannot be moved or removed.");
+    if (resolve(filePath) === resolve(this.workspaceRoot))
+      throw new Error("The workspace root cannot be moved or removed.");
     return filePath;
   }
 
@@ -2758,6 +2798,8 @@ ${sections.join("\n\n")}
     if (!(await stat(source)).isFile()) throw new Error("move source must be a file");
     await mkdir(dirname(destination), { recursive: true });
     try {
+      // A hard link is an atomic, no-replace claim on the destination and keeps
+      // it tied to the exact source inode until the source name is removed.
       await link(source, destination);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
@@ -2766,7 +2808,9 @@ ${sections.join("\n\n")}
       try {
         await copyFile(source, destination, constants.COPYFILE_EXCL);
       } catch (copyError) {
-        if ((copyError as NodeJS.ErrnoException).code === "EEXIST") throw new Error("move destination already exists");
+        if ((copyError as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error("move destination already exists");
+        }
         throw copyError;
       }
     }
@@ -2885,7 +2929,9 @@ ${sections.join("\n\n")}
         signal.removeEventListener("abort", abortHandler);
         void sandboxed.cleanup().finally(callback);
       };
-      const killChild = () => child.kill();
+      const killChild = () => {
+        child.kill();
+      };
       const abortHandler = () => {
         killChild();
         finish(() => rejectRun(new Error("aborted")));
@@ -2949,7 +2995,8 @@ ${sections.join("\n\n")}
       cwd: this.workspaceRoot,
       sessionId: SESSION_ID,
     });
-    const printable = isRecord(result) && "output" in result && !("summary" in result) ? result.output : compactMutationResult(result);
+    const printable =
+      isRecord(result) && "output" in result && !("summary" in result) ? result.output : compactMutationResult(result);
     const output = compactOutput(
       [
         `Command: ${command}`,
@@ -2973,7 +3020,8 @@ ${sections.join("\n\n")}
     if (result.ok !== false && (action === "personal_extension.create" || action === "personal_extension.update")) {
       await personalServerExtensionRuntime.reloadAll();
     }
-    const printable = isRecord(result) && "output" in result && !("summary" in result) ? result.output : compactMutationResult(result);
+    const printable =
+      isRecord(result) && "output" in result && !("summary" in result) ? result.output : compactMutationResult(result);
     const truncationNote = formatMariReadTruncation(result.truncation);
     const output = compactOutput(
       [
@@ -3013,9 +3061,14 @@ ${sections.join("\n\n")}
   }
 
   private async resolveConnection(connectionId?: string | null): Promise<WorkspaceConnection | null> {
-    if (connectionId === LOCAL_SIDECAR_CONNECTION_ID) return this.buildLocalSidecarConnection();
+    if (connectionId === LOCAL_SIDECAR_CONNECTION_ID) {
+      return this.buildLocalSidecarConnection();
+    }
+
     const rows = (await this.app.db.select().from(apiConnections)) as Array<typeof apiConnections.$inferSelect>;
-    const languageRows = rows.filter((row) => row.provider !== "image_generation" && row.provider !== "video_generation");
+    const languageRows = rows.filter(
+      (row) => row.provider !== "image_generation" && row.provider !== "video_generation",
+    );
     const selected = connectionId ? languageRows.find((row) => row.id === connectionId) : null;
     const fallback =
       selected ??
@@ -3023,7 +3076,9 @@ ${sections.join("\n\n")}
       languageRows.find((row) => bool(row.isDefault)) ??
       languageRows[0] ??
       null;
-    if (!fallback) return sidecarModelService.getConfiguredModelRef() ? this.buildLocalSidecarConnection() : null;
+    if (!fallback) {
+      return sidecarModelService.getConfiguredModelRef() ? this.buildLocalSidecarConnection() : null;
+    }
     return { ...fallback, apiKey: decryptApiKey(fallback.apiKeyEncrypted) };
   }
 
@@ -3096,6 +3151,8 @@ function formatWorkspaceToolName(name: string): string {
   return name.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+// Extracts and streams a single named string field from a JSON object as tokens arrive,
+// forwarding each character to the provided sink as it is encountered.
 function createJsonFieldStreamExtractor(fieldName: string, onChunk: (chunk: string) => void): (chunk: string) => void {
   const pattern = new RegExp(`"${fieldName}"\\s*:\\s*"`);
   let buffer = "";
@@ -3104,6 +3161,7 @@ function createJsonFieldStreamExtractor(fieldName: string, onChunk: (chunk: stri
   return (chunk: string) => {
     if (state === "done") return;
     buffer += chunk;
+
     if (state === "seeking") {
       const match = buffer.match(pattern);
       if (!match) {
@@ -3113,6 +3171,7 @@ function createJsonFieldStreamExtractor(fieldName: string, onChunk: (chunk: stri
       buffer = buffer.slice(match.index! + match[0].length);
       state = "in_value";
     }
+
     if (state === "in_value") {
       let text = "";
       let index = 0;
@@ -3142,12 +3201,14 @@ function createJsonFieldStreamExtractor(fieldName: string, onChunk: (chunk: stri
   };
 }
 
+// Fans incoming token chunks out to multiple per-field extractors simultaneously.
 function createWorkspaceStreamExtractor(
   onToken: (chunk: string) => void,
   onThinking: (chunk: string) => void,
 ): (chunk: string) => void {
   const sayExtractor = createJsonFieldStreamExtractor("say", onToken);
   const reasoningExtractor = createJsonFieldStreamExtractor("reasoning_content", onThinking);
+
   return (chunk: string) => {
     sayExtractor(chunk);
     reasoningExtractor(chunk);
