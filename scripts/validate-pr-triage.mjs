@@ -53,7 +53,7 @@ export function validatePullRequestTriage() {
   const triggersSection = triageWorkflow.slice(triggersSectionStart + 1, triggersSectionEnd);
   assert.match(
     triggersSection,
-    /on:\s*\n\s*pull_request_target:\s*\n\s*types:\s*\[opened,\s*reopened,\s*edited,\s*synchronize,\s*ready_for_review\]\s*\n\s*branches:\s*\[staging,\s*main\]/u,
+    /on:\s*\n\s*pull_request_target:\s*\n\s*types:\s*\[opened,\s*reopened,\s*edited,\s*synchronize,\s*ready_for_review\]\s*\n\s*branches:\s*\[staging\]/u,
   );
 
   const jobIds = [
