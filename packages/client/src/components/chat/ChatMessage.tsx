@@ -65,6 +65,7 @@ import { resolveMessageRewriteVersions } from "../../lib/message-rewrite-version
 import { convertChatHtmlNewlines } from "../../lib/chat-html-newlines";
 import { sanitizeChatMessageCss, scopeChatMessageCss } from "../../lib/chat-message-css";
 import { resolveMessageReasoningDisplay } from "../../lib/message-reasoning";
+import { resolveMessageGenerationEmotionLabel } from "../../lib/message-emotions";
 import DOMPurify from "dompurify";
 import type { CharacterMap, ExpressionAvatarResolver, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 import {
@@ -76,6 +77,7 @@ import { GenerationReplayDetailsModal, hasGenerationReplayDetails } from "./Gene
 import type { ChatImage } from "../../hooks/use-gallery";
 import { ChatImageLightbox } from "./ChatImageLightbox";
 import { SwipeJumpControl } from "./SwipeJumpControl";
+import { GenerationEmotionLabel } from "./GenerationEmotionLabel";
 import { toast } from "sonner";
 import { MessageThinkingModal } from "./MessageThinkingModal";
 import { RoleplayStoryboardMessageMedia } from "./RoleplayStoryboardMessageMedia";
@@ -2072,6 +2074,10 @@ export const ChatMessage = memo(function ChatMessage({
   // load-bearing: resolvedCharacterId is non-null even on user messages in a
   // single-character chat, and self must never resolve in a user message.
   const selfCharacterId = isUser || isSystem ? null : (resolvedCharacterId ?? null);
+  const generationEmotionLabel =
+    isRoleplay && !isUser && !isSystem && !isNarrator && resolvedCharacterId
+      ? resolveMessageGenerationEmotionLabel(message, resolvedCharacterId)
+      : null;
   // Chat-wide filename index (group chats only) for card://self fallback in
   // merged group replies where the speaker's gallery lacks the file.
   const galleryIndex = useChatGalleryFilenameIndex(chatCharacterIds);
@@ -2248,10 +2254,16 @@ export const ChatMessage = memo(function ChatMessage({
     }[];
   }, [isMergedGroup, characterMap, mergedCharacterIds, expressionAvatarResolver, message]);
   const mergedNameColors = useMemo(() => mergedAvatars.map((avatar) => avatar.nameColor), [mergedAvatars]);
+  const mergedEmotionLabels = useMemo(
+    () => mergedAvatars.map((avatar) => resolveMessageGenerationEmotionLabel(message, avatar.id)),
+    [mergedAvatars, message],
+  );
+  const hasMergedEmotionLabels = mergedEmotionLabels.some(Boolean);
   // Cycle index for merged group avatars/names — driven by a ref + 2s setInterval to avoid re-renders
   const cycleIndexRef = useRef(0);
   const cycleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mergedNameRef = useRef<HTMLSpanElement>(null);
+  const mergedEmotionRef = useRef<HTMLSpanElement>(null);
   const mergedAvatarRefs = useRef<(HTMLImageElement | null)[]>([]);
   const mergedAvatarTailRefs = useRef<(HTMLImageElement | null)[]>([]);
 
@@ -2274,6 +2286,13 @@ export const ChatMessage = memo(function ChatMessage({
           span.style.opacity = i === index % mergedNameColors.length ? "1" : "0";
         });
       }
+      const emotionEl = mergedEmotionRef.current;
+      if (emotionEl) {
+        const spans = emotionEl.querySelectorAll<HTMLSpanElement>("[data-cycle-emotion]");
+        spans.forEach((span, i) => {
+          span.style.opacity = i === index % mergedEmotionLabels.length ? "1" : "0";
+        });
+      }
     };
     applyMergedCycleIndex(0);
     const total = Math.max(mergedAvatars.length, mergedNameColors.length);
@@ -2285,7 +2304,14 @@ export const ChatMessage = memo(function ChatMessage({
     return () => {
       if (cycleTimerRef.current) clearInterval(cycleTimerRef.current);
     };
-  }, [cycleMergedNarratorAvatars, isMergedGroup, mergedCycleKey, mergedAvatars.length, mergedNameColors.length]);
+  }, [
+    cycleMergedNarratorAvatars,
+    isMergedGroup,
+    mergedCycleKey,
+    mergedAvatars.length,
+    mergedNameColors.length,
+    mergedEmotionLabels.length,
+  ]);
 
   /** Render a stack of absolutely-positioned "Narrator" labels that crossfade via opacity. */
   const mergedNameElement = !isMergedGroup ? null : mergedNameColors.length === 0 ? (
@@ -2312,6 +2338,23 @@ export const ChatMessage = memo(function ChatMessage({
   ) : (
     <NameColorText color={mergedNameColors[0]}>{localizeUi("ui.chat.chatmessage.narrator")}</NameColorText>
   );
+
+  const mergedEmotionElement =
+    !isMergedGroup || !cycleMergedNarratorAvatars || !hasMergedEmotionLabels ? null : (
+      <span ref={mergedEmotionRef} className="relative block min-h-[0.75rem]">
+        <span className="invisible text-[0.625rem]">{mergedEmotionLabels.find(Boolean) ?? ""}</span>
+        {mergedEmotionLabels.map((label, i) => (
+          <span
+            key={mergedAvatars[i]?.id ?? i}
+            data-cycle-emotion
+            className="absolute inset-0"
+            style={{ opacity: i === 0 ? 1 : 0, transition: "opacity 1s ease" }}
+          >
+            <GenerationEmotionLabel label={label} className="text-white/35" />
+          </span>
+        ))}
+      </span>
+    );
 
   // Render content with dialogue highlighting (or HTML rendering)
   const text = typeof displayContent === "string" ? displayContent : message.content;
@@ -2866,18 +2909,26 @@ export const ChatMessage = memo(function ChatMessage({
             {!isGrouped && (
               <div className={cn("flex items-baseline gap-2 px-1", isUser && "flex-row-reverse")}>
                 {hiddenFromAIHeader}
-                <span
-                  className={cn(
-                    "mari-message-name text-[0.75rem] font-bold tracking-tight",
-                    !msgNameColor && !isMergedGroup && (isUser ? "text-neutral-300" : "rpg-char-name"),
-                  )}
-                  style={!isMergedGroup ? solidNameColorStyle(msgNameColor) : undefined}
-                >
-                  {isMergedGroup ? (
-                    mergedNameElement
-                  ) : (
-                    <NameColorText color={msgNameColor}>{displayName}</NameColorText>
-                  )}
+                <span className="min-w-0">
+                  <span
+                    className={cn(
+                      "mari-message-name text-[0.75rem] font-bold tracking-tight",
+                      !msgNameColor && !isMergedGroup && (isUser ? "text-neutral-300" : "rpg-char-name"),
+                    )}
+                    style={!isMergedGroup ? solidNameColorStyle(msgNameColor) : undefined}
+                  >
+                    {isMergedGroup ? (
+                      mergedNameElement
+                    ) : (
+                      <NameColorText color={msgNameColor}>{displayName}</NameColorText>
+                    )}
+                  </span>
+                  {!isUser &&
+                    (isMergedGroup ? (
+                      mergedEmotionElement
+                    ) : (
+                      <GenerationEmotionLabel label={generationEmotionLabel} className="text-white/35" />
+                    ))}
                 </span>
                 <span className="text-[0.625rem] text-white/30">{formatTime(message.createdAt)}</span>
                 {genLabel && (
@@ -2892,6 +2943,13 @@ export const ChatMessage = memo(function ChatMessage({
                   )}
               </div>
             )}
+            {isGrouped &&
+              !isUser &&
+              (isMergedGroup ? (
+                mergedEmotionElement
+              ) : (
+                <GenerationEmotionLabel label={generationEmotionLabel} className="px-1 text-white/35" />
+              ))}
 
             <ConversationStartMarkers
               sharedStart={isConversationStart}

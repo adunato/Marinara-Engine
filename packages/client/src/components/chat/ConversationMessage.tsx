@@ -42,6 +42,7 @@ import { MessageThinkingModal } from "./MessageThinkingModal";
 import { useChatStore } from "../../stores/chat.store";
 import { parseChatMetadata } from "../../lib/chat-display";
 import { resolveMessageReasoningDisplay } from "../../lib/message-reasoning";
+import { resolveMessageGenerationEmotionLabel } from "../../lib/message-emotions";
 import {
   findRetargetableUserReaction,
   reactionTargetOf,
@@ -220,8 +221,11 @@ export const ConversationMessage = memo(function ConversationMessage({
       : null;
   const generationReplay = hasGenerationReplayDetails(extra.generationReplay) ? extra.generationReplay : null;
   const canRegenerate = !isUser || generationReplay !== null;
-  const { summary: thinking, summaryUnavailable: reasoningSummaryUnavailable, hasReasoning } =
-    resolveMessageReasoningDisplay(extra);
+  const {
+    summary: thinking,
+    summaryUnavailable: reasoningSummaryUnavailable,
+    hasReasoning,
+  } = resolveMessageReasoningDisplay(extra);
 
   useEffect(() => {
     if (!hasReasoning) setShowThinking(false);
@@ -255,7 +259,9 @@ export const ConversationMessage = memo(function ConversationMessage({
     message.characterId !== null ? (charInfo ?? fallbackChatCharacterEntry?.info ?? null) : null;
   const resolvedCharacterId = charInfo
     ? message.characterId
-    : (message.characterId !== null ? fallbackChatCharacterEntry?.id ?? null : null);
+    : message.characterId !== null
+      ? (fallbackChatCharacterEntry?.id ?? null)
+      : null;
   const primaryCharInfo =
     resolvedCharacterInfo ??
     (scopedCharacterMap
@@ -287,6 +293,10 @@ export const ConversationMessage = memo(function ConversationMessage({
     (characterId: string) => expressionAvatarResolver?.(message as Message, characterId) ?? null,
     [expressionAvatarResolver, message],
   );
+  const resolveGenerationEmotionLabel = useCallback(
+    (characterId: string) => resolveMessageGenerationEmotionLabel(message, characterId),
+    [message],
+  );
   const expressionAvatarUrl = !isUser && resolvedCharacterId ? resolveExpressionAvatar(resolvedCharacterId) : null;
   const avatarUrl = expressionAvatarUrl ?? baseAvatarUrl;
   const personaAvatarCrop = isUser
@@ -297,8 +307,8 @@ export const ConversationMessage = memo(function ConversationMessage({
   const avatarCropStyle = expressionAvatarUrl
     ? {}
     : isUser
-    ? getAvatarCropStyle(personaAvatarCrop)
-    : getAvatarCropStyle(resolvedCharacterInfo?.avatarCrop);
+      ? getAvatarCropStyle(personaAvatarCrop)
+      : getAvatarCropStyle(resolvedCharacterInfo?.avatarCrop);
   const displayName = isUser
     ? plainUserMessages
       ? "You"
@@ -456,7 +466,9 @@ export const ConversationMessage = memo(function ConversationMessage({
         await api.patch(`/chats/${message.chatId}/messages/${message.id}/extra`, { attachments: updated });
       } catch (err) {
         qc.setQueryData(msgKey, previous);
-        toast.error(err instanceof Error ? err.message :localizeUi("ui.chat.conversationmessage.failedToRemoveAttachment"));
+        toast.error(
+          err instanceof Error ? err.message : localizeUi("ui.chat.conversationmessage.failedToRemoveAttachment"),
+        );
       } finally {
         await qc.invalidateQueries({ queryKey: msgKey });
       }
@@ -488,7 +500,9 @@ export const ConversationMessage = memo(function ConversationMessage({
         await api.patch(`/chats/${message.chatId}/messages/${message.id}/extra`, { reactions: next });
       } catch (err) {
         qc.setQueryData(msgKey, previous);
-        toast.error(err instanceof Error ? err.message :localizeUi("ui.chat.conversationmessage.failedToUpdateReaction"));
+        toast.error(
+          err instanceof Error ? err.message : localizeUi("ui.chat.conversationmessage.failedToUpdateReaction"),
+        );
       } finally {
         await qc.invalidateQueries({ queryKey: msgKey });
       }
@@ -835,6 +849,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     avatarUrl,
     avatarCropStyle,
     resolveExpressionAvatar,
+    resolveGenerationEmotionLabel,
     avatarCornerClass: conversationAvatarShape === "square" ? "rounded-lg" : "rounded-full",
     nameColor,
     onOpenAboutMe,

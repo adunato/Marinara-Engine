@@ -4,6 +4,7 @@ import {
   parseGroupedSpeakerSegments,
   stripLeadingMessageTimestamps,
   type CharacterEmotionProfile,
+  type GenerationCharacterEmotionSnapshot,
 } from "@marinara-engine/shared";
 
 export type AvailableEmotionState = {
@@ -101,6 +102,33 @@ export function buildEmotionProfilesByCharacterId(
   return result;
 }
 
+/** Resolve the exact CR035 state and historical label that will shape a generation. */
+export function resolveGenerationEmotionSnapshot(
+  emotionProfile: unknown,
+  persistedStateId?: string | null,
+): GenerationCharacterEmotionSnapshot | null {
+  const profile = normalizeCharacterEmotionProfile(emotionProfile);
+  if (profile?.enabled !== true) return null;
+  const selected =
+    profile.states.find((state) => state.id === persistedStateId) ??
+    profile.states.find((state) => state.id === profile.defaultStateId);
+  if (!selected) return null;
+  return { stateId: selected.id, label: selected.label };
+}
+
+/** Build generation-time emotion provenance for every enabled character profile. */
+export function buildGenerationCharacterEmotionSnapshots(
+  characters: ReadonlyArray<{ id: string; emotionProfile?: unknown }>,
+  persistedStates: Readonly<Record<string, string>>,
+): Record<string, GenerationCharacterEmotionSnapshot> {
+  const result: Record<string, GenerationCharacterEmotionSnapshot> = {};
+  for (const character of characters) {
+    const snapshot = resolveGenerationEmotionSnapshot(character.emotionProfile, persistedStates[character.id]);
+    if (snapshot) result[character.id] = snapshot;
+  }
+  return result;
+}
+
 export function buildAvailableEmotionCharacters(
   characters: ReadonlyArray<{ id: string; name: string; emotionProfile?: unknown }>,
   previousStates: Readonly<Record<string, string>>,
@@ -164,7 +192,9 @@ export function validateCharacterEmotionEntries<T extends CharacterEmotionEntry>
       continue;
     }
     if (seen.has(character.characterId)) {
-      warnings.push({ message: `Expression agent returned duplicate emotion for ${character.characterName} - keeping first` });
+      warnings.push({
+        message: `Expression agent returned duplicate emotion for ${character.characterName} - keeping first`,
+      });
       continue;
     }
     rawEntry.characterId = character.characterId;
