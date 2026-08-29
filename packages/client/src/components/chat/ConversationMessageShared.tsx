@@ -42,6 +42,7 @@ export interface MessageData {
     isGenerated: boolean;
     tokenCount: number | null;
     generationInfo: { model?: string; tokensIn?: number; tokensOut?: number; duration?: number } | null;
+    generationCharacterEmotions?: MessageExtra["generationCharacterEmotions"];
     isConversationStart?: boolean;
     hiddenFromAI?: boolean;
     thinking?: string | null;
@@ -60,7 +61,13 @@ export interface MessageData {
   createdAt: string;
 }
 
-export function DiceMessageContent({ diceRollResult, createdAt }: { diceRollResult: unknown; createdAt?: string | null }) {
+export function DiceMessageContent({
+  diceRollResult,
+  createdAt,
+}: {
+  diceRollResult: unknown;
+  createdAt?: string | null;
+}) {
   if (!isDiceRollResult(diceRollResult)) return null;
   return <AnimatedDiceRoll {...diceRollResult} mode="chat" animate={shouldAnimateDiceRollMessage(createdAt)} />;
 }
@@ -78,6 +85,8 @@ export interface MessageRenderContext {
   avatarCropStyle: CSSProperties;
   /** Resolves this message's persisted expression portrait for a speaker. */
   resolveExpressionAvatar: (characterId: string) => string | null;
+  /** Resolves the historical generation-time emotion label for a speaker. */
+  resolveGenerationEmotionLabel: (characterId: string) => string | null;
   avatarCornerClass: string;
   nameColor?: string;
   mentionNames: string[];
@@ -344,8 +353,16 @@ export function HiddenFromAIConversationButton({
           "inline-flex items-center gap-1 rounded px-1 py-0.5 text-[0.625rem] font-medium text-[var(--marinara-chat-chrome-highlight-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marinara-chat-chrome-focus-ring)]",
         )}
-        aria-label={isHiddenExpanded ?localizeUi("ui.chat.hiddenfromaiconversationbutton.collapseHiddenFromAiMessage") :localizeUi("ui.chat.hiddenfromaimessagesummary.expandHiddenFromAiMessage")}
-        title={isHiddenExpanded ?localizeUi("ui.chat.hiddenfromaiconversationbutton.collapseHiddenFromAiMessage") :localizeUi("ui.chat.hiddenfromaimessagesummary.expandHiddenFromAiMessage")}
+        aria-label={
+          isHiddenExpanded
+            ? localizeUi("ui.chat.hiddenfromaiconversationbutton.collapseHiddenFromAiMessage")
+            : localizeUi("ui.chat.hiddenfromaimessagesummary.expandHiddenFromAiMessage")
+        }
+        title={
+          isHiddenExpanded
+            ? localizeUi("ui.chat.hiddenfromaiconversationbutton.collapseHiddenFromAiMessage")
+            : localizeUi("ui.chat.hiddenfromaimessagesummary.expandHiddenFromAiMessage")
+        }
       >
         <ChevronRight size="0.7rem" className={cn("shrink-0 transition-transform", isHiddenExpanded && "rotate-90")} />
         <EyeOff size="0.7rem" className="shrink-0" />
@@ -369,7 +386,9 @@ export function HiddenFromAIConversationSummary({ onExpand }: { onExpand: () => 
     >
       <EyeOff size="0.8rem" className="shrink-0" />
       <span className="min-w-0 flex-1 truncate">{localizeUi("ui.chat.conversationmessagegrouped.hiddenFromAi")}</span>
-      <span className="shrink-0 text-[0.625rem] opacity-70">{localizeUi("ui.chat.hiddenfromaimessagesummary.show")}</span>
+      <span className="shrink-0 text-[0.625rem] opacity-70">
+        {localizeUi("ui.chat.hiddenfromaimessagesummary.show")}
+      </span>
     </button>
   );
 }
@@ -410,7 +429,12 @@ export function MessageContent({
         className="block cursor-zoom-in rounded-lg text-left"
         title={localizeUi("ui.noodle.noodlepostcard.openImage")}
       >
-        <img src={url} alt={localizeUi("ui.chat.messagecontent.gif")} className="max-h-48 max-w-full sm:max-w-xs rounded-lg" loading="lazy" />
+        <img
+          src={url}
+          alt={localizeUi("ui.chat.messagecontent.gif")}
+          className="max-h-48 max-w-full sm:max-w-xs rounded-lg"
+          loading="lazy"
+        />
       </button>
     );
   }
@@ -507,9 +531,13 @@ export function ConversationMessageEditForm({
         }}
       />
       <div className="flex items-center gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-        <button onClick={onCancel} className="text-foreground/70 hover:underline hover:text-foreground">{localizeUi("ui.chat.conversationmessageeditform.cancel")}</button>
+        <button onClick={onCancel} className="text-foreground/70 hover:underline hover:text-foreground">
+          {localizeUi("ui.chat.conversationmessageeditform.cancel")}
+        </button>
         <span>·</span>
-        <button onClick={onSave} className="text-foreground/70 hover:underline hover:text-foreground">{localizeUi("ui.chat.conversationmessageeditform.save")}</button>
+        <button onClick={onSave} className="text-foreground/70 hover:underline hover:text-foreground">
+          {localizeUi("ui.chat.conversationmessageeditform.save")}
+        </button>
       </div>
     </div>
   );
@@ -600,11 +628,11 @@ export function ConversationMessageTranslation({
   return (
     <div className="mt-1.5 border-t border-[var(--border)] pt-1.5">
       {isTranslating ? (
-        <span className="text-[0.75rem] italic text-[var(--muted-foreground)]">{localizeUi("ui.chat.chatmessage.translating")}</span>
+        <span className="text-[0.75rem] italic text-[var(--muted-foreground)]">
+          {localizeUi("ui.chat.chatmessage.translating")}
+        </span>
       ) : (
-        <div className="translation-text whitespace-pre-wrap">
-          {translatedText}
-        </div>
+        <div className="translation-text whitespace-pre-wrap">{translatedText}</div>
       )}
     </div>
   );

@@ -94,6 +94,7 @@
     "regression:novelai-zip-security": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/novelai-zip-security.regression.ts",
     "regression:image-result-security": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/image-result-url-security.regression.ts",
     "regression:expression-tools": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/expression-tool-retirement.regression.ts",
+    "regression:generation-emotion-labels": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/generation-emotion-labels.regression.ts",
     "regression:regeneration-context": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/regeneration-context.regression.ts",
     "regression:extensions-security": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/extension-security.regression.ts",
     "regression:professor-mari-shell-sandbox": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/professor-mari-shell-sandbox.regression.ts",

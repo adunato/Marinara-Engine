@@ -5,6 +5,7 @@ import { User } from "lucide-react";
 import { normalizeTextForMatch, splitGroupedSegmentDisplayLines } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 import { PendingTypingDots } from "./PendingTypingDots";
+import { GenerationEmotionLabel } from "./GenerationEmotionLabel";
 import {
   MESSAGE_SELECTION_CHECKBOX_CLASS,
   MESSAGE_SELECTION_CHECKBOX_SELECTED_CLASS,
@@ -41,6 +42,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
     charByName,
     charIdByName,
     selfCharacterId,
+    resolveGenerationEmotionLabel,
     galleryIndex,
     groupedSegments,
     visibleSegments,
@@ -80,6 +82,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
     bubbleCornerClass,
     shouldHideUserAvatar,
   } = ctx;
+  const generationEmotionLabel = !isUser && selfCharacterId ? resolveGenerationEmotionLabel(selfCharacterId) : null;
 
   return (
     <>
@@ -92,7 +95,11 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
               type="button"
               role="checkbox"
               aria-checked={isSelected}
-              aria-label={isSelected ?localizeUi("ui.chat.chatmessage.deselectMessage") :localizeUi("ui.chat.chatmessage.selectMessage")}
+              aria-label={
+                isSelected
+                  ? localizeUi("ui.chat.chatmessage.deselectMessage")
+                  : localizeUi("ui.chat.chatmessage.selectMessage")
+              }
               tabIndex={0}
               onClick={(e) => {
                 e.stopPropagation();
@@ -110,9 +117,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                 isSelected && MESSAGE_SELECTION_CHECKBOX_SELECTED_CLASS,
               )}
             >
-              {isSelected && (
-                <span className="text-xs font-bold text-[var(--marinara-chat-chrome-panel-bg)]">✓</span>
-              )}
+              {isSelected && <span className="text-xs font-bold text-[var(--marinara-chat-chrome-panel-bg)]">✓</span>}
             </button>
           </div>
         )}
@@ -125,7 +130,9 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                 <button
                   type="button"
                   onClick={(e) => ctx.onOpenAboutMe?.(e.currentTarget.getBoundingClientRect())}
-                  aria-label={localizeUi("ui.chat.conversationmessagebubble.viewValue1SAboutMe", { value1: displayName })}
+                  aria-label={localizeUi("ui.chat.conversationmessagebubble.viewValue1SAboutMe", {
+                    value1: displayName,
+                  })}
                   title={localizeUi("ui.chat.conversationmessagebubble.viewValue1SAboutMe", { value1: displayName })}
                   className={cn(
                     "relative block h-10 w-10 overflow-hidden bg-[var(--accent)] cursor-pointer transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/50",
@@ -181,23 +188,26 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
         >
           {/* Header — name + timestamp for first in group */}
           {!isGrouped && (!isUser || hiddenFromAIHeader) && (
-            <div
-              className={cn(
-                "mari-message-meta mb-0.5 flex items-baseline gap-2",
-                isUser ? "justify-end pr-2 text-right" : "pl-2",
-              )}
-            >
-              {hiddenFromAIHeader}
-              {!isUser && (
-                <ConversationMessageName displayName={displayName} nameColor={nameColor} onOpenAboutMe={ctx.onOpenAboutMe} />
-              )}
-              {!hideTimestamp && !isUser && (
-                <span className="mari-message-timestamp text-[0.6875rem] text-[var(--muted-foreground)]/60">
-                  {formatTimestamp(message.createdAt)}
-                </span>
-              )}
+            <div className={cn("mari-message-meta mb-0.5", isUser ? "pr-2 text-right" : "pl-2")}>
+              <div className={cn("flex items-baseline gap-2", isUser && "justify-end")}>
+                {hiddenFromAIHeader}
+                {!isUser && (
+                  <ConversationMessageName
+                    displayName={displayName}
+                    nameColor={nameColor}
+                    onOpenAboutMe={ctx.onOpenAboutMe}
+                  />
+                )}
+                {!hideTimestamp && !isUser && (
+                  <span className="mari-message-timestamp text-[0.6875rem] text-[var(--muted-foreground)]/60">
+                    {formatTimestamp(message.createdAt)}
+                  </span>
+                )}
+              </div>
+              {!isUser && <GenerationEmotionLabel label={generationEmotionLabel} />}
             </div>
           )}
+          {isGrouped && !isUser && <GenerationEmotionLabel label={generationEmotionLabel} className="mb-0.5 pl-2" />}
 
           {/* Bubble */}
           {isHiddenCollapsed ? (
@@ -215,11 +225,11 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
           ) : groupedSegments && !isUser ? (
             <div className="flex flex-col items-start gap-1.5">
               {groupedSegments.slice(0, visibleSegments).map((grp, i) => {
-                const segChar =
-                  grp.speaker && charByName ? charByName.get(normalizeTextForMatch(grp.speaker)) : null;
-                const segSelfId =
-                  (grp.speaker && charIdByName ? charIdByName.get(normalizeTextForMatch(grp.speaker)) : null) ??
-                  selfCharacterId;
+                const segChar = grp.speaker && charByName ? charByName.get(normalizeTextForMatch(grp.speaker)) : null;
+                const segCharacterId =
+                  (grp.speaker && charIdByName ? charIdByName.get(normalizeTextForMatch(grp.speaker)) : null) ?? null;
+                const segSelfId = segCharacterId ?? selfCharacterId;
+                const segEmotionLabel = segCharacterId ? resolveGenerationEmotionLabel(segCharacterId) : null;
                 const segName = segChar?.convoDisplayName?.trim() || segChar?.name || grp.speaker || "";
                 const displayLines = splitGroupedSegmentDisplayLines(grp);
 
@@ -256,6 +266,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                     >
                       {segName}
                     </div>
+                    <GenerationEmotionLabel label={segEmotionLabel} className="mb-0.5" />
                     <MessageContent
                       content={line}
                       mentionNames={mentionNames}
@@ -263,7 +274,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                       stickerMap={stickerMap}
                       onImageOpen={(url) => onImageOpen(url)}
                       selfCharacterId={segSelfId}
-                    galleryIndex={galleryIndex}
+                      galleryIndex={galleryIndex}
                     />
                   </div>
                 ));
@@ -291,10 +302,13 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                       stickerMap={stickerMap}
                       onImageOpen={(url) => onImageOpen(url)}
                       selfCharacterId={selfCharacterId}
-                    galleryIndex={galleryIndex}
+                      galleryIndex={galleryIndex}
                     />
                   )}
-                  <PendingTypingDots label={localizeUi("ui.chat.conversationmessagebubble.stillTyping")} dotClassName="bg-[var(--muted-foreground)]/60" />
+                  <PendingTypingDots
+                    label={localizeUi("ui.chat.conversationmessagebubble.stillTyping")}
+                    dotClassName="bg-[var(--muted-foreground)]/60"
+                  />
                 </div>
               ) : extra.diceRollResult ? (
                 <DiceMessageContent diceRollResult={extra.diceRollResult} createdAt={message.createdAt} />
@@ -306,7 +320,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                   stickerMap={stickerMap}
                   onImageOpen={(url) => onImageOpen(url)}
                   selfCharacterId={selfCharacterId}
-                galleryIndex={galleryIndex}
+                  galleryIndex={galleryIndex}
                 />
               )}
             </div>
