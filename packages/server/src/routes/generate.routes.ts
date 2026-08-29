@@ -37,6 +37,7 @@ import {
   customAgentHasCapability,
   CHAT_SUMMARY_PROMPT_SETTINGS_KEY,
   DEFAULT_CONVERSATION_BRIEFING_PROMPT,
+  DEFAULT_CONVERSATION_FAST_PATH_PROMPT,
   CUSTOM_GENERATION_PARAMETERS_SETTINGS_KEY,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_CONVERSATION_PROMPT,
@@ -327,7 +328,7 @@ import {
   buildConversationCurrentContextBlock,
   replaceConversationContextBlockForTarget,
 } from "./generate/conversation-context-block.js";
-import { buildRoleplayContextSourcesBlock } from "./generate/roleplay-context-sources.js";
+import { buildRoleplayContextSourcesBlock, resolveRoleplayContextSources } from "./generate/roleplay-context-sources.js";
 import { prepareConversationPromptHistory } from "./generate/conversation-history-runtime.js";
 import { resolveConversationPresenceRuntime } from "./generate/conversation-presence-runtime.js";
 import { resolveProfessorMariPromptContext } from "./generate/professor-mari-prompt-context.js";
@@ -340,13 +341,12 @@ import {
   formatConversationGroupOutputFormat,
   resolvePresetModePrompt,
 } from "./generate/conversation-prompt-formatting.js";
+import { buildConversationWriterMessages, conversationPromptHash } from "./generate/conversation-two-pass-runtime.js";
 import {
-  buildConversationCuratorMessages,
-  buildConversationWriterMessages,
-  conversationPromptHash,
-  createConversationSourceSnapshot,
-  normalizeConversationBriefing,
-} from "./generate/conversation-two-pass-runtime.js";
+  prepareConversationTurnBriefing,
+  type ConversationTwoPassDiagnostics,
+  type ConversationCompletionResult,
+} from "./generate/conversation-two-pass-orchestrator.js";
 import {
   normalizePromptAttachments,
   resolveImageCaptioningRuntime,
@@ -2756,7 +2756,12 @@ export async function generateRoutes(app: FastifyInstance) {
           // (awarenessBlock is injected later, after persona info)
           const crossChatEnabled = chatMeta.crossChatAwareness !== false; // on by default
           conversationCrossChatAwarenessEnabled = crossChatEnabled;
-          if (crossChatEnabled && !input.regenerateMessageId && !conversationScopesAwarenessToResponder) {
+          if (
+            crossChatEnabled &&
+            !input.regenerateMessageId &&
+            !conversationScopesAwarenessToResponder &&
+            (!useTwoPassConversationPipeline || conversationTwoPassSettings.sourceRoles.crossChatAwareness === "always_include")
+          ) {
             const { buildAwarenessBlock } = await import("../services/conversation/awareness.service.js");
             convoAwarenessBlock = await buildAwarenessBlock(
               app.db,
@@ -3553,9 +3558,11 @@ export async function generateRoutes(app: FastifyInstance) {
         );
         let recalledAgentVectorMemories: string[] = [];
         let memoryRecallAttempted = false;
+        const resolveConversationMemoryRecallUpfront =
+          !useTwoPassConversationPipeline || conversationTwoPassSettings.sourceRoles.memories === "always_include";
         if (chatMode === "conversation" && conversationContextMacroSlots.memories) {
           const memoryRecallMessages: GenerationPromptMessage[] = [];
-          if (enableMemoryRecall && memoryRecallVectorizerAvailable) {
+          if (enableMemoryRecall && memoryRecallVectorizerAvailable && resolveConversationMemoryRecallUpfront) {
             memoryRecallAttempted = true;
             recalledAgentVectorMemories = await injectMemoryRecallContext({
               db: app.db,
@@ -3579,7 +3586,11 @@ export async function generateRoutes(app: FastifyInstance) {
             .filter(Boolean)
             .join("\n\n");
           replaceConversationContextMacro(finalMessages, "memories", conversationMemoriesBlockValue);
-        } else if (enableMemoryRecall && memoryRecallVectorizerAvailable) {
+        } else if (
+          enableMemoryRecall &&
+          memoryRecallVectorizerAvailable &&
+          resolveConversationMemoryRecallUpfront
+        ) {
           memoryRecallAttempted = true;
           recalledAgentVectorMemories = await injectMemoryRecallContext({
             db: app.db,
@@ -3595,7 +3606,12 @@ export async function generateRoutes(app: FastifyInstance) {
             wrapFormat,
           });
         }
-        if (customAgentVectorAccessEnabled && memoryRecallVectorizerAvailable && !memoryRecallAttempted) {
+        if (
+          customAgentVectorAccessEnabled &&
+          memoryRecallVectorizerAvailable &&
+          !memoryRecallAttempted &&
+          (!useTwoPassConversationPipeline || conversationTwoPassSettings.sourceRoles.memories !== "agent_curated")
+        ) {
           recalledAgentVectorMemories = await injectMemoryRecallContext({
             db: app.db,
             messages: [],
@@ -5700,6 +5716,8 @@ export async function generateRoutes(app: FastifyInstance) {
           return prepared;
         };
 
+        let sharedConversationBriefingPromise: ReturnType<typeof prepareConversationTurnBriefing> | null = null;
+
         /** Generate a single response for a given character and save it. */
         const generateForCharacter = async (
           targetCharId: string | null,
@@ -5985,16 +6003,7 @@ export async function generateRoutes(app: FastifyInstance) {
             return fit.messages;
           };
 
-          let conversationCuratorDiagnostics: {
-            provider: string;
-            model: string;
-            maxTokens: number;
-            durationMs: number;
-            usage?: LLMUsage;
-            sourceHash: string;
-            input: Array<{ role: string; content: string }>;
-            briefing: string;
-          } | null = null;
+          let conversationCuratorDiagnostics: ConversationTwoPassDiagnostics | null = null;
           let initialProviderMessages: ChatMessage[];
 
           if (useTwoPassConversationPipeline) {
@@ -6021,11 +6030,6 @@ export async function generateRoutes(app: FastifyInstance) {
               throw new Error("Two-pass Conversation generation requires both Briefing and Writer prompts.");
             }
 
-            const sourceSnapshot = createConversationSourceSnapshot(
-              toProviderMessages(preparedMessagesForGen),
-              conversationSourceScaffoldBlock,
-            );
-            const curatorCandidateMessages = buildConversationCuratorMessages(curatorPrompt, sourceSnapshot);
             const curatorConnectionId = conversationTwoPassSettings.curatorConnectionId ?? connId ?? "";
             const curatorConnection =
               curatorConnectionId === connId ? conn : await resolveGenerationConnection(curatorConnectionId);
@@ -6049,69 +6053,242 @@ export async function generateRoutes(app: FastifyInstance) {
                 ? Math.floor(curatorConnection.maxTokensOverride)
                 : conversationTwoPassSettings.curatorMaxOutputTokens,
             );
-            const fittedCuratorPrompt = fitMessagesToContext(
-              curatorCandidateMessages,
-              {
-                maxTokens: curatorMaxTokens,
-                maxContext: typeof curatorConnection.maxContext === "number" ? curatorConnection.maxContext : undefined,
-              },
-              typeof curatorConnection.maxContext === "number" ? curatorConnection.maxContext : undefined,
-            );
-            const curatorMessages = fittedCuratorPrompt.messages;
-            const curatorProvider =
-              curatorConnectionId === connId
-                ? provider
-                : withConnectionFallbackProvider({
-                    primary:
-                      curatorConnectionId === LOCAL_SIDECAR_CONNECTION_ID
-                        ? getLocalSidecarProvider()
-                        : createLLMProvider(
-                            curatorConnection.provider,
-                            curatorBaseUrl,
-                            curatorConnection.apiKey,
-                            curatorConnection.maxContext,
-                            curatorConnection.openrouterProvider,
-                            curatorConnection.maxTokensOverride,
-                            curatorConnection.claudeFastMode === "true",
-                            curatorConnection.treatAsLocalEndpoint === "true",
-                            curatorConnection.defaultParameters,
-                          ),
-                    primaryConnectionId: curatorConnectionId,
-                    fallbackConnection: mainFallbackConnection,
-                    fallbackBaseUrl: mainFallbackBaseUrl,
-                    category: "main",
-                    onFallback,
-                  });
-            if (!curatorProvider.chatComplete) {
-              throw new Error("The selected Conversation context curator connection cannot run chat completion.");
-            }
-            if (isDebug || requestDebug) {
-              debugLog(
-                "[debug] Conversation curator prompt (%d messages), model %s (%s)",
-                curatorMessages.length,
-                curatorConnection.model,
-                curatorConnection.provider,
-              );
-              for (const message of curatorMessages) {
-                debugLog("  [%s] %s", message.role.toUpperCase(), message.content);
+
+            const resolvePassProvider = (connectionId: string, connection: typeof curatorConnection) => {
+              const baseUrl = resolveBaseUrl(connection);
+              if (!baseUrl) throw new Error("The selected Conversation context connection has no base URL.");
+              const passProvider =
+                connectionId === connId
+                  ? provider
+                  : withConnectionFallbackProvider({
+                      primary:
+                        connectionId === LOCAL_SIDECAR_CONNECTION_ID
+                          ? getLocalSidecarProvider()
+                          : createLLMProvider(
+                              connection.provider,
+                              baseUrl,
+                              connection.apiKey,
+                              connection.maxContext,
+                              connection.openrouterProvider,
+                              connection.maxTokensOverride,
+                              connection.claudeFastMode === "true",
+                              connection.treatAsLocalEndpoint === "true",
+                              connection.defaultParameters,
+                            ),
+                      primaryConnectionId: connectionId,
+                      fallbackConnection: mainFallbackConnection,
+                      fallbackBaseUrl: mainFallbackBaseUrl,
+                      category: "main",
+                      onFallback,
+                    });
+              if (!passProvider.chatComplete) {
+                throw new Error("The selected Conversation context connection cannot run chat completion.");
               }
+              return passProvider;
+            };
+
+            const curatorProvider = resolvePassProvider(curatorConnectionId, curatorConnection);
+            const fastPathConnectionId = conversationTwoPassSettings.fastPathConnectionId ?? curatorConnectionId;
+            const fastPathConnection =
+              fastPathConnectionId === curatorConnectionId
+                ? curatorConnection
+                : fastPathConnectionId === connId
+                  ? conn
+                  : await resolveGenerationConnection(fastPathConnectionId);
+            if (!fastPathConnection) {
+              throw new Error("The selected Conversation fast-path classifier connection is unavailable.");
             }
-            const curatorStartedAt = Date.now();
-            const curatorResult = await withLlmRequestTimeout(chatGenerationTimeoutMs, () =>
-              curatorProvider.chatComplete!(curatorMessages, {
-                model: curatorConnection.model,
-                maxTokens: fittedCuratorPrompt.maxTokens ?? curatorMaxTokens,
-                maxContext: typeof curatorConnection.maxContext === "number" ? curatorConnection.maxContext : undefined,
-                enableCaching: curatorConnection.enableCaching === "true",
-                anthropicExtendedCacheTtl: curatorConnection.anthropicExtendedCacheTtl === "true",
-                cachingAtDepth: curatorConnection.cachingAtDepth ?? 5,
-                stream: true,
-                signal: abortController.signal,
-                debugMode: requestDebug,
-              }),
-            );
-            if (abortController.signal.aborted) return null;
-            const briefing = normalizeConversationBriefing(curatorResult.content ?? "", curatorMaxTokens);
+            const fastPathProvider = resolvePassProvider(fastPathConnectionId, fastPathConnection);
+
+            const completeConversationPass = async (
+              passProvider: typeof curatorProvider,
+              connection: typeof curatorConnection,
+              messages: ChatMessage[],
+              requestedMaxTokens: number,
+            ): Promise<ConversationCompletionResult> => {
+              const fitted = fitMessagesToContext(
+                messages,
+                {
+                  maxTokens: requestedMaxTokens,
+                  maxContext: typeof connection.maxContext === "number" ? connection.maxContext : undefined,
+                },
+                typeof connection.maxContext === "number" ? connection.maxContext : undefined,
+              );
+              const startedAt = Date.now();
+              const result = await withLlmRequestTimeout(chatGenerationTimeoutMs, () =>
+                passProvider.chatComplete!(fitted.messages, {
+                  model: connection.model,
+                  maxTokens: fitted.maxTokens ?? requestedMaxTokens,
+                  maxContext: typeof connection.maxContext === "number" ? connection.maxContext : undefined,
+                  enableCaching: connection.enableCaching === "true",
+                  anthropicExtendedCacheTtl: connection.anthropicExtendedCacheTtl === "true",
+                  cachingAtDepth: connection.cachingAtDepth ?? 5,
+                  stream: true,
+                  signal: abortController.signal,
+                  debugMode: requestDebug,
+                }),
+              );
+              if (abortController.signal.aborted) throw new Error("Conversation briefing generation aborted.");
+              return {
+                content: result.content ?? "",
+                input: fitted.messages,
+                provider: connection.provider,
+                model: connection.model,
+                maxTokens: fitted.maxTokens ?? requestedMaxTokens,
+                durationMs: Date.now() - startedAt,
+                usage: result.usage,
+              };
+            };
+
+            sharedConversationBriefingPromise ??= prepareConversationTurnBriefing({
+              chatId: input.chatId,
+              metadata: chatMeta,
+              preparedMessages: toProviderMessages(preparedMessagesForGen),
+              sourceScaffold: conversationSourceScaffoldBlock,
+              sourceOverrides: new Map([
+                [
+                  "characterCard" as const,
+                  {
+                    key: "characterCard" as const,
+                    content: charInfo
+                      .map((character) =>
+                        [
+                          `### ${character.name}`,
+                          character.description ? `Description: ${character.description}` : "",
+                          character.personality ? `Personality: ${character.personality}` : "",
+                          character.backstory ? `Backstory: ${character.backstory}` : "",
+                          character.appearance ? `Appearance: ${character.appearance}` : "",
+                          character.scenario ? `Scenario: ${character.scenario}` : "",
+                          character.systemPrompt ? `System prompt: ${character.systemPrompt}` : "",
+                          character.postHistoryInstructions
+                            ? `Post-history instructions: ${character.postHistoryInstructions}`
+                            : "",
+                          character.mesExample ? `Example dialogue:\n${character.mesExample}` : "",
+                        ]
+                          .filter(Boolean)
+                          .join("\n"),
+                      )
+                      .join("\n\n"),
+                    images: [] as string[],
+                    files: [] as NonNullable<ChatMessage["files"]>,
+                  },
+                ],
+                [
+                  "persona" as const,
+                  {
+                    key: "persona" as const,
+                    content: [
+                      `Name: ${personaName}`,
+                      personaDescription ? `Description: ${personaDescription}` : "",
+                      personaFields.personality ? `Personality: ${personaFields.personality}` : "",
+                      personaFields.backstory ? `Backstory: ${personaFields.backstory}` : "",
+                      personaFields.appearance ? `Appearance: ${personaFields.appearance}` : "",
+                      personaFields.scenario ? `Scenario: ${personaFields.scenario}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join("\n"),
+                    images: [] as string[],
+                    files: [] as NonNullable<ChatMessage["files"]>,
+                  },
+                ],
+                ...(conversationContextBlockValue
+                  ? ([
+                      [
+                        "conversationStatus" as const,
+                        { key: "conversationStatus" as const, content: conversationContextBlockValue, images: [] as string[], files: [] as NonNullable<ChatMessage["files"]> },
+                      ],
+                    ] as const)
+                  : []),
+                ...(conversationCommandsReminder && !input.impersonate
+                  ? ([
+                      [
+                        "commands" as const,
+                        { key: "commands" as const, content: conversationCommandsReminder, images: [] as string[], files: [] as NonNullable<ChatMessage["files"]> },
+                      ],
+                    ] as const)
+                  : []),
+                ...(conversationReplyRulesBlockValue
+                  ? ([
+                      [
+                        "replyRules" as const,
+                        { key: "replyRules" as const, content: conversationReplyRulesBlockValue, images: [] as string[], files: [] as NonNullable<ChatMessage["files"]> },
+                      ],
+                    ] as const)
+                  : []),
+              ]),
+              curatorPrompt,
+              fastPathPrompt: DEFAULT_CONVERSATION_FAST_PATH_PROMPT,
+              maxOutputTokens: curatorMaxTokens,
+              completeClassifier: (messages) =>
+                completeConversationPass(fastPathProvider, fastPathConnection, messages, Math.min(256, curatorMaxTokens)),
+              completeCurator: (messages) =>
+                completeConversationPass(curatorProvider, curatorConnection, messages, curatorMaxTokens),
+              persistMetadata: async (patch) => {
+                const updated = await chats.patchMetadata(input.chatId, patch, { touchUpdatedAt: false });
+                if (updated) chatMeta = parseExtra(updated.metadata) as Record<string, unknown>;
+              },
+              dynamicCuratedSourceKeys: [
+                ...(enableMemoryRecall && memoryRecallVectorizerAvailable ? (["memories"] as const) : []),
+                ...(conversationCrossChatAwarenessEnabled ? (["crossChatAwareness"] as const) : []),
+                "roleplayScenes" as const,
+              ],
+              resolveCuratedSource: async (key, request) => {
+                const requested = request && typeof request === "object" && !Array.isArray(request)
+                  ? (request as Record<string, unknown>)
+                  : {};
+                if (key === "memories") {
+                  if (!enableMemoryRecall || !memoryRecallVectorizerAvailable) return null;
+                  const memoryMessages: GenerationPromptMessage[] = [];
+                  await injectMemoryRecallContext({
+                    db: app.db,
+                    messages: memoryMessages,
+                    currentInputMessages: currentInputMessages(),
+                    chatId: input.chatId,
+                    embeddingSource: memoryRecallEmbeddingSource,
+                    excludeFromMessageAt: regenerateContextCutoff,
+                    contextLimit: suppressModelParameters ? undefined : (effectiveMaxContext ?? connectionMaxContext),
+                    sendProgress,
+                    signal: abortController.signal,
+                    resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+                    wrapFormat,
+                  });
+                  const content = memoryMessages.map((message) => message.content).filter(Boolean).join("\n\n");
+                  return content ? { key, content, images: [], files: [] } : null;
+                }
+                if (key === "crossChatAwareness") {
+                  if (!conversationCrossChatAwarenessEnabled) return null;
+                  const { buildAwarenessBlock } = await import("../services/conversation/awareness.service.js");
+                  const content = await buildAwarenessBlock(
+                    app.db,
+                    input.chatId,
+                    characterIds,
+                    personaName,
+                    promptTimeZone,
+                    wrapFormat,
+                    chat.profileId,
+                  );
+                  return content ? { key, content, images: [], files: [] } : null;
+                }
+                if (key === "roleplayScenes") {
+                  const search = typeof requested.search === "string" ? requested.search : null;
+                  const rawLimit = Number(requested.limit);
+                  const blocks = await resolveRoleplayContextSources({
+                    chatId: input.chatId,
+                    chats,
+                    characters: chars,
+                    gameStateStore,
+                    ownerProfileId: chat.profileId,
+                    search,
+                    limit: Number.isFinite(rawLimit) ? rawLimit : null,
+                  });
+                  const content = blocks.join("\n\n");
+                  return content ? { key, content, images: [], files: [] } : null;
+                }
+                return undefined;
+              },
+            });
+            const statefulBriefing = await sharedConversationBriefingPromise;
+            conversationCuratorDiagnostics = statefulBriefing.diagnostics;
             const technicalContracts = [...conversationWriterTechnicalContracts];
             if (conversationCommandsReminder && !input.impersonate) {
               technicalContracts.push(conversationCommandsReminder);
@@ -6131,26 +6308,13 @@ export async function generateRoutes(app: FastifyInstance) {
                 }),
               );
             }
-            initialProviderMessages = prepareProviderMessages(
-              fitPromptForSend(
-                buildConversationWriterMessages({
-                  writerPrompt,
-                  briefing,
-                  technicalContracts,
-                }),
-              ),
-            );
-            conversationCuratorDiagnostics = {
-              provider: curatorConnection.provider,
-              model: curatorConnection.model,
-              maxTokens: fittedCuratorPrompt.maxTokens ?? curatorMaxTokens,
-              durationMs: Date.now() - curatorStartedAt,
-              usage: curatorResult.usage,
-              sourceHash: conversationPromptHash(sourceSnapshot),
-              input: curatorMessages.map((message) => ({ role: message.role, content: message.content })),
-              briefing,
-            };
-            sendProgress("writing_response");
+            initialProviderMessages = buildConversationWriterMessages({
+              writerPrompt,
+              briefing: statefulBriefing.artifact,
+              technicalContracts,
+              images: statefulBriefing.images,
+              files: statefulBriefing.files,
+            });
           } else {
             initialProviderMessages = prepareProviderMessages(
               fitPromptForSend(toProviderMessages(preparedMessagesForGen)),
@@ -7375,6 +7539,13 @@ export async function generateRoutes(app: FastifyInstance) {
                   sourceHash: conversationCuratorDiagnostics.sourceHash,
                   curatorInput: conversationCuratorDiagnostics.input,
                   briefing: conversationCuratorDiagnostics.briefing,
+                  path: conversationCuratorDiagnostics.path,
+                  revision: conversationCuratorDiagnostics.revision,
+                  classifierInput: conversationCuratorDiagnostics.classifierInput ?? null,
+                  classifierResult: conversationCuratorDiagnostics.classifierResult ?? null,
+                  sourceRequest: conversationCuratorDiagnostics.sourceRequest ?? null,
+                  sourceResults: conversationCuratorDiagnostics.sourceResults ?? null,
+                  contributingSources: conversationCuratorDiagnostics.contributingSources,
                   writerInput: finalPromptSent.map((message) => ({ role: message.role, content: message.content })),
                   writerInputHash: conversationPromptHash(finalPromptSent),
                 }

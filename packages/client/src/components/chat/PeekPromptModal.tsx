@@ -64,6 +64,13 @@ interface PeekPromptModalProps {
       curatorInput: Array<{ role: string; content: string }>;
       briefing: string;
       writerInput: Array<{ role: string; content: string }>;
+      path?: "fast" | "full" | "forced_full" | null;
+      revision?: number | null;
+      classifierInput?: Array<{ role: string; content: string }>;
+      classifierResult?: Record<string, unknown> | null;
+      sourceRequest?: Record<string, unknown> | null;
+      sourceResults?: string | null;
+      contributingSources?: string[];
     } | null;
     agentNote?: string;
   };
@@ -677,12 +684,55 @@ export function PeekPromptModal({ data, onClose }: PeekPromptModalProps) {
               <div className="px-1 text-[0.625rem] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
                 {localizeUi("ui.chat.peekpromptmodal.twoPassDiagnostics")}
               </div>
-              <CollapsibleBlock
-                label={localizeUi("ui.chat.peekpromptmodal.curatorInput")}
-                content={formatPromptMessages(data.twoPass.curatorInput)}
-                defaultOpen={false}
-                roleColor={PROMPT_TAG_CLASS}
-              />
+              {(data.twoPass.path || data.twoPass.revision != null) && (
+                <div className="flex flex-wrap gap-2 px-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                  {data.twoPass.path && <span>{localizeUi("ui.chat.peekpromptmodal.path")} {prettifyTag(data.twoPass.path)}</span>}
+                  {data.twoPass.revision != null && <span>{localizeUi("ui.chat.peekpromptmodal.briefingRevision")} {data.twoPass.revision}</span>}
+                  {(data.twoPass.contributingSources?.length ?? 0) > 0 && (
+                    <span>{localizeUi("ui.chat.budgetskippedentryrow.sources")} {data.twoPass.contributingSources!.join(", ")}</span>
+                  )}
+                </div>
+              )}
+              {(data.twoPass.classifierInput?.length ?? 0) > 0 && (
+                <CollapsibleBlock
+                  label={localizeUi("ui.chat.peekpromptmodal.fastPathClassifierInput")}
+                  content={formatPromptMessages(data.twoPass.classifierInput!)}
+                  defaultOpen={false}
+                  roleColor={PROMPT_TAG_CLASS}
+                />
+              )}
+              {data.twoPass.classifierResult && (
+                <CollapsibleBlock
+                  label={localizeUi("ui.chat.peekpromptmodal.fastPathDecision")}
+                  content={JSON.stringify(data.twoPass.classifierResult, null, 2)}
+                  defaultOpen={false}
+                  roleColor={PROMPT_TAG_CLASS}
+                />
+              )}
+              {data.twoPass.sourceRequest && (
+                <CollapsibleBlock
+                  label={localizeUi("ui.chat.peekpromptmodal.batchedSourceRequest")}
+                  content={JSON.stringify(data.twoPass.sourceRequest, null, 2)}
+                  defaultOpen={false}
+                  roleColor={PROMPT_TAG_CLASS}
+                />
+              )}
+              {data.twoPass.sourceResults && (
+                <CollapsibleBlock
+                  label={localizeUi("ui.chat.peekpromptmodal.batchedSourceResults")}
+                  content={data.twoPass.sourceResults}
+                  defaultOpen={false}
+                  roleColor={PROMPT_TAG_CLASS}
+                />
+              )}
+              {data.twoPass.curatorInput.length > 0 && (
+                <CollapsibleBlock
+                  label={localizeUi("ui.chat.peekpromptmodal.curatorInput")}
+                  content={formatPromptMessages(data.twoPass.curatorInput)}
+                  defaultOpen={false}
+                  roleColor={PROMPT_TAG_CLASS}
+                />
+              )}
               <CollapsibleBlock
                 label={localizeUi("ui.chat.peekpromptmodal.conversationBriefing")}
                 content={data.twoPass.briefing}

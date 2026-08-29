@@ -19,7 +19,10 @@ import {
   shouldIncludeConversationSummaryMemories,
   userProfileIdSchema,
 } from "@marinara-engine/shared";
-import type { CharacterData, ConversationStatusOverride } from "@marinara-engine/shared";
+import type { CharacterData, ConversationStatusOverride, ConversationContextSourceRole } from "@marinara-engine/shared";
+import { normalizeConversationContextSourceRoles } from "@marinara-engine/shared";
+import { conversationContextSourceStatuses } from "../services/generation/conversation-context-sources.js";
+import { clearConversationBriefingMetadataPatch, normalizeConversationBriefingState, withConversationBriefingTurnLock } from "../services/generation/conversation-context-briefing-state.js";
 import {
   generateCharacterSchedule,
   generateCharacterDaySchedule,
@@ -384,6 +387,85 @@ export async function conversationRoutes(app: FastifyInstance) {
   const chars = createCharactersStorage(app.db);
   const connections = createConnectionsStorage(app.db);
   const profiles = createUserProfilesStorage(app.db);
+
+
+  const cr037Meta = (value: unknown): Record<string, unknown> => {
+    if (!value) return {};
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+      } catch {
+        return {};
+      }
+    }
+    return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  };
+
+  app.get<{ Params: { chatId: string } }>("/context-briefing/:chatId", async (req, reply) => {
+    const chat = await chats.getById(req.params.chatId);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+    if (chat.mode !== "conversation") return reply.status(400).send({ error: "Not a Conversation chat" });
+    const metadata = cr037Meta(chat.metadata);
+    return reply.send({
+      briefing: typeof metadata.conversationContextBriefing === "string" ? metadata.conversationContextBriefing : null,
+      state: normalizeConversationBriefingState(metadata.conversationContextBriefingState),
+      sources: conversationContextSourceStatuses(metadata),
+    });
+  });
+
+  app.put<{
+    Params: { chatId: string };
+    Body: { roles?: Partial<Record<string, ConversationContextSourceRole>> };
+  }>("/context-briefing/:chatId/sources", async (req, reply) => {
+    return withConversationBriefingTurnLock(req.params.chatId, async () => {
+      const chat = await chats.getById(req.params.chatId);
+      if (!chat) return reply.status(404).send({ error: "Chat not found" });
+      if (chat.mode !== "conversation") return reply.status(400).send({ error: "Not a Conversation chat" });
+      const metadata = cr037Meta(chat.metadata);
+      const currentRoles = normalizeConversationContextSourceRoles(metadata.conversationContextSourceRoles);
+      const roles = normalizeConversationContextSourceRoles({ ...currentRoles, ...(req.body.roles ?? {}) });
+      const state = normalizeConversationBriefingState(metadata.conversationContextBriefingState);
+      const invalidated = state?.contributingSources.some((key) => currentRoles[key] !== "always_exclude" && roles[key] === "always_exclude") ?? false;
+      const patch = {
+        conversationContextSourceRoles: roles,
+        ...(invalidated ? clearConversationBriefingMetadataPatch() : {}),
+      };
+      const updated = await chats.patchMetadata(req.params.chatId, patch, { touchUpdatedAt: false });
+      const next = cr037Meta(updated?.metadata ?? metadata);
+      return reply.send({
+        briefing: typeof next.conversationContextBriefing === "string" ? next.conversationContextBriefing : null,
+        state: normalizeConversationBriefingState(next.conversationContextBriefingState),
+        sources: conversationContextSourceStatuses(next),
+      });
+    });
+  });
+
+  app.post<{ Params: { chatId: string } }>("/context-briefing/:chatId/reset", async (req, reply) => {
+    return withConversationBriefingTurnLock(req.params.chatId, async () => {
+      const chat = await chats.getById(req.params.chatId);
+      if (!chat) return reply.status(404).send({ error: "Chat not found" });
+      if (chat.mode !== "conversation") return reply.status(400).send({ error: "Not a Conversation chat" });
+      const updated = await chats.patchMetadata(req.params.chatId, clearConversationBriefingMetadataPatch(), { touchUpdatedAt: false });
+      const metadata = cr037Meta(updated?.metadata ?? chat.metadata);
+      return reply.send({ briefing: null, state: null, sources: conversationContextSourceStatuses(metadata) });
+    });
+  });
+
+  app.post<{ Params: { chatId: string } }>("/context-briefing/:chatId/sources/reset", async (req, reply) => {
+    return withConversationBriefingTurnLock(req.params.chatId, async () => {
+      const chat = await chats.getById(req.params.chatId);
+      if (!chat) return reply.status(404).send({ error: "Chat not found" });
+      if (chat.mode !== "conversation") return reply.status(400).send({ error: "Not a Conversation chat" });
+      const updated = await chats.patchMetadata(
+        req.params.chatId,
+        { conversationContextSourceRoles: normalizeConversationContextSourceRoles(undefined), ...clearConversationBriefingMetadataPatch() },
+        { touchUpdatedAt: false },
+      );
+      const metadata = cr037Meta(updated?.metadata ?? chat.metadata);
+      return reply.send({ briefing: null, state: null, sources: conversationContextSourceStatuses(metadata) });
+    });
+  });
 
   async function rememberConversationTimeZone(timeZone: string, profileId: string): Promise<number> {
     const allChats = await chats.list(profileId);

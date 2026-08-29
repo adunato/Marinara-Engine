@@ -309,10 +309,88 @@ export function shouldIncludeConversationSummaryMemories(metadata: unknown): boo
 
 export type ConversationGenerationPipeline = "standard" | "two_pass";
 
+export const CONVERSATION_CONTEXT_SOURCE_KEYS = [
+  "characterCard",
+  "persona",
+  "conversationStatus",
+  "commands",
+  "reactRules",
+  "replyRules",
+  "memories",
+  "dailyMemories",
+  "dailyIntentions",
+  "lorebook",
+  "summaries",
+  "crossChatAwareness",
+  "roleplayScenes",
+  "characterMind",
+  "recentExchange",
+] as const;
+
+export type ConversationContextSourceKey = (typeof CONVERSATION_CONTEXT_SOURCE_KEYS)[number];
+export type ConversationContextSourceRole = "always_include" | "agent_curated" | "always_exclude";
+export type ConversationContextSourceRoleMap = Record<ConversationContextSourceKey, ConversationContextSourceRole>;
+
+export const DEFAULT_CONVERSATION_CONTEXT_SOURCE_ROLES: ConversationContextSourceRoleMap = {
+  characterCard: "always_include",
+  persona: "always_include",
+  conversationStatus: "always_include",
+  commands: "always_include",
+  reactRules: "always_exclude",
+  replyRules: "always_exclude",
+  memories: "agent_curated",
+  dailyMemories: "agent_curated",
+  dailyIntentions: "agent_curated",
+  lorebook: "agent_curated",
+  summaries: "agent_curated",
+  crossChatAwareness: "agent_curated",
+  roleplayScenes: "agent_curated",
+  characterMind: "agent_curated",
+  recentExchange: "always_include",
+};
+
+export interface ConversationContextBriefingState {
+  schemaVersion: 1;
+  logicalDayKey: string;
+  revision: number;
+  updatedAt: string;
+  contributingSources: ConversationContextSourceKey[];
+}
+
+export interface ConversationContextSourceStatus {
+  key: ConversationContextSourceKey;
+  label: string;
+  description: string;
+  role: ConversationContextSourceRole;
+  available: boolean;
+  unavailableReason?: string | null;
+}
+
+export interface ConversationContextBriefingResponse {
+  briefing: string | null;
+  state: ConversationContextBriefingState | null;
+  sources: ConversationContextSourceStatus[];
+}
+
+export function normalizeConversationContextSourceRoles(value: unknown): ConversationContextSourceRoleMap {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const output = { ...DEFAULT_CONVERSATION_CONTEXT_SOURCE_ROLES };
+  for (const key of CONVERSATION_CONTEXT_SOURCE_KEYS) {
+    const role = raw[key];
+    if (role === "always_include" || role === "agent_curated" || role === "always_exclude") {
+      output[key] = role;
+    }
+  }
+  if (output.recentExchange === "always_exclude") output.recentExchange = "agent_curated";
+  return output;
+}
+
 export type ConversationTwoPassSettings = {
   pipeline: ConversationGenerationPipeline;
   curatorConnectionId: string | null;
+  fastPathConnectionId: string | null;
   curatorMaxOutputTokens: number;
+  sourceRoles: ConversationContextSourceRoleMap;
   customBriefingPrompt: string | null;
   customWriterPrompt: string | null;
 };
@@ -337,12 +415,14 @@ export function normalizeConversationTwoPassSettings(metadata: unknown): Convers
   return {
     pipeline: raw.conversationGenerationPipeline === "two_pass" ? "two_pass" : "standard",
     curatorConnectionId: optionalTrimmedString(raw.conversationCuratorConnectionId),
+    fastPathConnectionId: optionalTrimmedString(raw.conversationFastPathConnectionId),
     curatorMaxOutputTokens: Number.isFinite(configuredMaxTokens)
       ? Math.min(
           CONVERSATION_CURATOR_OUTPUT_TOKENS.MAX,
           Math.max(CONVERSATION_CURATOR_OUTPUT_TOKENS.MIN, configuredMaxTokens),
         )
       : CONVERSATION_CURATOR_OUTPUT_TOKENS.DEFAULT,
+    sourceRoles: normalizeConversationContextSourceRoles(raw.conversationContextSourceRoles),
     customBriefingPrompt: optionalTrimmedString(raw.customConversationBriefingPrompt),
     customWriterPrompt: optionalTrimmedString(raw.customConversationWriterPrompt),
   };
@@ -356,6 +436,14 @@ export interface ChatMetadata {
   conversationGenerationPipeline?: ConversationGenerationPipeline;
   /** Optional connection override used only for the Conversation context-curation pass. */
   conversationCuratorConnectionId?: string | null;
+  /** Optional connection override for the lightweight CR037 fast-path classifier. */
+  conversationFastPathConnectionId?: string | null;
+  /** Per-source CR037 context roles. Missing values use the HLD defaults. */
+  conversationContextSourceRoles?: Partial<Record<ConversationContextSourceKey, ConversationContextSourceRole>>;
+  /** Persistent CR037 SOURCES + BRIEFING artifact. */
+  conversationContextBriefing?: string | null;
+  /** Lifecycle/provenance metadata for the persistent CR037 briefing. */
+  conversationContextBriefingState?: ConversationContextBriefingState | null;
   /** Maximum output tokens for the hidden Conversation context-curation pass. */
   conversationCuratorMaxOutputTokens?: number | null;
   /** Chat-local override for the Conversation Briefing prompt. */

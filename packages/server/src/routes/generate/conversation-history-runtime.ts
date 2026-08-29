@@ -68,6 +68,31 @@ export function resolveConversationMembershipHistoryEvent(
   return legacyMatch?.[1] === "joined" || legacyMatch?.[1] === "left" ? legacyMatch[1] : null;
 }
 
+
+
+export function resolveConversationRecentExchange(args: {
+  messages: ConversationHistoryMessage[];
+  personaName: string;
+  characterNames: ReadonlyMap<string, string>;
+  limit?: number;
+}): string {
+  const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 12)));
+  return args.messages
+    .filter((message) => message.role === "user" || message.role === "assistant" || resolveConversationMembershipHistoryEvent(message) !== null)
+    .filter((message) => parseExtra(message.extra).hiddenFromAI !== true)
+    .filter((message) => typeof message.content === "string" && message.content.trim().length > 0)
+    .slice(-limit)
+    .map((message) => {
+      const event = resolveConversationMembershipHistoryEvent(message);
+      if (event) return `SYSTEM: ${String(message.content).trim()}`;
+      if (message.role === "user") return `${args.personaName}: ${String(message.content).trim()}`;
+      const characterId = typeof message.characterId === "string" ? message.characterId : null;
+      const speaker = characterId ? (args.characterNames.get(characterId) ?? "Character") : "Character";
+      return `${speaker}: ${String(message.content).trim()}`;
+    })
+    .join("\n\n");
+}
+
 function hasTaggedConversationMembershipEvent(message: ConversationHistoryMessage | null | undefined): boolean {
   const taggedEvent = parseExtra(message?.extra).conversationMembershipEvent;
   return taggedEvent === "joined" || taggedEvent === "left";

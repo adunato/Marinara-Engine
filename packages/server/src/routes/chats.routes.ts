@@ -2530,6 +2530,13 @@ export async function chatsRoutes(app: FastifyInstance) {
         curatorInput: Array<{ role: string; content: string }>;
         briefing: string;
         writerInput: Array<{ role: string; content: string }>;
+        path: "fast" | "full" | "forced_full" | null;
+        revision: number | null;
+        classifierInput: Array<{ role: string; content: string }>;
+        classifierResult: Record<string, unknown> | null;
+        sourceRequest: Record<string, unknown> | null;
+        sourceResults: string | null;
+        contributingSources: string[];
       };
     } | null => {
       const cachedPrompt = Array.isArray(extra.cachedPrompt)
@@ -2569,11 +2576,32 @@ export async function chatsRoutes(app: FastifyInstance) {
       const curatorInput = readPromptMessages(twoPassRecord?.curatorInput);
       const writerInput = readPromptMessages(twoPassRecord?.writerInput);
       const briefing = typeof twoPassRecord?.briefing === "string" ? twoPassRecord.briefing : "";
+      const classifierInput = readPromptMessages(twoPassRecord?.classifierInput);
+      const path =
+        twoPassRecord?.path === "fast" || twoPassRecord?.path === "full" || twoPassRecord?.path === "forced_full"
+          ? twoPassRecord.path
+          : null;
+      const revision = Number.isInteger(twoPassRecord?.revision) ? Number(twoPassRecord?.revision) : null;
       return {
         messages: cachedPrompt,
         generationInfo: isRecord(extra.generationInfo) ? extra.generationInfo : undefined,
-        ...(curatorInput.length > 0 && writerInput.length > 0 && briefing
-          ? { twoPass: { curatorInput, briefing, writerInput } }
+        ...(writerInput.length > 0 && briefing
+          ? {
+              twoPass: {
+                curatorInput,
+                briefing,
+                writerInput,
+                path,
+                revision,
+                classifierInput,
+                classifierResult: isRecord(twoPassRecord?.classifierResult) ? twoPassRecord?.classifierResult : null,
+                sourceRequest: isRecord(twoPassRecord?.sourceRequest) ? twoPassRecord?.sourceRequest : null,
+                sourceResults: typeof twoPassRecord?.sourceResults === "string" ? twoPassRecord.sourceResults : null,
+                contributingSources: Array.isArray(twoPassRecord?.contributingSources)
+                  ? twoPassRecord.contributingSources.filter((value): value is string => typeof value === "string")
+                  : [],
+              },
+            }
           : {}),
       };
     };

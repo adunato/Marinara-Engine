@@ -30,6 +30,8 @@ import type {
   ChatMemoryRecallExportPayload,
   ChatMemoryRecallImportResult,
   ChatSummaryEntry,
+  ConversationContextBriefingResponse,
+  ConversationContextSourceRole,
   ConversationNote,
   ExportEnvelope,
   Message,
@@ -53,6 +55,7 @@ export const chatKeys = {
   memories: (chatId: string) => [...chatKeys.all, "memories", chatId] as const,
   notes: (chatId: string) => [...chatKeys.all, "notes", chatId] as const,
   contextSources: (chatId: string) => [...chatKeys.all, "contextSources", chatId] as const,
+  contextBriefing: (chatId: string) => [...chatKeys.all, "contextBriefing", chatId] as const,
   group: (groupId: string) => [...chatKeys.all, "group", groupId] as const,
 };
 
@@ -1632,6 +1635,50 @@ export function useReplaceChatContextSources() {
       api.put<ChatContextSource[]>(`/chats/${chatId}/context-sources`, { sourceChatIds }),
     onSuccess: (sources, { chatId }) => {
       qc.setQueryData(chatKeys.contextSources(chatId), sources);
+    },
+  });
+}
+
+
+export function useConversationContextBriefing(chatId: string | null) {
+  return useQuery({
+    queryKey: chatKeys.contextBriefing(chatId ?? ""),
+    queryFn: () => api.get<ConversationContextBriefingResponse>(`/conversation/context-briefing/${chatId}`),
+    enabled: !!chatId,
+  });
+}
+
+export function useUpdateConversationContextSourceRoles() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ chatId, roles }: { chatId: string; roles: Partial<Record<string, ConversationContextSourceRole>> }) =>
+      api.put<ConversationContextBriefingResponse>(`/conversation/context-briefing/${chatId}/sources`, { roles }),
+    onSuccess: (data, variables) => {
+      qc.setQueryData(chatKeys.contextBriefing(variables.chatId), data);
+      void qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
+      void qc.invalidateQueries({ queryKey: chatKeys.list() });
+    },
+  });
+}
+
+export function useResetConversationContextBriefing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (chatId: string) => api.post<ConversationContextBriefingResponse>(`/conversation/context-briefing/${chatId}/reset`, {}),
+    onSuccess: (data, chatId) => {
+      qc.setQueryData(chatKeys.contextBriefing(chatId), data);
+      void qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
+    },
+  });
+}
+
+export function useResetConversationContextSourceRoles() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (chatId: string) => api.post<ConversationContextBriefingResponse>(`/conversation/context-briefing/${chatId}/sources/reset`, {}),
+    onSuccess: (data, chatId) => {
+      qc.setQueryData(chatKeys.contextBriefing(chatId), data);
+      void qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
     },
   });
 }
