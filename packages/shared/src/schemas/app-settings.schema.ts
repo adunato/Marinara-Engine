@@ -3,6 +3,38 @@
 // ──────────────────────────────────────────────
 import { z } from "zod";
 
+export const PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS_KEY = "professorMariCustomPrompt";
+export const PROFESSOR_MARI_CUSTOM_PROMPT_MAX_LENGTH = 100_000;
+
+export const professorMariCustomPromptSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    role: z.enum(["system", "user", "assistant"]),
+    content: z.string().max(PROFESSOR_MARI_CUSTOM_PROMPT_MAX_LENGTH),
+  })
+  .strict();
+
+export type ProfessorMariCustomPromptSettings = z.infer<typeof professorMariCustomPromptSettingsSchema>;
+
+export const DEFAULT_PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS: ProfessorMariCustomPromptSettings = {
+  enabled: false,
+  role: "system",
+  content: "",
+};
+
+export function normalizeProfessorMariCustomPromptSettings(value: unknown): ProfessorMariCustomPromptSettings {
+  let parsed = value;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed) as unknown;
+    } catch {
+      parsed = null;
+    }
+  }
+  const result = professorMariCustomPromptSettingsSchema.safeParse(parsed);
+  return result.success ? result.data : { ...DEFAULT_PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS };
+}
+
 export const MAX_MANAGED_GENERATION_PARAMETER_DEFINITIONS = 100;
 
 export const managedGenerationParameterDefinitionSchema = z.object({

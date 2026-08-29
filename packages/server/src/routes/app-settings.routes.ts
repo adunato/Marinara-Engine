@@ -5,6 +5,7 @@ import type { FastifyInstance } from "fastify";
 import {
   CHAT_SUMMARY_PROMPT_SETTINGS_KEY,
   CUSTOM_GENERATION_PARAMETERS_SETTINGS_KEY,
+  PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS_KEY,
   EMPTY_IMPERSONATE_PROMPT_TEMPLATE_CATALOG,
   IMPERSONATE_PROMPT_TEMPLATES_SETTINGS_KEY,
   HOME_CUSTOM_WIDGETS_SETTINGS_KEY,
@@ -13,6 +14,7 @@ import {
   VIDEO_GENERATION_SETTINGS_KEY,
   appSettingsUpdateSchema,
   impersonatePromptTemplateCatalogSchema,
+  professorMariCustomPromptSettingsSchema,
 } from "@marinara-engine/shared";
 import { logger } from "../lib/logger.js";
 import {
@@ -21,11 +23,13 @@ import {
   replaceHomeWidgetCatalog,
 } from "../services/home-widget-catalog.service.js";
 import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
+import { readProfessorMariCustomPromptSettings } from "../services/professor-mari/custom-prompt-settings.js";
 
 const ALLOWED_KEYS = new Set([
   "ui",
   CHAT_SUMMARY_PROMPT_SETTINGS_KEY,
   CUSTOM_GENERATION_PARAMETERS_SETTINGS_KEY,
+  PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS_KEY,
   STORAGE_MIGRATION_NOTICE_SETTINGS_KEY,
   VIDEO_GENERATION_SETTINGS_KEY,
 ]);
@@ -63,6 +67,16 @@ export async function appSettingsRoutes(app: FastifyInstance) {
     const catalog = impersonatePromptTemplateCatalogSchema.parse(req.body);
     await storage.set(IMPERSONATE_PROMPT_TEMPLATES_SETTINGS_KEY, JSON.stringify(catalog));
     return catalog;
+  });
+
+  app.get(`/${PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS_KEY}`, async () =>
+    readProfessorMariCustomPromptSettings(app.db),
+  );
+
+  app.put(`/${PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS_KEY}`, async (req) => {
+    const settings = professorMariCustomPromptSettingsSchema.parse(req.body);
+    await storage.set(PROFESSOR_MARI_CUSTOM_PROMPT_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
   });
 
   app.get<{ Params: { key: string } }>("/:key", async (req, reply) => {
