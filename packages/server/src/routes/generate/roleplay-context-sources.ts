@@ -266,6 +266,35 @@ async function formatSourceChat(args: {
   return lines.join("\n");
 }
 
+export async function resolveRoleplayContextSources(args: {
+  chatId: string;
+  chats: ContextSourceChatsStore;
+  characters: ContextSourceCharactersStore;
+  gameStateStore: ContextSourceGameStateStore;
+  ownerProfileId: string;
+  search?: string | null;
+  limit?: number | null;
+}): Promise<string[]> {
+  const links = await args.chats.listContextSources(args.chatId);
+  const search = args.search?.trim().toLowerCase() ?? "";
+  const limit = Math.max(1, Math.min(20, Math.floor(args.limit ?? 8)));
+  const blocks = (
+    await Promise.all(
+      links.map(async (link) => {
+        if (!link.sourceChatId || link.sourceChatId === args.chatId) return null;
+        const source = await args.chats.getById(link.sourceChatId);
+        if (!source || args.ownerProfileId !== source.profileId) return null;
+        const block = await formatSourceChat({ source, ...args });
+        if (!block) return null;
+        if (search && !`${source.name ?? ""}
+${block}`.toLowerCase().includes(search)) return null;
+        return block;
+      }),
+    )
+  ).filter((block): block is string => !!block);
+  return blocks.slice(0, limit);
+}
+
 export async function buildRoleplayContextSourcesBlock(args: {
   chatId: string;
   chats: ContextSourceChatsStore;
@@ -273,20 +302,7 @@ export async function buildRoleplayContextSourcesBlock(args: {
   gameStateStore: ContextSourceGameStateStore;
   ownerProfileId: string;
 }): Promise<string | null> {
-  const links = await args.chats.listContextSources(args.chatId);
-  const blocks = (
-    await Promise.all(
-      links.map(async (link) => {
-        if (!link.sourceChatId || link.sourceChatId === args.chatId) return null;
-        const source = await args.chats.getById(link.sourceChatId);
-        if (!source) return null;
-        // Cross-profile sources must not leak into this session.
-        if (args.ownerProfileId !== source.profileId) return null;
-        return formatSourceChat({ source, ...args });
-      }),
-    )
-  ).filter((block): block is string => !!block);
-
+  const blocks = await resolveRoleplayContextSources(args);
   if (blocks.length === 0) return null;
   return [
     "<roleplay_context_sources>",

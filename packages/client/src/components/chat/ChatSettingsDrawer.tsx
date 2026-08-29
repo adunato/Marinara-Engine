@@ -86,6 +86,7 @@ import { ChatNameSection } from "../../features/chat-settings/sections/ChatNameS
 import { CombatStyleSection } from "../../features/chat-settings/sections/CombatStyleSection";
 import { ConnectionSection } from "../../features/chat-settings/sections/ConnectionSection";
 import { ConversationPromptSection } from "../../features/chat-settings/sections/ConversationPromptSection";
+import { ConversationContextBriefingSection } from "../../features/chat-settings/sections/ConversationContextBriefingSection";
 import { DiscordMirrorControls } from "../../features/chat-settings/sections/DiscordMirrorSection";
 import { FunctionCallingSection } from "../../features/chat-settings/sections/FunctionCallingSection";
 import { GameExtraPromptSection } from "../../features/chat-settings/sections/GameExtraPromptSection";
@@ -5030,6 +5031,7 @@ export function ChatSettingsDrawer({
                 selectedPresetWriterPrompt={selectedModePromptPreset?.conversationWriterPrompt ?? ""}
                 pipeline={conversationTwoPassSettings.pipeline}
                 curatorConnectionId={conversationTwoPassSettings.curatorConnectionId ?? ""}
+                fastPathConnectionId={conversationTwoPassSettings.fastPathConnectionId ?? ""}
                 curatorMaxOutputTokens={conversationTwoPassSettings.curatorMaxOutputTokens}
                 customBriefingPrompt={conversationTwoPassSettings.customBriefingPrompt ?? ""}
                 customWriterPrompt={conversationTwoPassSettings.customWriterPrompt ?? ""}
@@ -5040,6 +5042,9 @@ export function ChatSettingsDrawer({
                 }
                 onCuratorConnectionChange={(conversationCuratorConnectionId) =>
                   updateMeta.mutate({ id: chat.id, conversationCuratorConnectionId })
+                }
+                onFastPathConnectionChange={(conversationFastPathConnectionId) =>
+                  updateMeta.mutate({ id: chat.id, conversationFastPathConnectionId })
                 }
                 onCuratorMaxOutputTokensChange={(value) => {
                   if (!Number.isFinite(value)) return;
@@ -5057,6 +5062,12 @@ export function ChatSettingsDrawer({
                 }
                 onPromptPresetChange={handleModePromptPresetChange}
               />
+            </div>
+          )}
+
+          {chatMode === "conversation" && conversationTwoPassSettings.pipeline === "two_pass" && (
+            <div style={{ order: CHAT_SETTINGS_ORDER.contextSources }}>
+              <ConversationContextBriefingSection chatId={chat.id} />
             </div>
           )}
 

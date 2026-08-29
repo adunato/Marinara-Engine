@@ -36,6 +36,7 @@ interface ConversationPromptSectionProps {
   selectedPresetWriterPrompt: string;
   pipeline: ConversationGenerationPipeline;
   curatorConnectionId: string;
+  fastPathConnectionId: string;
   curatorMaxOutputTokens: number;
   customBriefingPrompt: string;
   customWriterPrompt: string;
@@ -43,6 +44,7 @@ interface ConversationPromptSectionProps {
   onCustomPromptChange: (chatId: string, customPrompt: string | null) => void;
   onPipelineChange: (pipeline: ConversationGenerationPipeline) => void;
   onCuratorConnectionChange: (connectionId: string | null) => void;
+  onFastPathConnectionChange: (connectionId: string | null) => void;
   onCuratorMaxOutputTokensChange: (maxTokens: number) => void;
   onCustomBriefingPromptChange: (prompt: string | null) => void;
   onCustomWriterPromptChange: (prompt: string | null) => void;
@@ -59,6 +61,7 @@ export function ConversationPromptSection({
   selectedPresetWriterPrompt,
   pipeline,
   curatorConnectionId,
+  fastPathConnectionId,
   curatorMaxOutputTokens,
   customBriefingPrompt,
   customWriterPrompt,
@@ -66,6 +69,7 @@ export function ConversationPromptSection({
   onCustomPromptChange,
   onPipelineChange,
   onCuratorConnectionChange,
+  onFastPathConnectionChange,
   onCuratorMaxOutputTokensChange,
   onCustomBriefingPromptChange,
   onCustomWriterPromptChange,
@@ -225,6 +229,26 @@ export function ConversationPromptSection({
                       {localizeUi("ui.chatSettings.conversationpromptsection.unavailableConnection")}
                     </option>
                   )}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
+                  {localizeUi("ui.chatSettings.contextBriefing.fastPathConnection")}
+                </span>
+                <select
+                  value={fastPathConnectionId}
+                  onChange={(event) => onFastPathConnectionChange(event.target.value || null)}
+                  className="mari-preset-native-select w-full rounded-lg bg-[var(--background)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]"
+                >
+                  <option value="">{localizeUi("ui.chatSettings.contextBriefing.useCuratorConnection")}</option>
+                  {connections.map((connection) => (
+                    <option key={connection.id} value={connection.id}>
+                      {connection.name}
+                      {connection.model
+                        ? localizeUi("ui.chatSettings.connectionsection.value1", { value1: connection.model })
+                        : ""}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="flex flex-col gap-1.5">
