@@ -881,6 +881,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       styleProfiles: imageSettings.styleProfiles,
       styleProfileId: body.styleProfileId,
       imageDefaults,
+      compactVisualPrompt: isCharacterSheet,
       hardNegative: isCharacterSheet
         ? CHARACTER_SHEET_HARD_NEGATIVE_PROMPT
         : AVATAR_GENERATION_HARD_NEGATIVE_PROMPT,
@@ -969,6 +970,7 @@ export async function charactersRoutes(app: FastifyInstance) {
           styleProfiles: imageSettings.styleProfiles,
           styleProfileId: body.styleProfileId,
           imageDefaults,
+          compactVisualPrompt: isCharacterSheet,
           hardNegative: isCharacterSheet
             ? CHARACTER_SHEET_HARD_NEGATIVE_PROMPT
             : AVATAR_GENERATION_HARD_NEGATIVE_PROMPT,

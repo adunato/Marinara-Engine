@@ -4166,9 +4166,11 @@ const cases: RegressionCase[] = [
       const styleProfiles = createDefaultImageStyleProfileSettings();
       const profile = styleProfiles.profiles.find((candidate) => candidate.id === "danbooru");
       assert.ok(profile);
+      const sourceAppearance =
+        "Mira is a young woman with long brown hair, amber eyes, and a dark travel coat beneath a moonlit archway.";
       const compiled = compileImagePrompt({
         kind: "avatar",
-        prompt: "Canonical appearance for Mira: young woman, long brown hair, amber eyes, dark travel coat.",
+        prompt: sourceAppearance,
         styleProfiles,
         styleProfileId: profile.id,
         hardNegative:
@@ -4179,8 +4181,50 @@ const cases: RegressionCase[] = [
         compiled.prompt,
         /^masterpiece, best quality, absurdres, anime screencap, detailed eyes, solo, portrait, upper body, centered composition,/u,
       );
+      assert.equal(
+        compiled.prompt.includes(sourceAppearance),
+        false,
+        "avatar compaction should not retain the full source form",
+      );
       assert.doesNotMatch(compiled.prompt, /readable expression|clear silhouette|face-and-shoulders/iu);
       assert.match(compiled.negativePrompt, /collage layouts/iu);
+
+      const preserved = compileImagePrompt({
+        kind: "avatar",
+        prompt: sourceAppearance,
+        styleProfiles,
+        styleProfileId: "realistic",
+        compactVisualPrompt: false,
+      });
+      assert.match(preserved.prompt, /Mira is a young woman with long brown hair/u);
+      assert.match(preserved.prompt, /amber eyes, and a dark travel coat beneath a moonlit archway/u);
+      assert.notEqual(
+        preserved.prompt,
+        compiled.prompt,
+        "explicitly disabling visual compaction should preserve the source form",
+      );
+    },
+  },
+  {
+    name: "Character avatar preview and generation gate visual prompt compaction",
+    run() {
+      const charactersRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/characters.routes.ts", import.meta.url),
+        "utf8",
+      );
+      const compileCalls = [...charactersRouteSource.matchAll(/compileImagePrompt\(\{([\s\S]*?)\n\s*\}\);/gu)].map(
+        (match) => match[1] ?? "",
+      );
+
+      assert.equal(compileCalls.length, 2, "the route should keep separate preview and final compiler calls");
+      for (const compileCall of compileCalls) {
+        assert.match(compileCall, /kind: isCharacterSheet \? "illustration" : "avatar"/u);
+        assert.match(compileCall, /styleProfiles: imageSettings\.styleProfiles/u);
+        assert.match(compileCall, /styleProfileId: (?:body\.)?styleProfileId/u);
+        assert.match(compileCall, /imageDefaults/u);
+        assert.match(compileCall, /compactVisualPrompt: isCharacterSheet/u);
+        assert.match(compileCall, /hardNegative: isCharacterSheet/u);
+      }
     },
   },
   {
