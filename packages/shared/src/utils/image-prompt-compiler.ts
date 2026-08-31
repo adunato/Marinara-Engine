@@ -26,6 +26,8 @@ export interface CompileImagePromptInput {
   userPositive?: string | null;
   userNegative?: string | null;
   hardNegative?: string | null;
+  /** Control the compact visual treatment used for avatar, portrait, and sprite prompts. */
+  compactVisualPrompt?: boolean;
   /** Apply the selected grammar to generated prose that is normally preserved for review/readability. */
   applyPromptModeToSourcePrompt?: boolean;
   /**
@@ -236,7 +238,9 @@ function resolveImagePromptCompilationMode(input: CompileImagePromptInput, profi
     (input.kind === "illustration" || input.kind === "background" || input.kind === "selfie");
   const compactTags = !applyPromptModeToSourcePrompt && !preserveGeneratedPrompt && taggedPromptMode;
   const compactVisualPrompt =
-    profile.baseStyle !== "z_image_turbo" && ["avatar", "portrait", "sprite"].includes(input.kind);
+    (input.compactVisualPrompt ?? true) &&
+    profile.baseStyle !== "z_image_turbo" &&
+    ["avatar", "portrait", "sprite"].includes(input.kind);
   const compactPrompt = compactTags || compactVisualPrompt;
   return {
     preserveGeneratedPrompt,
