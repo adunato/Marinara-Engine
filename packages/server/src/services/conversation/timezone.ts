@@ -106,6 +106,14 @@ function zonedWallClockToInstant(
   return new Date(candidate);
 }
 
+/** Resolve a wall-clock date in the supplied IANA timezone to an instant. */
+export function resolveZonedWallClockToInstant(
+  desired: Pick<ZonedDateParts, "year" | "month" | "day" | "hour" | "minute" | "second">,
+  timeZone?: string,
+): Date {
+  return zonedWallClockToInstant(desired, timeZone);
+}
+
 export function getZonedDayBounds(date: Date, timeZone?: string, dayOffset = 0): { start: Date; end: Date } {
   const parts = getZonedDateParts(date, timeZone);
   const calendarDay = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset));

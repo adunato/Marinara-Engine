@@ -36,6 +36,7 @@ export * from "./types/capability-runtime.js";
 export * from "./types/localization.js";
 export * from "./types/personal-extension.js";
 export * from "./types/home-feed.js";
+export * from "./types/character-daily-memory.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -63,6 +64,7 @@ export * from "./schemas/folder.schema.js";
 export * from "./schemas/scene-analysis.schema.js";
 export * from "./schemas/library-folder.schema.js";
 export * from "./schemas/home-widget.schema.js";
+export * from "./schemas/character-daily-memory.schema.js";
 
 // Constants
 export * from "./constants/providers.js";
