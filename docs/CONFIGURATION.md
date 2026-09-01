@@ -103,6 +103,7 @@ A small group of low-level settings are locked in when the server starts. Changi
 - `TZ`
 - `AUTO_OPEN_BROWSER`, `AUTO_UPDATE_ENABLED`, `AUTO_CREATE_DEFAULT_CONNECTION`
 - `LOG_DISABLE_REQUEST_LOGGING`
+- `PHOENIX_LLM_TRACING_ENABLED`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT`, `PHOENIX_API_KEY`
 - The image, video, sprite, and ComfyUI timeout and poll settings (`IMAGE_GEN_TIMEOUT_MS`, `VIDEO_GEN_TIMEOUT_MS`, `VIDEO_GEN_MAX_RESPONSE_BYTES`, `SPRITE_GENERATION_TIMEOUT_MS`, `SPRITE_ANIMATED_FFMPEG_TIMEOUT_MS`, `COMFYUI_GEN_TIMEOUT`, and the four `*_VIDEO_POLL_INTERVAL_MS` settings)
 
 When one of these changes, the log warns that a restart is required. Access-control settings and secrets like `BASIC_AUTH_USER`, `BASIC_AUTH_PASS`, `IP_ALLOWLIST`, `ADMIN_SECRET`, and `CSRF_TRUSTED_ORIGINS` do not need a restart.
@@ -195,6 +196,36 @@ LOG_DISABLE_REQUEST_LOGGING=true
 ```
 
 Browser logging is separate and is not controlled by `LOG_LEVEL`.
+
+### Searchable LLM traces with Phoenix
+
+Marinara can send OpenInference traces for text-generation requests to a local
+[Arize Phoenix](https://arize.com/docs/phoenix) instance. Tracing is disabled
+unless `PHOENIX_LLM_TRACING_ENABLED=true` (or `1`) is set, or you explicitly
+configure a non-default collector endpoint or `PHOENIX_API_KEY`. Prompts and
+model responses are included in traces, so enable it only where that data may be
+stored. Binary image, file, audio, and video bodies are omitted; their counts
+are recorded. Embedding and local-sidecar requests are not traced.
+
+Start the bundled Phoenix container:
+
+```
+pnpm phoenix:up
+```
+
+Then set these values in `.env` and restart Marinara:
+
+```
+PHOENIX_LLM_TRACING_ENABLED=true
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6007
+PHOENIX_PROJECT=marinara-engine
+```
+
+Open `http://localhost:6007` to inspect requests, responses, tools, model
+parameters, token usage, errors, and timing. Use `pnpm phoenix:down` to stop
+the container; Phoenix data remains in its Docker volume. If Marinara runs in
+Docker while Phoenix runs on the host, use
+`PHOENIX_COLLECTOR_ENDPOINT=http://host.docker.internal:6007`.
 
 ## Timeouts
 

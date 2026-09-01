@@ -70,6 +70,12 @@ const RESTART_REQUIRED_KEYS = new Set<string>([
   "LOG_DISABLE_REQUEST_LOGGING",
   // The watcher mode itself is decided once at startup.
   "MARINARA_ENV_WATCH",
+  // Providers are decorated when constructed and the Phoenix SDK registers its
+  // exporter once, so tracing configuration needs a clean process restart.
+  "PHOENIX_LLM_TRACING_ENABLED",
+  "PHOENIX_COLLECTOR_ENDPOINT",
+  "PHOENIX_PROJECT",
+  "PHOENIX_API_KEY",
 ]);
 
 // Keys whose values must be masked when logged.

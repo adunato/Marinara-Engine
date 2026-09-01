@@ -6,6 +6,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Added
 
+- Added opt-in OpenInference tracing for text-generation requests in Arize Phoenix, with a bundled local Docker launcher and fail-open behavior when Phoenix is unavailable.
+
 ### Fixed
 
 ## [2.4.4]
