@@ -153,7 +153,7 @@ async function expandedDay(
   const activeRun = day.activeRunId ? await storage.getRun(day.activeRunId, characterId) : null;
   const sources = activeRun ? await storage.listRunSources(activeRun.id, characterId) : [];
   const memories = activeRun ? await storage.listMemories(characterId, { runId: activeRun.id }) : [];
-  return { ...day, activeRun, sources, memories, runs };
+  return { day, run: activeRun, sources, memories, runs };
 }
 
 async function sourceHistoryStart(app: FastifyInstance, characterId: string) {

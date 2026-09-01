@@ -84,8 +84,12 @@ export const characterDailyMemoriesApi = {
   deleteMemory: (characterId: string, memoryId: string) =>
     api.delete(path(characterId, `/memories/${encodeURIComponent(memoryId)}`)),
 
-  getConversations: (characterId: string) =>
-    api.get<CharacterDailyMemoryConversationDescriptor[]>(path(characterId, "/conversations")),
+  getConversations: async (characterId: string) => {
+    const response = await api.get<
+      { conversations: CharacterDailyMemoryConversationDescriptor[] } | CharacterDailyMemoryConversationDescriptor[]
+    >(path(characterId, "/conversations"));
+    return Array.isArray(response) ? response : response.conversations;
+  },
 
   preview: (characterId: string, chatId: string) =>
     api.post<CharacterDailyMemoryPreviewResult>(path(characterId, "/preview"), { chatId }),

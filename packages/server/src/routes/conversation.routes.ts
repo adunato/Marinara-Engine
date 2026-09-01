@@ -368,7 +368,11 @@ function buildScheduleContinuityContext(args: {
   return sections.join("\n").slice(0, SCHEDULE_CONTINUITY_MAX_CHARS);
 }
 
-export async function conversationRoutes(app: FastifyInstance) {
+export type ConversationRoutesOptions = {
+  onTimeZoneChanged?: () => void;
+};
+
+export async function conversationRoutes(app: FastifyInstance, options: ConversationRoutesOptions = {}) {
   const chats = createChatsStorage(app.db);
   const chars = createCharactersStorage(app.db);
   const connections = createConnectionsStorage(app.db);
@@ -383,6 +387,7 @@ export async function conversationRoutes(app: FastifyInstance) {
       await chats.patchMetadata(chat.id, { conversationTimeZone: timeZone }, { touchUpdatedAt: false });
       updatedChats += 1;
     }
+    if (updatedChats > 0) options.onTimeZoneChanged?.();
     return updatedChats;
   }
 

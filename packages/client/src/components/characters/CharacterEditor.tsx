@@ -79,6 +79,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Brain,
   Save,
   User,
   IdCard,
@@ -154,6 +155,7 @@ import {
 } from "../../lib/stat-icon-assignments";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
 import { LorebookAssignmentSection } from "../lorebooks/LorebookAssignmentSection";
+import { CharacterMemoriesTab } from "./CharacterMemoriesTab";
 import { useTranslation, useTranslation as useUiTranslation } from "react-i18next";
 
 // ── Tabs ──
@@ -164,6 +166,7 @@ const TABS = [
   { id: "lorebook", label: "Lorebook", icon: Library },
   { id: "sprites", label: "Sprites", icon: Image },
   { id: "gallery", label: "Gallery", icon: Camera },
+  { id: "memories", label: "editor.tabs.memories", icon: Brain },
   { id: "colors", label: "Colors", icon: Palette },
   { id: "stats", label: "Stats", icon: Swords },
   { id: "advanced", label: "Advanced", icon: Settings2 },
@@ -1245,6 +1248,9 @@ export function CharacterEditor() {
                 characterName={formData.name}
                 onCreateCharacterSheet={() => setCharacterSheetGeneratorOpen(true)}
               />
+            )}
+            {activeTab === "memories" && characterId && (
+              <CharacterMemoriesTab characterId={characterId} characterName={formData.name} />
             )}
             {activeTab === "colors" && (
               <ColorsTab formData={formData} updateExtension={updateExtension} avatarUrl={avatarPreview} />

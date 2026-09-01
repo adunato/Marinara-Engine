@@ -40,6 +40,7 @@ import {
 import { corsDelegate } from "./config/cors-config.js";
 import { sidecarProcessService } from "./services/sidecar/sidecar-process.service.js";
 import { startServerAutonomousScheduler } from "./services/conversation/server-autonomous-scheduler.service.js";
+import { startCharacterDailyMemoryScheduler } from "./services/character-daily-memories/scheduler.service.js";
 import { preparePersonalExtensionTrust } from "./services/setup/personal-extension-trust.js";
 import { personalServerExtensionRuntime } from "./services/extensions/personal-server-extension-runtime.js";
 import { runWithGenerationFallbackNotifier } from "./services/generation/fallback-notification.js";
@@ -269,6 +270,7 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
 
   // ── Server-side autonomous conversation scheduler ──
   startServerAutonomousScheduler(app);
+  startCharacterDailyMemoryScheduler(app);
 
   // ── Sidecar bootstrap (background, skipped in lite mode) ──
   if (!isLite) {

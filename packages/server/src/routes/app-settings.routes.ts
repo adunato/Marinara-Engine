@@ -21,6 +21,23 @@ import {
   replaceHomeWidgetCatalog,
 } from "../services/home-widget-catalog.service.js";
 import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
+import { normalizePromptTimeZone } from "../services/conversation/timezone.js";
+
+export type AppSettingsRoutesOptions = {
+  onConversationTimeZoneChanged?: () => void;
+};
+
+function readConversationTimeZone(value: string | null): string | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const candidate = (parsed as { conversationTimeZone?: unknown }).conversationTimeZone;
+    return typeof candidate === "string" ? normalizePromptTimeZone(candidate) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const ALLOWED_KEYS = new Set([
   "ui",
@@ -30,7 +47,7 @@ const ALLOWED_KEYS = new Set([
   VIDEO_GENERATION_SETTINGS_KEY,
 ]);
 
-export async function appSettingsRoutes(app: FastifyInstance) {
+export async function appSettingsRoutes(app: FastifyInstance, options: AppSettingsRoutesOptions = {}) {
   const storage = createAppSettingsStorage(app.db);
 
   app.get(`/${HOME_CUSTOM_WIDGETS_SETTINGS_KEY}`, () => readHomeWidgetCatalog(app.db));
@@ -78,7 +95,11 @@ export async function appSettingsRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Unknown settings key" });
     }
     const input = appSettingsUpdateSchema.parse(req.body);
+    const previousValue = req.params.key === "ui" ? await storage.get(req.params.key) : null;
     await storage.set(req.params.key, input.value);
+    if (req.params.key === "ui" && readConversationTimeZone(previousValue) !== readConversationTimeZone(input.value)) {
+      options.onConversationTimeZoneChanged?.();
+    }
     return { value: input.value };
   });
 }

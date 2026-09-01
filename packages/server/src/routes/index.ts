@@ -59,6 +59,8 @@ import { personalExtensionsRoutes } from "./personal-extensions.routes.js";
 import { notificationSoundRoutes } from "./notification-sound.routes.js";
 import { libraryFoldersRoutes } from "./library-folders.routes.js";
 import { androidLocalAuthRoutes } from "../middleware/android-local-auth.js";
+import { characterDailyMemoriesRoutes } from "./character-daily-memories.routes.js";
+import { requestCharacterDailyMemorySchedulerRefresh } from "../services/character-daily-memories/scheduler.service.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(androidLocalAuthRoutes, { prefix: "/api/android-auth" });
@@ -66,6 +68,10 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatFoldersRoutes, { prefix: "/api/chat-folders" });
   await app.register(chatPresetsRoutes, { prefix: "/api/chat-presets" });
   await app.register(charactersRoutes, { prefix: "/api/characters" });
+  await app.register(characterDailyMemoriesRoutes, {
+    prefix: "/api/characters",
+    onSettingsChanged: () => requestCharacterDailyMemorySchedulerRefresh(),
+  });
   await app.register(lorebooksRoutes, { prefix: "/api/lorebooks" });
   await app.register(promptsRoutes, { prefix: "/api/prompts" });
   await app.register(connectionsRoutes, { prefix: "/api/connections" });
@@ -91,7 +97,10 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(youtubeRoutes, { prefix: "/api/youtube" });
   await app.register(knowledgeSourcesRoutes, { prefix: "/api/knowledge-sources" });
   await app.register(gifsRoutes, { prefix: "/api/gifs" });
-  await app.register(conversationRoutes, { prefix: "/api/conversation" });
+  await app.register(conversationRoutes, {
+    prefix: "/api/conversation",
+    onTimeZoneChanged: () => requestCharacterDailyMemorySchedulerRefresh(),
+  });
   await app.register(backupRoutes, { prefix: "/api/backup" });
   await app.register(translateRoutes, { prefix: "/api/translate" });
   await app.register(hapticRoutes, { prefix: "/api/haptic" });
@@ -104,7 +113,10 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(updatesRoutes, { prefix: "/api/updates" });
   await app.register(docsRoutes, { prefix: "/api/docs" });
   await app.register(themesRoutes, { prefix: "/api/themes" });
-  await app.register(appSettingsRoutes, { prefix: "/api/app-settings" });
+  await app.register(appSettingsRoutes, {
+    prefix: "/api/app-settings",
+    onConversationTimeZoneChanged: () => requestCharacterDailyMemorySchedulerRefresh(),
+  });
   await app.register(achievementsRoutes, { prefix: "/api/achievements" });
   await app.register(gameRoutes, { prefix: "/api/game" });
   await app.register(gameAssetsRoutes, { prefix: "/api/game-assets" });

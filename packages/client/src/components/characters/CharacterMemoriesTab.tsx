@@ -42,7 +42,6 @@ interface CharacterMemoriesTabProps {
   characterId: string;
   characterName?: string;
 }
-
 type SettingsForm = Pick<
   CharacterDailyMemorySettings,
   | "enabled"
@@ -412,7 +411,7 @@ export function CharacterMemoriesTab({ characterId }: CharacterMemoriesTabProps)
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <label className="flex flex-col gap-1 text-xs font-medium"><span>{t("ui.characters.charactermemoriestab.handoverTime")}</span><input type="time" value={settings.handoverTime} onChange={(event) => update("handoverTime", event.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-sm" /></label>
-          <label className="flex flex-col gap-1 text-xs font-medium"><span>{t("ui.characters.charactermemoriestab.formationConnection")}</span><select value={settings.formationConnectionId ?? ""} onChange={(event) => update("formationConnectionId", event.target.value || null)} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-sm"><option value="">{t("ui.characters.charactermemoriestab.agentDefault")}</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}{connection.model ? ` · ${connection.model}` : ""}</option>)}</select></label>
+          <label className="flex flex-col gap-1 text-xs font-medium"><span>{t("ui.characters.charactermemoriestab.formationConnection")}</span><select value={settings.formationConnectionId ?? ""} onChange={(event) => update("formationConnectionId", event.target.value || null)} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-sm"><option value="">{t("ui.characters.charactermemoriestab.agentDefault")}</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}{connection.model ? t("ui.characters.characterversionhistorypanel.value1", { value1: connection.model }) : ""}</option>)}</select></label>
           <label className="flex flex-col gap-1 text-xs font-medium"><span>{t("ui.characters.charactermemoriestab.recentMessages")}</span><input type="number" min={0} max={100} value={settings.retrievalMessageCount} onChange={(event) => update("retrievalMessageCount", Math.max(0, Number(event.target.value) || 0))} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-sm" /></label>
         </div>
         <div className="mt-4 grid gap-x-5 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
