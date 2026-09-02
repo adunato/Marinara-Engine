@@ -107,6 +107,8 @@ export type LorebookSearchFn = (
   category?: string | null,
 ) => Promise<Array<{ name: string; content: string; tag: string; keys: string[] }>>;
 
+export type CharacterDailyMemorySearchFn = (query: string) => Promise<unknown>;
+
 /** Lorebook writer function injected from the route layer. */
 export type SaveLorebookEntryFn = (entry: {
   name: string;
@@ -212,6 +214,8 @@ export interface ToolExecutionContext {
   onUpdateMetadata?: (patch: MetadataPatchInput) => Promise<MetadataPatch>;
   customTools?: CustomToolDef[];
   searchLorebook?: LorebookSearchFn;
+  /** Host-bound Character Briefing Daily Memory retrieval. */
+  searchCharacterDailyMemories?: CharacterDailyMemorySearchFn;
   saveLorebookEntry?: SaveLorebookEntryFn;
   replaceChatMessageContent?: ReplaceChatMessageContentFn;
   spotify?: SpotifyCredentials;
@@ -314,6 +318,8 @@ async function executeBuiltInTool(
       return triggerEvent(args);
     case "search_lorebook":
       return searchLorebook(args, context?.searchLorebook);
+    case "search_character_daily_memories":
+      return searchCharacterDailyMemories(args, context?.searchCharacterDailyMemories);
     case "web_search":
       return webSearch(args);
     case "save_lorebook_entry":
@@ -348,6 +354,25 @@ async function executeBuiltInTool(
         available: [...BUILT_IN_TOOL_VALIDATORS.keys()],
       };
     }
+  }
+}
+
+async function searchCharacterDailyMemories(
+  args: Record<string, unknown>,
+  search?: CharacterDailyMemorySearchFn,
+): Promise<unknown> {
+  if (!search) return { error: "Character Daily Memory retrieval is unavailable" };
+  if (typeof args.query !== "string" || !args.query.trim()) return { error: "A non-empty query is required" };
+  try {
+    const result = await search(args.query.trim());
+    return result &&
+      typeof result === "object" &&
+      "available" in result &&
+      (result as { available?: unknown }).available === false
+      ? { error: "Character Daily Memory retrieval is unavailable" }
+      : result;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Character Daily Memory retrieval failed" };
   }
 }
 

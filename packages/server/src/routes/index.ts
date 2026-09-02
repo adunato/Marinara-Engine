@@ -60,6 +60,7 @@ import { notificationSoundRoutes } from "./notification-sound.routes.js";
 import { libraryFoldersRoutes } from "./library-folders.routes.js";
 import { androidLocalAuthRoutes } from "../middleware/android-local-auth.js";
 import { characterDailyMemoriesRoutes } from "./character-daily-memories.routes.js";
+import { characterBriefingRoutes } from "./character-briefing.routes.js";
 import { requestCharacterDailyMemorySchedulerRefresh } from "../services/character-daily-memories/scheduler.service.js";
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -72,6 +73,7 @@ export async function registerRoutes(app: FastifyInstance) {
     prefix: "/api/characters",
     onSettingsChanged: () => requestCharacterDailyMemorySchedulerRefresh(),
   });
+  await app.register(characterBriefingRoutes, { prefix: "/api/characters" });
   await app.register(lorebooksRoutes, { prefix: "/api/lorebooks" });
   await app.register(promptsRoutes, { prefix: "/api/prompts" });
   await app.register(connectionsRoutes, { prefix: "/api/connections" });

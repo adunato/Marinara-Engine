@@ -164,7 +164,10 @@ export async function buildCharacterDailyMemoryTranscript(args: {
     .join("\n");
 }
 
-async function resolveFormationConnection(db: DB, requestedId?: string | null): Promise<FormationConnection | null> {
+export async function resolveFormationConnection(
+  db: DB,
+  requestedId?: string | null,
+): Promise<FormationConnection | null> {
   const connections = createConnectionsStorage(db);
   const configured = requestedId?.trim() ? await connections.getWithKey(requestedId.trim()) : null;
   const primary = configured ?? (await connections.getDefaultForAgents());

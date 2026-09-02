@@ -37,6 +37,7 @@ export * from "./types/localization.js";
 export * from "./types/personal-extension.js";
 export * from "./types/home-feed.js";
 export * from "./types/character-daily-memory.js";
+export * from "./types/character-briefing.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -65,6 +66,7 @@ export * from "./schemas/scene-analysis.schema.js";
 export * from "./schemas/library-folder.schema.js";
 export * from "./schemas/home-widget.schema.js";
 export * from "./schemas/character-daily-memory.schema.js";
+export * from "./schemas/character-briefing.schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -144,6 +146,7 @@ export * from "./utils/speaker-segments.js";
 export * from "./utils/sprite-labels.js";
 export * from "./utils/managed-generation-parameters.js";
 export * from "./utils/conversation-presence.js";
+export * from "./utils/character-briefing.js";
 export * from "./utils/avatar-crop.js";
 export * from "./utils/persona-normalization.js";
 export * from "./utils/noodle-mentions.js";

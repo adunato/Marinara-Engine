@@ -546,6 +546,7 @@ import { loadPriorBeholderState } from "../services/agents/beholder-state.js";
 import { injectGameGmPromptRuntime } from "../services/generation/game-gm-prompt-runtime.js";
 import { mergeConversationCharacterMemories } from "../services/generation/conversation-memory-context.js";
 import { injectMemoryRecallContext } from "../services/generation/memory-recall-context.js";
+import { appendCharacterBriefingContext } from "../services/generation/character-briefing-context.js";
 import { shouldSkipAgentByMessageInterval } from "../services/generation/agent-cadence.js";
 import {
   appendTrackerLorebookBatchContextKey,
@@ -4129,6 +4130,24 @@ export async function generateRoutes(app: FastifyInstance) {
             : {}),
           signal: agentSignal,
         };
+
+        // Character Briefing is an additive, optional context source. Response
+        // targeting is already resolved by the Conversation presence runtime;
+        // only those targets may contribute a briefing.
+        if (chatMode === "conversation") {
+          const targetIds = conversationRespondingCharacterIds
+            ? charInfo
+                .filter((character) => conversationRespondingCharacterIds!.has(character.id))
+                .map((character) => character.id)
+            : characterIds[0]
+              ? [characterIds[0]]
+              : [];
+          await appendCharacterBriefingContext(
+            app.db,
+            finalMessages,
+            charInfo.filter((character) => targetIds.includes(character.id)),
+          );
+        }
 
         const latestBeholderState = await loadPriorBeholderState({
           agentsStore,
