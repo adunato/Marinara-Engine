@@ -26,6 +26,7 @@ import { chatKeys } from "../../hooks/use-chats";
 import { useChatGalleryFilenameIndex } from "../../hooks/use-characters";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 import { MESSAGE_SELECTION_SURFACE_CLASS } from "./message-selection-styles";
+import type { ExpressionAvatarResolver } from "./chat-area.types";
 import { GenerationReplayDetailsModal, hasGenerationReplayDetails } from "./GenerationReplayDetailsModal";
 import {
   HiddenFromAIConversationButton,
@@ -114,6 +115,7 @@ interface ConversationMessageProps {
   onToggleSelect?: (toggle: MessageSelectionToggle) => void;
   hasDraftInput?: boolean;
   translationDisplayOnly?: boolean;
+  expressionAvatarResolver?: ExpressionAvatarResolver;
 }
 
 // ── Shell component ──────────────────────────────────────────────
@@ -156,6 +158,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   onToggleSelect,
   hasDraftInput = false,
   translationDisplayOnly = false,
+  expressionAvatarResolver,
 }: ConversationMessageProps) {
   const { t: localizeUi } = useUiTranslation();
   // ── Local state ──
@@ -255,6 +258,9 @@ export const ConversationMessage = memo(function ConversationMessage({
   }, [chatCharacterIds, scopedCharacterMap]);
   const resolvedCharacterInfo =
     message.characterId !== null ? (charInfo ?? fallbackChatCharacterEntry?.info ?? null) : null;
+  const resolvedCharacterId = charInfo
+    ? message.characterId
+    : (message.characterId !== null ? fallbackChatCharacterEntry?.id ?? null : null);
   const primaryCharInfo =
     resolvedCharacterInfo ??
     (scopedCharacterMap
@@ -277,17 +283,25 @@ export const ConversationMessage = memo(function ConversationMessage({
   const galleryIndex = useChatGalleryFilenameIndex(chatCharacterIds);
 
   const msgPersona = isUser && !plainUserMessages && extra.personaSnapshot ? extra.personaSnapshot : null;
-  const avatarUrl = isUser
+  const baseAvatarUrl = isUser
     ? plainUserMessages
       ? null
       : (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null)
     : (resolvedCharacterInfo?.avatarUrl ?? null);
+  const resolveExpressionAvatar = useCallback(
+    (characterId: string) => expressionAvatarResolver?.(message as Message, characterId) ?? null,
+    [expressionAvatarResolver, message],
+  );
+  const expressionAvatarUrl = !isUser && resolvedCharacterId ? resolveExpressionAvatar(resolvedCharacterId) : null;
+  const avatarUrl = expressionAvatarUrl ?? baseAvatarUrl;
   const personaAvatarCrop = isUser
     ? plainUserMessages
       ? null
       : (normalizeAvatarCrop(msgPersona?.avatarCrop) ?? personaInfo?.avatarCrop ?? null)
     : null;
-  const avatarCropStyle = isUser
+  const avatarCropStyle = expressionAvatarUrl
+    ? {}
+    : isUser
     ? getAvatarCropStyle(personaAvatarCrop)
     : getAvatarCropStyle(resolvedCharacterInfo?.avatarCrop);
   const displayName = isUser
@@ -542,6 +556,14 @@ export const ConversationMessage = memo(function ConversationMessage({
     }
     return { charByName: byName, charIdByName: idByName };
   }, [scopedCharacterMap, message.characterId]);
+  const characterIdByInfo = useMemo(() => {
+    if (!scopedCharacterMap) return null;
+    const map = new Map<NonNullable<ReturnType<CharacterMap["get"]>>, string>();
+    for (const [id, info] of scopedCharacterMap) {
+      if (info) map.set(info, id);
+    }
+    return map;
+  }, [scopedCharacterMap]);
 
   const mentionNames = useMemo(() => {
     if (!scopedCharacterMap) return [] as string[];
@@ -809,7 +831,7 @@ export const ConversationMessage = memo(function ConversationMessage({
             width: anchor.width,
             height: anchor.height,
           },
-          avatarUrl,
+          avatarUrl: baseAvatarUrl,
           avatarCrop: isUser ? personaAvatarCrop : (resolvedCharacterInfo?.avatarCrop ?? null),
           displayName: headerDisplayName,
           nameColor: nameColor ?? null,
@@ -827,6 +849,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     avatarUrl,
     avatarCropStyle,
     avatarCornerClass: conversationAvatarShape === "square" ? "rounded-lg" : "rounded-full",
+    resolveExpressionAvatar,
     nameColor,
     onOpenAboutMe,
     mentionNames,
@@ -834,6 +857,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     charIdByName,
     selfCharacterId,
     galleryIndex,
+    characterIdByInfo,
     quoteFormat,
     renderedContent: displayedContent,
     renderedContentParts: displayedContentParts,

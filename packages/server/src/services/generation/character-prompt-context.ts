@@ -1,9 +1,11 @@
 import {
   formatRpgStatsForPrompt,
   nameToXmlTag,
+  normalizeCharacterEmotionProfile,
   normalizeRpgStatPools,
   resolveMacros,
   type CharacterMacroProfile,
+  type CharacterEmotionProfile,
   type MacroContext,
   type RPGStatsConfig,
 } from "@marinara-engine/shared";
@@ -30,6 +32,9 @@ export type CharacterPromptInfo = {
   avatarPath: string | null;
   avatarCrop: unknown | null;
   rpgStats?: RPGStatsConfig;
+  emotionProfile?: CharacterEmotionProfile;
+  /** Emotion snapshot selected from the active chat branch for this prompt. */
+  emotion?: string;
   /** Conversation-only: cosmetic display name + whether to declare it on the card. */
   convoDisplayName?: string;
   convoDisplayNameInCard?: boolean;
@@ -162,6 +167,7 @@ export async function loadCharacterPromptInfo({
       avatarPath: (charRow.avatarPath as string) ?? null,
       avatarCrop: charData.extensions?.avatarCrop ?? null,
       rpgStats: normalizeCharacterRpgStats(charData.extensions?.rpgStats),
+      emotionProfile: normalizeCharacterEmotionProfile(charData.extensions?.emotionProfile) ?? undefined,
       convoDisplayName:
         typeof charData.extensions?.convoDisplayName === "string" ? charData.extensions.convoDisplayName : undefined,
       convoDisplayNameInCard: charData.extensions?.convoDisplayNameInCard === true,
@@ -184,6 +190,10 @@ export function buildCharacterMacroProfilesById(charInfo: CharacterPromptInfo[])
         example: character.mesExample,
         systemPrompt: character.systemPrompt,
         postHistoryInstructions: character.postHistoryInstructions,
+        emotion:
+          character.emotionProfile?.enabled === true
+            ? (character.emotion ?? character.emotionProfile.defaultStateId)
+            : "",
       },
     ]),
   );
@@ -264,6 +274,10 @@ export function injectIdentityFallbackMessages(args: {
         example: character.mesExample,
         systemPrompt: character.systemPrompt,
         postHistoryInstructions: character.postHistoryInstructions,
+        emotion:
+          character.emotionProfile?.enabled === true
+            ? (character.emotion ?? character.emotionProfile.defaultStateId)
+            : "",
       },
     };
     const resolveCharacterMacros = (value: string) => resolveMacros(value, characterMacroContext);

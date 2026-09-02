@@ -2,6 +2,77 @@
 // Character Zod Schemas
 // ──────────────────────────────────────────────
 import { z } from "zod";
+import type { CharacterEmotionProfile } from "../types/character.js";
+
+export const CHARACTER_EMOTION_STATE_ID_PATTERN = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/u;
+
+/** Normalizes authored IDs without deriving them from mutable state labels. */
+export function normalizeCharacterEmotionStateId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/gu, "-")
+    .replace(/-+/gu, "-");
+}
+
+const characterEmotionStateIdSchema = z
+  .string()
+  .transform(normalizeCharacterEmotionStateId)
+  .refine((value) => value.length <= 64 && CHARACTER_EMOTION_STATE_ID_PATTERN.test(value), {
+    message: "Emotion state IDs must use lowercase letters, numbers, hyphens, or underscores.",
+  });
+
+const characterEmotionSpriteExpressionSchema = z
+  .string()
+  .trim()
+  .max(128)
+  .transform((value) => value || null)
+  .nullable()
+  .optional();
+
+export const characterEmotionStateSchema = z.object({
+  id: characterEmotionStateIdSchema,
+  label: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(500),
+  spriteExpression: characterEmotionSpriteExpressionSchema,
+});
+
+/** Optional Character Card V2 extension; enabled profiles require a valid default state. */
+export const characterEmotionProfileSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    defaultStateId: characterEmotionStateIdSchema.or(z.literal("")),
+    states: z.array(characterEmotionStateSchema).max(32).default([]),
+  })
+  .superRefine((profile, ctx) => {
+    const ids = new Set<string>();
+    for (const [index, state] of profile.states.entries()) {
+      if (ids.has(state.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["states", index, "id"],
+          message: "Emotion state IDs must be unique within a character profile.",
+        });
+      }
+      ids.add(state.id);
+    }
+    if (profile.enabled && !ids.has(profile.defaultStateId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultStateId"],
+        message: "Enabled emotion profiles require a default state from their configured states.",
+      });
+    }
+  });
+
+/**
+ * Safely reads persisted/imported emotion-profile data. Invalid profiles resolve
+ * to undefined so legacy or malformed cards do not enter generation contracts.
+ */
+export function normalizeCharacterEmotionProfile(value: unknown): CharacterEmotionProfile | undefined {
+  const parsed = characterEmotionProfileSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
 
 export const depthPromptSchema = z.object({
   prompt: z.string().default(""),
@@ -58,6 +129,7 @@ export const characterExtensionsSchema = z
     convoDisplayNameInCard: z.boolean().optional(),
     aboutMe: z.string().optional(),
     convoBehavior: convoBehaviorConfigSchema.optional(),
+    emotionProfile: characterEmotionProfileSchema.optional(),
   })
   .passthrough();
 

@@ -23,6 +23,8 @@ export interface MacroContext {
     example?: string;
     systemPrompt?: string;
     postHistoryInstructions?: string;
+    /** Current configured/persisted character emotion state for {{charEmotion}}. */
+    emotion?: string;
   }>;
   /** Custom variables from prompt toggle groups */
   variables: Record<string, string>;
@@ -61,6 +63,8 @@ export interface MacroContext {
     example?: string;
     systemPrompt?: string;
     postHistoryInstructions?: string;
+    /** Current configured/persisted character emotion state for {{charEmotion}}. */
+    emotion?: string;
   };
   /** Active persona card fields used by {{persona}} */
   personaFields?: {
@@ -121,6 +125,7 @@ export interface SupportedMacroDefinition {
   description: string;
 }
 
+ 
 export const CHARACTER_REFERENCE_ID_PATTERN = /\{\{([A-Za-z0-9_-]{21})\}\}/g;
 export const PERSONA_REFERENCE_ID_PATTERN = /\{\{persona-([A-Za-z0-9_-]{21})\}\}/gi;
 
@@ -141,6 +146,7 @@ const CHARACTER_MACRO_NAMES = new Set([
   "group",
   "personality",
   "scenario",
+  "charemotion",
 ]);
 const CHARACTER_CONDITIONAL_OPERAND_NAMES = new Set([
   ...CHARACTER_MACRO_NAMES,
@@ -149,6 +155,8 @@ const CHARACTER_CONDITIONAL_OPERAND_NAMES = new Set([
   "speaker",
   "speakerphonetic",
 ]);
+ 
+ 
 const MAX_CHARACTER_FIELD_RESOLUTION_DEPTH = 4;
 const MAX_DICE_COUNT = 1000;
 const MAX_DICE_SIDES = 1_000_000;
@@ -176,6 +184,7 @@ const DEFERRED_CHARACTER_MACRO_TOKENS = {
   char: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}CHAR\x1f`,
   charPhonetic: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}CHAR_PHONETIC\x1f`,
   group: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}GROUP\x1f`,
+  emotion: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}EMOTION\x1f`,
   description: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}DESCRIPTION\x1f`,
   personality: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}PERSONALITY\x1f`,
   backstory: `${DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX}BACKSTORY\x1f`,
@@ -574,6 +583,7 @@ function macroContextForCharacterProfile(profile: CharacterMacroProfile, base?: 
       example: profile.example ?? "",
       systemPrompt: profile.systemPrompt ?? "",
       postHistoryInstructions: profile.postHistoryInstructions ?? "",
+      emotion: profile.emotion ?? "",
     },
   };
 }
@@ -587,6 +597,7 @@ export function resolveCharacterScopedMacros(
   const scopedContext = macroContextForCharacterProfile(profile, baseContext);
   const scoped = resolveConditionalBlocks(stripMacroComments(template), scopedContext, {});
   return scoped
+ 
     .replace(/\{\{\s*char(?:Name)?\s*\}\}/gi, profile.name)
     .replace(/\{\{\s*char(?:Name)?Phonetic\s*\}\}/gi, profile.phoneticName ?? profile.name)
     .replace(/\{\{\s*group\s*\}\}/gi, resolveGroupCharacters(scopedContext))
@@ -604,7 +615,8 @@ export function resolveCharacterScopedMacros(
       resolveCharacterFieldValue(profile, "systemPrompt", depth, baseContext),
     )
     .replace(/\{\{\s*charPostHistory\s*\}\}/gi, () =>
-      resolveCharacterFieldValue(profile, "postHistoryInstructions", depth, baseContext),
+ 
+    .replace(/\{\{charEmotion\}\}/gi, profile.emotion ?? "")
     );
 }
 
@@ -619,6 +631,7 @@ export function resolveDeferredCharacterMacros(
   result = result.split(DEFERRED_CHARACTER_MACRO_TOKENS.char).join(profile.name);
   result = result.split(DEFERRED_CHARACTER_MACRO_TOKENS.charPhonetic).join(profile.phoneticName ?? profile.name);
   result = result.split(DEFERRED_CHARACTER_MACRO_TOKENS.group).join(resolveGroupCharacters(scopedContext));
+  result = result.split(DEFERRED_CHARACTER_MACRO_TOKENS.emotion).join(profile.emotion ?? "");
   result = result
     .split(DEFERRED_CHARACTER_MACRO_TOKENS.description)
     .join(resolveCharacterFieldValue(profile, "description", 0, baseContext));
@@ -970,6 +983,8 @@ function resolveConditionalOperand(raw: string, ctx: MacroContext, options: Reso
       return ctx.model ?? "";
     case "chatid":
       return ctx.chatId ?? "";
+    case "charemotion":
+      return ctx.characterFields?.emotion ?? "";
     case "description":
       return ctx.characterFields?.description ?? "";
     case "personality":
@@ -2207,6 +2222,7 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
   result = result.replace(/\{\{char(?:Name)?Phonetic\}\}/gi, characterReplacement("charPhonetic"));
   result = result.replace(/\{\{characters\}\}/gi, ctx.characters.join(", "));
   result = result.replace(/\{\{group\}\}/gi, characterReplacement("group"));
+  result = result.replace(/\{\{charEmotion\}\}/gi, characterReplacement("emotion"));
   result = result.replace(/\{\{description\}\}/gi, characterReplacement("description"));
   result = result.replace(/\{\{personality\}\}/gi, characterReplacement("personality"));
   result = result.replace(/\{\{backstory\}\}/gi, characterReplacement("backstory"));

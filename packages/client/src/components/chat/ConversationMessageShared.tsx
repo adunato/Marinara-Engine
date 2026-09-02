@@ -96,6 +96,12 @@ export interface MessageRenderContext {
   /** Chat-wide gallery filename index — card://self falls back to whichever
    *  chat character owns the file when the speaker doesn't (group chats). */
   galleryIndex: ChatGalleryIndex | null;
+  /** Resolves this message's persisted expression portrait for a speaker. */
+  resolveExpressionAvatar: (characterId: string) => string | null;
+  nameColor?: string;
+  mentionNames: string[];
+  charByName: Map<string, CharInfo> | null;
+  characterIdByInfo: Map<CharInfo, string> | null;
   // content
   quoteFormat: QuoteFormat;
   renderedContent: string;

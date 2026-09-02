@@ -3,7 +3,13 @@ import type { Message, SpriteSide } from "@marinara-engine/shared";
 import { ConversationView } from "./ConversationView";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
 import { useRenderTimer } from "../../lib/perf-diagnostics";
-import type { CharacterMap, MessageSelectionToggle, PeekPromptData, PersonaInfo } from "./chat-area.types";
+import type {
+  CharacterMap,
+  ExpressionAvatarResolver,
+  MessageSelectionToggle,
+  PeekPromptData,
+  PersonaInfo,
+} from "./chat-area.types";
 
 type SceneInfo =
   | {
@@ -85,6 +91,7 @@ type ConversationSurfaceProps = {
   onSelectAllAboveSelection: () => void;
   onSelectAllBelowSelection: () => void;
   lastAssistantMessageId: string | null;
+  expressionAvatarResolver?: ExpressionAvatarResolver;
 };
 
 export function ChatConversationSurface({
@@ -154,6 +161,7 @@ export function ChatConversationSurface({
   onSelectAllAboveSelection,
   onSelectAllBelowSelection,
   lastAssistantMessageId,
+  expressionAvatarResolver,
 }: ConversationSurfaceProps) {
   useRenderTimer("convo-surface"); // [#3104 diagnostic]
   return (
@@ -194,6 +202,7 @@ export function ChatConversationSurface({
           connectedChatName={connectedChatName}
           onSwitchChat={onSwitchChat}
           sceneInfo={sceneInfo}
+          expressionAvatarResolver={expressionAvatarResolver}
           onConcludeScene={onConcludeScene}
           onAbandonScene={onAbandonScene}
         />

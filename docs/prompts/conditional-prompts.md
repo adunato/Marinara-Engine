@@ -10,6 +10,22 @@ You write a condition, some text to use when the condition is true, and (optiona
 
 A common use is character-specific instructions inside one shared preset. Another common use is including a field only when it has content, so you do not send an empty label to the model.
 
+## Character emotion conditions
+
+Character cards can define a fixed set of emotion states under **Advanced → Emotion States**. When the Expression Engine is enabled for the chat, its existing post-processing call selects a state from that configured list after each character response. The selected state is available to the next turn as `charEmotion`:
+
+```
+{{#if charEmotion == "happy"}}
+Kate has a bubbly attitude and speaks with easy enthusiasm.
+{{else if charEmotion == "angry"}}
+Kate is terse and guarded, with a sharp edge to her replies.
+{{/if}}
+```
+
+The first turn uses the card's configured default state. The state is stored with the generated message and active swipe, so switching swipes or regenerating post-processing restores the corresponding state. In group and Conversation chats, each card resolves `charEmotion` against its own state.
+
+If Emotion States are missing or disabled, `charEmotion` is empty and emotion-specific branches are omitted. Ordinary, unconditional card text keeps Marinara's normal behavior. An emotion can optionally map to an uploaded sprite expression; when mapped, the same Expression Engine result updates both the state and the avatar/sprite.
+
 ## The basic syntax
 
 A conditional block starts with `{{#if condition}}` and ends with `{{/if}}`. Everything between them is the text used when the condition is true.
@@ -115,7 +131,7 @@ A truthy check is true when the value is not empty and is not one of these words
 
 The left or right side of a condition can be any of these:
 
-1. A field or identity keyword, such as `char`, `user`, `group`, `persona`, `description`, `personality`, `scenario`, `input`, or `model`. These read the same values as the matching macros. `group` lists the other active chat characters after excluding the current responder.
+1. A field or identity keyword, such as `char`, `charEmotion`, `user`, `group`, `persona`, `description`, `personality`, `scenario`, `input`, or `model`. These read the same values as the matching macros. `group` lists the other active chat characters after excluding the current responder.
 2. A quoted literal, such as `"Alice"`.
 3. A preset variable name, such as `length`. A preset variable is a named value you define in a Prompt Preset. See [Preset Variables](preset-variables.md).
 4. An explicit variable lookup written as `var:name` or `var.name`.

@@ -13,6 +13,7 @@ import {
   characterTrackerLockKey,
   applyRegexReplacement,
   buildNarratorInstructionMessage,
+  characterExtensionsSchema,
   compileChatSummaryEntries,
   compileImagePrompt,
   createRegexScriptSchema,
@@ -24,6 +25,7 @@ import {
   isAgentAvailableInChatMode,
   isPatternSafe,
   normalizeChatSummaryEntries,
+  normalizeCharacterEmotionProfile,
   normalizeChatSummaryPromptSettings,
   normalizeStoryboardAgentSettings,
   LONG_TERM_MEMORY_CHAT_SUMMARY_PROMPT_ID,
@@ -3033,6 +3035,106 @@ const cases: RegressionCase[] = [
         "Hi Bob",
       );
       assert.equal(resolveMacros("{{#if 1==1}}It is one{{else if 2==2}}It is two{{/if}}", context), "It is one");
+    },
+  },
+  {
+    name: "character emotion profiles normalize safely and validate enabled defaults",
+    run() {
+      const profile = normalizeCharacterEmotionProfile({
+        enabled: true,
+        defaultStateId: " Calm State ",
+        states: [
+          {
+            id: "Calm_State",
+            label: "Calm",
+            description: "Settled and attentive.",
+            spriteExpression: " neutral ",
+          },
+          {
+            id: "happy",
+            label: "Happy",
+            description: "Warmly pleased and playful.",
+            spriteExpression: "",
+          },
+        ],
+      });
+
+      assert.deepEqual(profile, {
+        enabled: true,
+        defaultStateId: "calm-state",
+        states: [
+          {
+            id: "calm-state",
+            label: "Calm",
+            description: "Settled and attentive.",
+            spriteExpression: "neutral",
+          },
+          {
+            id: "happy",
+            label: "Happy",
+            description: "Warmly pleased and playful.",
+            spriteExpression: null,
+          },
+        ],
+      });
+      assert.equal(
+        normalizeCharacterEmotionProfile({
+          enabled: true,
+          defaultStateId: "missing",
+          states: [{ id: "calm", label: "Calm", description: "Settled." }],
+        }),
+        undefined,
+      );
+      assert.equal(
+        normalizeCharacterEmotionProfile({
+          enabled: true,
+          defaultStateId: "calm",
+          states: [
+            { id: "calm", label: "Calm", description: "Settled." },
+            { id: "CALM", label: "Also calm", description: "A duplicate." },
+          ],
+        }),
+        undefined,
+      );
+      assert.equal(
+        normalizeCharacterEmotionProfile({ enabled: false, defaultStateId: "", states: [] })?.enabled,
+        false,
+      );
+      assert.equal(normalizeCharacterEmotionProfile("malformed"), undefined);
+      assert.equal(characterExtensionsSchema.parse({}).emotionProfile, undefined);
+    },
+  },
+  {
+    name: "charEmotion conditionals resolve per character before grouped and deferred macro expansion",
+    run() {
+      const baseContext = {
+        user: "Mari",
+        char: "Narrator",
+        characters: ["Kate", "Noor"],
+        variables: {},
+      };
+      const conditional =
+        '{{#if charEmotion == "happy"}}warm{{else if charEmotion == "angry"}}terse{{else}}steady{{/if}}';
+
+      assert.equal(resolveMacros(conditional, { ...baseContext, characterFields: { emotion: "happy" } }), "warm");
+      assert.equal(resolveMacros("{{charEmotion}}", { ...baseContext, characterFields: { emotion: "" } }), "");
+
+      const grouped = resolveMacros(
+        `[\n{{char}}: {{charEmotion}} {{#if charEmotion == "happy"}}warm{{else}}steady{{/if}}\n]`,
+        {
+          ...baseContext,
+          characterProfiles: [
+            { name: "Kate", emotion: "happy" },
+            { name: "Noor", emotion: "angry" },
+          ],
+        },
+      );
+      assert.equal(grouped, "Kate: happy warm\nNoor: angry steady");
+
+      const deferred = resolveMacros(conditional, baseContext, { deferCharacterMacros: "names" });
+      assert.equal(hasDeferredCharacterMacros(deferred), true);
+      assert.equal(resolveDeferredCharacterMacros(deferred, { name: "Kate", emotion: "happy" }, baseContext), "warm");
+      assert.equal(resolveDeferredCharacterMacros(deferred, { name: "Noor", emotion: "angry" }, baseContext), "terse");
     },
   },
   {
@@ -9269,6 +9371,8 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
           `expected custom agents to be available in ${chatMode}`,
         );
       }
+      assert.equal(isAgentAvailableInChatMode("conversation", "expression"), true);
+      assert.equal(isAgentAvailableInChatMode("conversation", "director"), false);
       assert.equal(
         shouldEnableAgentsForGeneration({
           chatEnableAgents: false,

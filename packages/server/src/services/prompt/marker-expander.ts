@@ -189,11 +189,11 @@ export async function expandMarker(
 async function expandCharacter(config: MarkerConfig, ctx: MarkerContext): Promise<ExpandedMarker> {
   const charStorage = createCharactersStorage(ctx.db);
   const parts: string[] = [];
-  for (const charId of ctx.characterIds) {
+  for (const [characterIndex, charId] of ctx.characterIds.entries()) {
     const row = await charStorage.getById(charId);
     if (!row) continue;
     const data = JSON.parse(row.data) as CharacterData;
-    const profile = characterMacroProfileFromData(data);
+    const profile = characterMacroProfileFromData(data, ctx.macroCtx.characterProfiles?.[characterIndex]?.emotion);
     const characterMacroContext = macroContextForCharacterProfile(ctx.macroCtx, profile);
 
     let fields = resolveCharacterMarkerFields(config.characterFields);
@@ -265,11 +265,12 @@ function macroContextForCharacterProfile(base: MacroContext, profile: CharacterM
       example: profile.example,
       systemPrompt: profile.systemPrompt,
       postHistoryInstructions: profile.postHistoryInstructions,
+      emotion: profile.emotion ?? "",
     },
   };
 }
 
-function characterMacroProfileFromData(data: CharacterData): CharacterMacroProfile {
+function characterMacroProfileFromData(data: CharacterData, emotion = ""): CharacterMacroProfile {
   return {
     name: data.name ?? "Character",
     description: data.description ?? "",
@@ -280,6 +281,7 @@ function characterMacroProfileFromData(data: CharacterData): CharacterMacroProfi
     example: data.mes_example ?? "",
     systemPrompt: data.system_prompt ?? "",
     postHistoryInstructions: data.post_history_instructions ?? "",
+    emotion,
   };
 }
 
@@ -512,7 +514,7 @@ async function expandDialogueExamples(_config: MarkerConfig, ctx: MarkerContext)
   const charStorage = createCharactersStorage(ctx.db);
   const parts: string[] = [];
 
-  for (const charId of ctx.characterIds) {
+  for (const [characterIndex, charId] of ctx.characterIds.entries()) {
     const row = await charStorage.getById(charId);
     if (!row) continue;
     const data = JSON.parse(row.data) as CharacterData;
@@ -521,7 +523,10 @@ async function expandDialogueExamples(_config: MarkerConfig, ctx: MarkerContext)
     if (example) {
       const resolved = resolveMacros(
         example,
-        macroContextForCharacterProfile(ctx.macroCtx, characterMacroProfileFromData(data)),
+        macroContextForCharacterProfile(
+          ctx.macroCtx,
+          characterMacroProfileFromData(data, ctx.macroCtx.characterProfiles?.[characterIndex]?.emotion),
+        ),
       );
       parts.push(sanitizeExampleDialoguePromptLeaf(resolved, ctx.wrapFormat));
     }

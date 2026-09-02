@@ -379,6 +379,10 @@ export interface AgentContext {
     avatarPath?: string | null;
     avatarCrop?: unknown;
     rpgStats?: import("./character.js").RPGStatsConfig;
+    /** Author-defined emotion configuration for the Expression Engine. */
+    emotionProfile?: import("./character.js").CharacterEmotionProfile;
+    /** Current valid emotion from the selected chat branch/default fallback. */
+    emotion?: string;
   }>;
   /** Every character attached to the chat, with only the data needed for activity routing. */
   chatCharacters?: Array<{

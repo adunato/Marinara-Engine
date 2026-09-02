@@ -141,6 +141,8 @@ import {
   type CharacterCardVersion,
   type CharacterData,
   type CharacterTrackerCustomFieldDefault,
+  type CharacterEmotionProfile,
+  type CharacterEmotionState,
   type ConversationCallCharacterVideoClipKind,
   type ConvoBehaviorConfig,
   type RPGStatPool,
@@ -1210,7 +1212,12 @@ export function CharacterEditor() {
               />
             )}
             {activeTab === "card" && (
-              <CharacterCardTab formData={formData} updateField={updateField} updateExtension={updateExtension} />
+              <CharacterCardTab
+                formData={formData}
+                updateField={updateField}
+                updateExtension={updateExtension}
+                characterId={characterId}
+              />
             )}
             {activeTab === "convo" && (
               <ConvoTab
@@ -1307,10 +1314,12 @@ function CharacterCardTab({
   formData,
   updateField,
   updateExtension,
+  characterId,
 }: {
   formData: CharacterData;
   updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
   updateExtension: (key: string, value: unknown) => void;
+  characterId: string | null;
 }) {
   const { t: localizeUi } = useUiTranslation();
   return (
@@ -1378,8 +1387,255 @@ function CharacterCardTab({
         <EditorSectionAnchor id="character-card-dialogue">
           <DialogueTab formData={formData} updateField={updateField} />
         </EditorSectionAnchor>
+        {characterId && (
+          <EmotionalStatesSection
+            characterId={characterId}
+            formData={formData}
+            updateField={updateField}
+            updateExtension={updateExtension}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+const DEFAULT_EMOTION_PROFILE: CharacterEmotionProfile = {
+  enabled: false,
+  defaultStateId: "",
+  states: [],
+};
+
+function normalizeEmotionStateId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function createUniqueEmotionStateId(label: string, states: CharacterEmotionState[], excludeId?: string): string {
+  const base = normalizeEmotionStateId(label) || "emotion";
+  const used = new Set(states.filter((state) => state.id !== excludeId).map((state) => state.id));
+  if (!used.has(base)) return base;
+  let index = 2;
+  while (used.has(`${base}-${index}`)) index++;
+  return `${base}-${index}`;
+}
+
+function cardReferencesEmotionState(data: CharacterData, stateId: string): boolean {
+  const escapedStateId = stateId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const conditional = new RegExp(`charEmotion\\s*==\\s*["']${escapedStateId}["']`, "i");
+  const fields = [
+    data.description,
+    data.personality,
+    data.scenario,
+    data.first_mes,
+    data.mes_example,
+    data.system_prompt,
+    data.post_history_instructions,
+    data.extensions.backstory,
+    data.extensions.appearance,
+    data.extensions.depth_prompt?.prompt,
+  ];
+  return fields.some((value) => typeof value === "string" && conditional.test(value));
+}
+
+function EmotionalStatesSection({
+  characterId,
+  formData,
+  updateField,
+  updateExtension,
+}: {
+  characterId: string;
+  formData: CharacterData;
+  updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
+  updateExtension: (key: string, value: unknown) => void;
+}) {
+  const { data: sprites } = useCharacterSprites(characterId);
+  const profile = formData.extensions.emotionProfile ?? DEFAULT_EMOTION_PROFILE;
+  const portraitExpressions = ((sprites as SpriteInfo[] | undefined) ?? [])
+    .filter((sprite) => !sprite.expression.toLowerCase().startsWith("full_"))
+    .map((sprite) => sprite.expression)
+    .sort((a, b) => a.localeCompare(b));
+
+  const saveProfile = (next: CharacterEmotionProfile) => updateExtension("emotionProfile", next);
+  const updateState = (stateId: string, patch: Partial<CharacterEmotionState>) => {
+    saveProfile({ ...profile, states: profile.states.map((state) => (state.id === stateId ? { ...state, ...patch } : state)) });
+  };
+  const addState = () => {
+    const label = `Emotion ${profile.states.length + 1}`;
+    const state: CharacterEmotionState = {
+      id: createUniqueEmotionStateId(label, profile.states),
+      label,
+      description: `Use when the character is ${label.toLowerCase()}.`,
+    };
+    saveProfile({
+      ...profile,
+      defaultStateId: profile.defaultStateId || state.id,
+      states: [...profile.states, state],
+    });
+  };
+  const moveState = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= profile.states.length) return;
+    const states = [...profile.states];
+    [states[index], states[target]] = [states[target]!, states[index]!];
+    saveProfile({ ...profile, states });
+  };
+  const removeState = (state: CharacterEmotionState) => {
+    if (cardReferencesEmotionState(formData, state.id)) {
+      toast.warning(`The card references charEmotion == "${state.id}". Update that conditional after removing this state.`);
+    }
+    const states = profile.states.filter((candidate) => candidate.id !== state.id);
+    saveProfile(
+      states.length === 0
+        ? { ...profile, enabled: false, defaultStateId: "", states }
+        : {
+            ...profile,
+            states,
+            defaultStateId: profile.defaultStateId === state.id ? states[0]!.id : profile.defaultStateId,
+          },
+    );
+  };
+  const setEnabled = (enabled: boolean) => {
+    if (!enabled || profile.states.length > 0) {
+      saveProfile({ ...profile, enabled });
+      return;
+    }
+    const neutral: CharacterEmotionState = { id: "neutral", label: "Neutral", description: "The character's ordinary settled disposition." };
+    saveProfile({ enabled: true, defaultStateId: neutral.id, states: [neutral] });
+  };
+  const insertConditional = (stateId: string) => {
+    const block = `{{#if charEmotion == "${stateId}"}}\n\n{{/if}}`;
+    updateField("personality", `${formData.personality.trimEnd()}\n\n${block}`.trimStart());
+    toast.success("Emotion conditional added to Personality.");
+  };
+
+  return (
+    <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">Emotional States</h3>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[var(--muted-foreground)]">
+            The Expression Engine selects a state after each response. That state controls <code>{"{{#if charEmotion == \"state-id\"}}"}</code> on the next turn.
+          </p>
+        </div>
+        <SettingsSwitch
+          label="Enable emotional states"
+          checked={profile.enabled}
+          onChange={setEnabled}
+          description="Use the configured default until the Expression Engine records a newer state."
+          labelPosition="start"
+          className="shrink-0"
+        />
+      </div>
+
+      {profile.enabled && (
+        <>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--secondary)]/60 p-3 text-xs">
+            <label className="font-medium text-[var(--muted-foreground)]" htmlFor="emotion-default-state">
+              Default state
+            </label>
+            <select
+              id="emotion-default-state"
+              value={profile.defaultStateId}
+              onChange={(event) => saveProfile({ ...profile, defaultStateId: event.target.value })}
+              className="min-w-40 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-sm outline-none focus:border-[var(--primary)]/50"
+            >
+              {profile.states.map((state) => (
+                <option key={state.id} value={state.id}>
+                  {state.label || state.id}
+                </option>
+              ))}
+            </select>
+            <span className="text-[var(--muted-foreground)]">Used when this chat has no prior saved emotion for the character.</span>
+          </div>
+
+          <div className="space-y-3">
+            {profile.states.map((state, index) => (
+              <div key={state.id} className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--muted-foreground)]">Label</span>
+                    <input
+                      value={state.label}
+                      onChange={(event) => updateState(state.id, { label: event.target.value })}
+                      className="w-full rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 text-sm outline-none focus:border-[var(--primary)]/50"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--muted-foreground)]">Stable state ID</span>
+                    <input
+                      value={state.id}
+                      onChange={(event) => {
+                        const nextId = createUniqueEmotionStateId(event.target.value, profile.states, state.id);
+                        if (nextId !== state.id && cardReferencesEmotionState(formData, state.id)) {
+                          toast.warning(`The card references "${state.id}". Update its conditional to "${nextId}".`);
+                        }
+                        const states = profile.states.map((candidate) =>
+                          candidate.id === state.id ? { ...candidate, id: nextId } : candidate,
+                        );
+                        saveProfile({
+                          ...profile,
+                          defaultStateId: profile.defaultStateId === state.id ? nextId : profile.defaultStateId,
+                          states,
+                        });
+                      }}
+                      className="w-full rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 font-mono text-sm outline-none focus:border-[var(--primary)]/50"
+                    />
+                  </label>
+                  <div className="flex items-end gap-1">
+                    <button type="button" onClick={() => moveState(index, -1)} disabled={index === 0} className="rounded-md border border-[var(--border)] p-1.5 disabled:opacity-40" title="Move state up">
+                      <ArrowUp size="0.875rem" />
+                    </button>
+                    <button type="button" onClick={() => moveState(index, 1)} disabled={index === profile.states.length - 1} className="rounded-md border border-[var(--border)] p-1.5 disabled:opacity-40" title="Move state down">
+                      <ArrowDown size="0.875rem" />
+                    </button>
+                    <button type="button" onClick={() => removeState(state)} className="rounded-md border border-[var(--border)] p-1.5 text-[var(--destructive)]" title="Remove state">
+                      <Trash2 size="0.875rem" />
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(12rem,0.6fr)]">
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--muted-foreground)]">Classifier description</span>
+                    <textarea
+                      value={state.description}
+                      onChange={(event) => updateState(state.id, { description: event.target.value })}
+                      rows={2}
+                      placeholder="When this character should be considered this emotional state."
+                      className="w-full resize-y rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 text-sm outline-none focus:border-[var(--primary)]/50"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--muted-foreground)]">Expression sprite (optional)</span>
+                    <select
+                      value={state.spriteExpression ?? ""}
+                      onChange={(event) => updateState(state.id, { spriteExpression: event.target.value || null })}
+                      className="w-full rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 text-sm outline-none focus:border-[var(--primary)]/50"
+                    >
+                      <option value="">No fixed sprite</option>
+                      {portraitExpressions.map((expression) => (
+                        <option key={expression} value={expression}>{normalizeSpriteExpressionLabel(expression)}</option>
+                      ))}
+                    </select>
+                    {portraitExpressions.length === 0 && <span className="block text-[0.6875rem] text-[var(--muted-foreground)]">Upload expression sprites to map one here.</span>}
+                  </label>
+                </div>
+                <button type="button" onClick={() => insertConditional(state.id)} className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]">
+                  <Plus size="0.75rem" /> Insert conditional into Personality
+                </button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={addState} className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm font-medium text-[var(--primary-foreground)]">
+            <Plus size="0.875rem" /> Add emotional state
+          </button>
+        </>
+      )}
+    </section>
   );
 }
 
