@@ -43,6 +43,7 @@ import { MessageThinkingModal } from "./MessageThinkingModal";
 import { useChatStore } from "../../stores/chat.store";
 import { parseChatMetadata } from "../../lib/chat-display";
 import { resolveMessageReasoningDisplay } from "../../lib/message-reasoning";
+import { resolveMessageGenerationEmotionLabel } from "../../lib/message-emotions";
 import {
   findRetargetableUserReaction,
   removeCharacterReaction,
@@ -260,7 +261,9 @@ export const ConversationMessage = memo(function ConversationMessage({
     message.characterId !== null ? (charInfo ?? fallbackChatCharacterEntry?.info ?? null) : null;
   const resolvedCharacterId = charInfo
     ? message.characterId
-    : (message.characterId !== null ? fallbackChatCharacterEntry?.id ?? null : null);
+    : message.characterId !== null
+      ? (fallbackChatCharacterEntry?.id ?? null)
+      : null;
   const primaryCharInfo =
     resolvedCharacterInfo ??
     (scopedCharacterMap
@@ -292,6 +295,10 @@ export const ConversationMessage = memo(function ConversationMessage({
     (characterId: string) => expressionAvatarResolver?.(message as Message, characterId) ?? null,
     [expressionAvatarResolver, message],
   );
+  const resolveGenerationEmotionLabel = useCallback(
+    (characterId: string) => resolveMessageGenerationEmotionLabel(message, characterId),
+    [message],
+  );
   const expressionAvatarUrl = !isUser && resolvedCharacterId ? resolveExpressionAvatar(resolvedCharacterId) : null;
   const avatarUrl = expressionAvatarUrl ?? baseAvatarUrl;
   const personaAvatarCrop = isUser
@@ -302,8 +309,8 @@ export const ConversationMessage = memo(function ConversationMessage({
   const avatarCropStyle = expressionAvatarUrl
     ? {}
     : isUser
-    ? getAvatarCropStyle(personaAvatarCrop)
-    : getAvatarCropStyle(resolvedCharacterInfo?.avatarCrop);
+      ? getAvatarCropStyle(personaAvatarCrop)
+      : getAvatarCropStyle(resolvedCharacterInfo?.avatarCrop);
   const displayName = isUser
     ? plainUserMessages
       ? "You"
@@ -848,6 +855,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     displayName: headerDisplayName,
     avatarUrl,
     avatarCropStyle,
+    resolveGenerationEmotionLabel,
     avatarCornerClass: conversationAvatarShape === "square" ? "rounded-lg" : "rounded-full",
     resolveExpressionAvatar,
     nameColor,

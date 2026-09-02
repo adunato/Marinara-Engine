@@ -309,6 +309,9 @@ try {
     isConversationStart: true,
     conversationStartForCharacterIds: ["new-character"],
     hiddenFromAICharacterIds: ["private-character"],
+    generationCharacterEmotions: {
+      "new-character": { stateId: "calm", label: "Calm / Open" },
+    },
   });
   await chatStorage.addSwipe(swipeMetadataMessage.id, "Silent alternate response.", true);
   const retainedSwipe = (await chatStorage.getSwipes(swipeMetadataMessage.id)).find((swipe) => swipe.index === 1);
@@ -317,6 +320,16 @@ try {
   assert.equal(retainedSwipeExtra.isConversationStart, true);
   assert.deepEqual(retainedSwipeExtra.conversationStartForCharacterIds, ["new-character"]);
   assert.deepEqual(retainedSwipeExtra.hiddenFromAICharacterIds, ["private-character"]);
+  assert.equal(
+    retainedSwipeExtra.generationCharacterEmotions,
+    undefined,
+    "a fresh generated swipe must not inherit the previous swipe's generation emotion provenance",
+  );
+  await chatStorage.updateMessageExtraForSwipe(swipeMetadataMessage.id, 1, {
+    generationCharacterEmotions: {
+      "new-character": { stateId: "wary", label: "Wary / Guarded" },
+    },
+  });
   await chatStorage.setActiveSwipe(swipeMetadataMessage.id, 1);
   const switchedMessageExtra = JSON.parse(
     (await chatStorage.getMessage(swipeMetadataMessage.id))!.extra as string,
@@ -324,6 +337,16 @@ try {
   assert.deepEqual(switchedMessageExtra.conversationStartForCharacterIds, ["new-character"]);
   assert.deepEqual(switchedMessageExtra.hiddenFromAICharacterIds, ["private-character"]);
   assert.equal(switchedMessageExtra.isConversationStart, true);
+  assert.deepEqual(switchedMessageExtra.generationCharacterEmotions, {
+    "new-character": { stateId: "wary", label: "Wary / Guarded" },
+  });
+  await chatStorage.setActiveSwipe(swipeMetadataMessage.id, 0);
+  const restoredMessageExtra = JSON.parse(
+    (await chatStorage.getMessage(swipeMetadataMessage.id))!.extra as string,
+  ) as Record<string, unknown>;
+  assert.deepEqual(restoredMessageExtra.generationCharacterEmotions, {
+    "new-character": { stateId: "calm", label: "Calm / Open" },
+  });
 
   await db.insert(memoryChunks).values({
     id: "unaffected-earlier-memory",

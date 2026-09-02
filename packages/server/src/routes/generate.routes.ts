@@ -356,6 +356,7 @@ import {
 import {
   buildAvailableEmotionCharacters,
   buildEmotionProfilesByCharacterId,
+  buildGenerationCharacterEmotionSnapshots,
   collectLatestCharacterEmotions,
   completeRequiredCharacterEmotionEntries,
   resolveCharacterEmotionStateMap,
@@ -3396,14 +3397,12 @@ export async function generateRoutes(app: FastifyInstance) {
         }
 
         const charInfo = await loadCharacterPromptInfo({ chars, characterIds, chatMode });
+        const generationCharacterEmotions = buildGenerationCharacterEmotionSnapshots(
+          charInfo,
+          persistedCharacterEmotions,
+        );
         for (const character of charInfo) {
-          const profile = character.emotionProfile;
-          character.emotion =
-            profile?.enabled === true && profile.states.some((state) => state.id === persistedCharacterEmotions[character.id])
-              ? persistedCharacterEmotions[character.id]
-              : profile?.enabled === true
-                ? profile.defaultStateId
-                : "";
+          character.emotion = generationCharacterEmotions[character.id]?.stateId ?? "";
         }
         for (const character of charInfo) {
           const resolveCharacterPromptText = (value: string): string =>
@@ -7460,6 +7459,18 @@ export async function generateRoutes(app: FastifyInstance) {
           if (
             savedMsg?.id &&
             savedSwipeIndex !== null &&
+            !input.continueMessageId &&
+            !input.impersonate &&
+            (chatMode === "conversation" || chatMode === "roleplay") &&
+            Object.keys(generationCharacterEmotions).length > 0
+          ) {
+            await chats.updateMessageExtraForSwipe(savedMsg.id, savedSwipeIndex, {
+              generationCharacterEmotions,
+            });
+          }
+          if (
+            savedMsg?.id &&
+            savedSwipeIndex !== null &&
             !shouldSuppressAssistantSpatialMutation(input) &&
             hierarchicalMapsEnabledForChat &&
             (requestChatMode === "roleplay" || requestChatMode === "game")
@@ -8335,10 +8346,7 @@ export async function generateRoutes(app: FastifyInstance) {
             const validation = validateSpriteExpressionEntries(rawExpressions, availableSprites);
             const availableEmotions = agentContext.memory._availableEmotions as AvailableEmotionCharacter[] | undefined;
             const emotionValidation = validateCharacterEmotionEntries(rawExpressions, availableEmotions);
-            const mergedByCharacterId = new Map<
-              string,
-              NonNullable<typeof spriteData.expressions>[number]
-            >();
+            const mergedByCharacterId = new Map<string, NonNullable<typeof spriteData.expressions>[number]>();
             for (const entry of validation.expressions) {
               if (typeof entry.characterId === "string") mergedByCharacterId.set(entry.characterId, entry);
             }
@@ -8359,7 +8367,9 @@ export async function generateRoutes(app: FastifyInstance) {
             for (const warning of emotionValidation.warnings) {
               logger.warn("[generate] %s", warning.message);
             }
-            const requiredEmotionTargetIds = normalizeRequiredSpriteExpressionIds(agentContext.memory._emotionTargetIds);
+            const requiredEmotionTargetIds = normalizeRequiredSpriteExpressionIds(
+              agentContext.memory._emotionTargetIds,
+            );
             validatedExpressions = completeRequiredCharacterEmotionEntries(
               validatedExpressions,
               availableEmotions,

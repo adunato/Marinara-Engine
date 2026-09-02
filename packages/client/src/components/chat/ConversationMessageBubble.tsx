@@ -5,6 +5,7 @@ import { User } from "lucide-react";
 import { normalizeTextForMatch, splitGroupedSegmentDisplayLines } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 import { PendingTypingDots } from "./PendingTypingDots";
+import { GenerationEmotionLabel } from "./GenerationEmotionLabel";
 import {
   MESSAGE_SELECTION_CHECKBOX_CLASS,
   MESSAGE_SELECTION_CHECKBOX_SELECTED_CLASS,
@@ -41,6 +42,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
     charByName,
     charIdByName,
     selfCharacterId,
+    resolveGenerationEmotionLabel,
     galleryIndex,
     groupedSegments,
     visibleSegments,
@@ -80,6 +82,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
     bubbleCornerClass,
     shouldHideUserAvatar,
   } = ctx;
+  const generationEmotionLabel = !isUser && selfCharacterId ? resolveGenerationEmotionLabel(selfCharacterId) : null;
 
   return (
     <>
@@ -185,27 +188,26 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
         >
           {/* Header — name + timestamp for first in group */}
           {!isGrouped && (!isUser || hiddenFromAIHeader) && (
-            <div
-              className={cn(
-                "mari-message-meta mb-0.5 flex items-baseline gap-2",
-                isUser ? "justify-end pr-2 text-right" : "pl-2",
-              )}
-            >
-              {hiddenFromAIHeader}
-              {!isUser && (
-                <ConversationMessageName
-                  displayName={displayName}
-                  nameColor={nameColor}
-                  onOpenAboutMe={ctx.onOpenAboutMe}
-                />
-              )}
-              {!hideTimestamp && !isUser && (
-                <span className="mari-message-timestamp mari-conversation-transcript-chrome-text text-[0.6875rem]">
-                  {formatTimestamp(message.createdAt)}
-                </span>
-              )}
+            <div className={cn("mari-message-meta mb-0.5", isUser ? "pr-2 text-right" : "pl-2")}>
+              <div className={cn("flex items-baseline gap-2", isUser && "justify-end")}>
+                {hiddenFromAIHeader}
+                {!isUser && (
+                  <ConversationMessageName
+                    displayName={displayName}
+                    nameColor={nameColor}
+                    onOpenAboutMe={ctx.onOpenAboutMe}
+                  />
+                )}
+                {!hideTimestamp && !isUser && (
+                  <span className="mari-message-timestamp mari-conversation-transcript-chrome-text text-[0.6875rem]">
+                    {formatTimestamp(message.createdAt)}
+                  </span>
+                )}
+              </div>
+              {!isUser && <GenerationEmotionLabel label={generationEmotionLabel} />}
             </div>
           )}
+          {isGrouped && !isUser && <GenerationEmotionLabel label={generationEmotionLabel} className="mb-0.5 pl-2" />}
 
           {/* Bubble */}
           {isHiddenCollapsed ? (
@@ -224,9 +226,10 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
             <div className="flex flex-col items-start gap-1.5">
               {groupedSegments.slice(0, visibleSegments).map((grp, i) => {
                 const segChar = grp.speaker && charByName ? charByName.get(normalizeTextForMatch(grp.speaker)) : null;
-                const segSelfId =
-                  (grp.speaker && charIdByName ? charIdByName.get(normalizeTextForMatch(grp.speaker)) : null) ??
-                  selfCharacterId;
+                const segCharacterId =
+                  (grp.speaker && charIdByName ? charIdByName.get(normalizeTextForMatch(grp.speaker)) : null) ?? null;
+                const segSelfId = segCharacterId ?? selfCharacterId;
+                const segEmotionLabel = segCharacterId ? resolveGenerationEmotionLabel(segCharacterId) : null;
                 const segName = segChar?.convoDisplayName?.trim() || segChar?.name || grp.speaker || "";
                 const displayLines = splitGroupedSegmentDisplayLines(grp);
 
@@ -263,6 +266,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                     >
                       {segName}
                     </div>
+                    <GenerationEmotionLabel label={segEmotionLabel} className="mb-0.5" />
                     <MessageContent
                       content={line}
                       mentionNames={mentionNames}

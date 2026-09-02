@@ -752,6 +752,14 @@ export interface MessageReaction {
   segmentSpeaker?: string | null;
 }
 
+/** Emotion state and historical display label that shaped one generated message/swipe. */
+export interface GenerationCharacterEmotionSnapshot {
+  /** Stable CR035 emotion state ID used by prompt/card conditional resolution for this generation. */
+  stateId: string;
+  /** Human-readable state label captured at generation time for historically accurate display. */
+  label: string;
+}
+
 /** Additional data attached to a message. */
 export interface MessageExtra {
   /** Display-formatted text (may differ from raw content) */
@@ -798,8 +806,10 @@ export interface MessageExtra {
   mariPendingMutationSignatures?: string[] | null;
   /** Per-swipe sprite expressions from the Expression Engine agent */
   spriteExpressions?: Record<string, string> | null;
-  /** Per-swipe emotion state IDs keyed by stable character ID from the Expression Engine agent. */
+  /** Per-swipe post-generation emotion state IDs keyed by stable character ID from the Expression Engine agent. */
   characterEmotions?: Record<string, string> | null;
+  /** Per-swipe pre-generation emotion provenance keyed by stable character ID. */
+  generationCharacterEmotions?: Record<string, GenerationCharacterEmotionSnapshot> | null;
   /** Per-swipe CYOA choices from the CYOA Choices agent */
   cyoaChoices?: Array<{ label: string; text: string }> | null;
   /** Presentation-only Game Mode cues retained so completed turns can be replayed without rerunning scene analysis. */

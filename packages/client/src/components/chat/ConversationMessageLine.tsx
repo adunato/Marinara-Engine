@@ -4,6 +4,7 @@
 import { User } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { PendingTypingDots } from "./PendingTypingDots";
+import { GenerationEmotionLabel } from "./GenerationEmotionLabel";
 import {
   MESSAGE_SELECTION_CHECKBOX_CLASS,
   MESSAGE_SELECTION_CHECKBOX_SELECTED_CLASS,
@@ -36,6 +37,7 @@ export function ConversationMessageLine({ ctx }: { ctx: MessageRenderContext }) 
     nameColor,
     mentionNames,
     selfCharacterId,
+    resolveGenerationEmotionLabel,
     galleryIndex,
     quoteFormat,
     renderedContent,
@@ -73,6 +75,7 @@ export function ConversationMessageLine({ ctx }: { ctx: MessageRenderContext }) 
     messageTextStyle,
     shouldHideUserAvatar,
   } = ctx;
+  const generationEmotionLabel = !isUser && selfCharacterId ? resolveGenerationEmotionLabel(selfCharacterId) : null;
 
   return (
     <>
@@ -165,20 +168,24 @@ export function ConversationMessageLine({ ctx }: { ctx: MessageRenderContext }) 
       <div className="mari-message-body min-w-0 flex-1">
         {/* Header */}
         {!isGrouped && (
-          <div className="mari-message-meta mb-0.5 flex items-baseline gap-2">
-            {hiddenFromAIHeader}
-            <ConversationMessageName
-              displayName={displayName}
-              nameColor={nameColor}
-              onOpenAboutMe={ctx.onOpenAboutMe}
-            />
-            {!hideTimestamp && (
-              <span className="mari-message-timestamp mari-conversation-transcript-chrome-text text-[0.6875rem]">
-                {formatTimestamp(message.createdAt)}
-              </span>
-            )}
+          <div className="mari-message-meta mb-0.5">
+            <div className="flex items-baseline gap-2">
+              {hiddenFromAIHeader}
+              <ConversationMessageName
+                displayName={displayName}
+                nameColor={nameColor}
+                onOpenAboutMe={ctx.onOpenAboutMe}
+              />
+              {!hideTimestamp && (
+                <span className="mari-message-timestamp mari-conversation-transcript-chrome-text text-[0.6875rem]">
+                  {formatTimestamp(message.createdAt)}
+                </span>
+              )}
+            </div>
+            <GenerationEmotionLabel label={generationEmotionLabel} />
           </div>
         )}
+        {isGrouped && <GenerationEmotionLabel label={generationEmotionLabel} className="mb-0.5" />}
 
         {/* Body */}
         {isHiddenCollapsed ? (

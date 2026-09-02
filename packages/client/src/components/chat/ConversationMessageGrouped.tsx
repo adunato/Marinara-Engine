@@ -16,6 +16,7 @@ import {
   type MessageRenderContext,
 } from "./ConversationMessageShared";
 import { ConversationMessageActions } from "./ConversationMessageActions";
+import { GenerationEmotionLabel } from "./GenerationEmotionLabel";
 import { MessageReactions } from "./MessageReactions";
 import { ReactionAddButton } from "./ReactionAddButton";
 import {
@@ -98,6 +99,7 @@ export function ConversationMessageGrouped({
     onToggleSelect,
     isBubbleStyle,
     resolveExpressionAvatar,
+    resolveGenerationEmotionLabel,
   } = ctx;
 
   // Per-segment add-reaction affordance: always visible on compact/mobile
@@ -186,6 +188,7 @@ export function ConversationMessageGrouped({
             (grp.speaker && charIdByName ? charIdByName.get(normalizeTextForMatch(grp.speaker)) : null) ??
             selfCharacterId;
           const segCharacterId = segChar ? characterIdByInfo?.get(segChar) : undefined;
+          const segEmotionLabel = segCharacterId ? resolveGenerationEmotionLabel(segCharacterId) : null;
           const segExpressionAvatar = segCharacterId ? resolveExpressionAvatar(segCharacterId) : null;
           const segAvatar = segExpressionAvatar ?? segChar?.avatarUrl ?? null;
           const segAvatarCropStyle = segExpressionAvatar ? {} : getAvatarCropStyle(segChar?.avatarCrop);
@@ -282,6 +285,7 @@ export function ConversationMessageGrouped({
                         )}
                         {segAddButton}
                       </div>
+                      <GenerationEmotionLabel label={segEmotionLabel} className="mb-0.5" />
                       <div
                         className="mari-message-bubble texting-bubble texting-bubble-other rounded-2xl px-3.5 py-2 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap shadow-sm"
                         style={messageTextStyle}
@@ -360,6 +364,7 @@ export function ConversationMessageGrouped({
                       )}
                       {segAddButton}
                     </div>
+                    <GenerationEmotionLabel label={segEmotionLabel} className="mb-0.5" />
                     <div
                       className="text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap"
                       style={messageTextStyle}

@@ -125,7 +125,6 @@ export interface SupportedMacroDefinition {
   description: string;
 }
 
- 
 export const CHARACTER_REFERENCE_ID_PATTERN = /\{\{([A-Za-z0-9_-]{21})\}\}/g;
 export const PERSONA_REFERENCE_ID_PATTERN = /\{\{persona-([A-Za-z0-9_-]{21})\}\}/gi;
 
@@ -155,8 +154,7 @@ const CHARACTER_CONDITIONAL_OPERAND_NAMES = new Set([
   "speaker",
   "speakerphonetic",
 ]);
- 
- 
+
 const MAX_CHARACTER_FIELD_RESOLUTION_DEPTH = 4;
 const MAX_DICE_COUNT = 1000;
 const MAX_DICE_SIDES = 1_000_000;
@@ -597,10 +595,11 @@ export function resolveCharacterScopedMacros(
   const scopedContext = macroContextForCharacterProfile(profile, baseContext);
   const scoped = resolveConditionalBlocks(stripMacroComments(template), scopedContext, {});
   return scoped
- 
+
     .replace(/\{\{\s*char(?:Name)?\s*\}\}/gi, profile.name)
     .replace(/\{\{\s*char(?:Name)?Phonetic\s*\}\}/gi, profile.phoneticName ?? profile.name)
     .replace(/\{\{\s*group\s*\}\}/gi, resolveGroupCharacters(scopedContext))
+    .replace(/\{\{\s*charEmotion\s*\}\}/gi, profile.emotion ?? "")
     .replace(/\{\{\s*description\s*\}\}/gi, () =>
       resolveCharacterFieldValue(profile, "description", depth, baseContext),
     )
@@ -615,8 +614,7 @@ export function resolveCharacterScopedMacros(
       resolveCharacterFieldValue(profile, "systemPrompt", depth, baseContext),
     )
     .replace(/\{\{\s*charPostHistory\s*\}\}/gi, () =>
- 
-    .replace(/\{\{charEmotion\}\}/gi, profile.emotion ?? "")
+      resolveCharacterFieldValue(profile, "postHistoryInstructions", depth, baseContext),
     );
 }
 

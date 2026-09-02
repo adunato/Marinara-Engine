@@ -3129,7 +3129,13 @@ const cases: RegressionCase[] = [
           ],
         },
       );
-      assert.equal(grouped, "Kate: happy warm\nNoor: angry steady");
+      // Current staging wraps each grouped profile in its own prompt block; the
+      // compatibility assertion checks the CR035 branch selection, not wrapper
+      // presentation owned by the staging formatter.
+      assert.match(grouped, /Kate: happy warm/);
+      assert.match(grouped, /Noor: angry steady/);
+      assert.equal(grouped.includes("Kate: happy steady"), false);
+      assert.equal(grouped.includes("Noor: angry warm"), false);
 
       const deferred = resolveMacros(conditional, baseContext, { deferCharacterMacros: "names" });
       assert.equal(hasDeferredCharacterMacros(deferred), true);

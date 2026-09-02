@@ -43,6 +43,7 @@ export interface MessageData {
     isGenerated: boolean;
     tokenCount: number | null;
     generationInfo: { model?: string; tokensIn?: number; tokensOut?: number; duration?: number } | null;
+    generationCharacterEmotions?: MessageExtra["generationCharacterEmotions"];
     isConversationStart?: boolean;
     hiddenFromAI?: boolean;
     thinking?: string | null;
@@ -83,6 +84,10 @@ export interface MessageRenderContext {
   displayName: string;
   avatarUrl: string | null;
   avatarCropStyle: CSSProperties;
+  /** Resolves this message's persisted expression portrait for a speaker. */
+  resolveExpressionAvatar: (characterId: string) => string | null;
+  /** Resolves the historical generation-time emotion label for a speaker. */
+  resolveGenerationEmotionLabel: (characterId: string) => string | null;
   avatarCornerClass: string;
   nameColor?: string;
   mentionNames: string[];
