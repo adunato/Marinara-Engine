@@ -275,7 +275,7 @@ export function QuickReplyMenu({ actions, disabled = false }: QuickReplyMenuProp
               >
                 {visibleActions.map((action, index) => (
                   <motion.button
-                    ref={(element) => {
+                    ref={(element: HTMLButtonElement | null) => {
                       itemRefs.current[index] = element;
                     }}
                     key={action.id}
@@ -283,7 +283,7 @@ export function QuickReplyMenu({ actions, disabled = false }: QuickReplyMenuProp
                     role="menuitem"
                     disabled={action.disabled}
                     onClick={() => void handleSelect(action)}
-                    onKeyDown={(event) => handleItemKeyDown(event, index)}
+                    onKeyDown={(event: ReactKeyboardEvent<HTMLButtonElement>) => handleItemKeyDown(event, index)}
                     aria-label={localizeUi("ui.chat.quickreplymenu.value1Value2", {
                       value1: action.label,
                       value2: action.description,

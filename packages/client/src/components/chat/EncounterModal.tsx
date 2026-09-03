@@ -1,7 +1,16 @@
 // ──────────────────────────────────────────────
 // Combat Encounter Modal — Full turn-based combat UI
 // ──────────────────────────────────────────────
-import { useState, useEffect, useRef, useCallback, useMemo, Component, type ReactNode } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  Component,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Swords,
@@ -184,7 +193,7 @@ function TargetSelection({ attackType, enemies, party, onSelect, onCancel }: Tar
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(event: ReactMouseEvent<HTMLDivElement>) => event.stopPropagation()}
       >
         <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-[var(--foreground)]">
           <Crosshair size="1rem" className="text-red-400" />
@@ -349,7 +358,7 @@ function EncounterConfig() {
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(event: ReactMouseEvent<HTMLDivElement>) => event.stopPropagation()}
       >
         <h2 className="mb-5 flex items-center gap-2 text-base font-bold text-[var(--foreground)]">
           <Swords size="1.125rem" className="text-red-400" />

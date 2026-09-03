@@ -1334,22 +1334,22 @@ function ConnectionFolderRow({
       dragListener={false}
       dragControls={dragControls}
       as="div"
-      onDragEnter={(event) => {
+      onDragEnter={(event: DragEvent<HTMLDivElement>) => {
         if (!draggedConnectionId) return;
         event.preventDefault();
         setIsDropTarget(true);
       }}
-      onDragOver={(event) => {
+      onDragOver={(event: DragEvent<HTMLDivElement>) => {
         if (!draggedConnectionId) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
       }}
-      onDragLeave={(event) => {
+      onDragLeave={(event: DragEvent<HTMLDivElement>) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
           setIsDropTarget(false);
         }
       }}
-      onDrop={(event) => {
+      onDrop={(event: DragEvent<HTMLDivElement>) => {
         if (!draggedConnectionId) return;
         event.preventDefault();
         const connectionIds = getDroppedConnectionIds(event, draggedConnectionId);

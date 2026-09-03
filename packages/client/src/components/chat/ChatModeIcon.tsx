@@ -8,8 +8,9 @@ export const CHAT_MODE_ICON_COMPONENTS = {
   game: Gamepad2,
 } satisfies Record<ChatMode, ComponentType<LucideProps>>;
 
-type ChatModeIconProps = LucideProps & {
+type ChatModeIconProps = Omit<LucideProps, "ref"> & {
   mode: ChatMode;
+  className?: string;
 };
 
 export function ChatModeIcon({ mode, ...props }: ChatModeIconProps) {

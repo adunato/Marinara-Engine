@@ -46,7 +46,7 @@ import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { chatBackgroundMetadataToUrl } from "../../lib/backgrounds";
 import { formatRelativeContact } from "../../lib/relative-time";
 import { ChatRowPeek } from "./ChatRowPeek";
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, type DragEvent } from "react";
 import { usePresenceClock } from "../../hooks/use-presence-clock";
 import { toast } from "sonner";
 import {
@@ -1761,22 +1761,22 @@ function FolderRow({
       dragListener={false}
       dragControls={dragControls}
       as="div"
-      onDragEnter={(event) => {
+      onDragEnter={(event: DragEvent<HTMLDivElement>) => {
         if (!draggedChatId) return;
         event.preventDefault();
         setIsDropTarget(true);
       }}
-      onDragOver={(event) => {
+      onDragOver={(event: DragEvent<HTMLDivElement>) => {
         if (!draggedChatId) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
       }}
-      onDragLeave={(event) => {
+      onDragLeave={(event: DragEvent<HTMLDivElement>) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
           setIsDropTarget(false);
         }
       }}
-      onDrop={(event) => {
+      onDrop={(event: DragEvent<HTMLDivElement>) => {
         if (!draggedChatId) return;
         event.preventDefault();
         event.stopPropagation();
